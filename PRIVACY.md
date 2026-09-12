@@ -7,10 +7,11 @@ ProfileDock has no account system, advertising, or external analytics. Usage ins
 - Profile preferences, your selected pictures, running app arguments, and local profile directories.
 - The signed-in profile's existing `auth.json` to request usage and reset-expiry information directly from `chatgpt.com` over HTTPS. Tokens are not written to ProfileDock's preferences or sent to a ProfileDock server.
 - Local Work/Codex task metadata, read markers, and the desktop observer socket to display activity. Stream payloads may contain task content transiently; ProfileDock retains only the status/count metadata it needs, not transcripts.
-- When Usage insights is opened, local `sessions` and `archived_sessions` JSONL files for the configured profiles. These files can contain conversation text; the scanner discards it and keeps only token counters, model names, timestamps, and session identifiers in memory. Insights are not uploaded or stored in a new on-disk history database. Reopening ProfileDock starts a fresh scan.
+- When Usage insights is opened, local `sessions` and `archived_sessions` JSONL files for the configured profiles. These files can contain conversation text; the scanner discards it and keeps only token counters, model names, timestamps, and session identifiers. Insights are not uploaded. At launch, a private local cache preloads the last loaded statistics and resumes reading new records after a restart.
 
 ## What it writes
 
+- Rebuildable insight counters, profile/model/session identifiers, read offsets, and hashed file fingerprints in `~/Library/Caches/nl.breukr.profiledock/insights-v1.json`. No transcript text, credentials, display names, or raw session-file paths are stored there. The directory is private to the macOS user (0700), and the file uses 0600 permissions. Report samples are trimmed to the current 30-day window when refreshed; cumulative checkpoints are retained to avoid recounting old usage. macOS may discard this cache; deleting it only makes the next scan start from source history.
 - Preferences and resized pictures in `~/Library/Application Support/Account Dock`. This historical folder name remains for compatibility.
 - New local profiles in `~/.codex-profile-…`; no existing credentials or conversations are copied into a new profile.
 - Finder launchers in `~/Applications/ProfileDock Launchers` and optional signed ChatGPT copies in `~/Applications/ProfileDock Apps`.

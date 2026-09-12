@@ -21,7 +21,7 @@ Periods use the Mac's local calendar and time zone. Seven and thirty days includ
 
 ## Coverage and privacy
 
-The scanner reads local profile session files only when insights are opened. It keeps counters and small metadata in memory, then reads appended records on later refreshes. Large histories can take longer on the first scan after starting ProfileDock. It does not send history to a server, create a transcript copy, or require an API key.
+The scanner reads local profile session files only when insights are opened. A private local cache preloads the last loaded statistics at app launch while new records are read in the background, including after restarting ProfileDock. The page labels saved data while it updates. Per-file checkpoints let unchanged history be skipped; appended records resume after the last complete line. Replaced, truncated, or changed files are checked again. Corrupt caches and caches using older pricing are rebuilt automatically. Large histories take longer on the first scan if no usable cache exists. It does not send history to a server, create a transcript copy, or require an API key.
 
 Account names refer to local profiles. Other devices, cloud-only chats, missing/deleted logs, and unrecognized record formats are outside coverage. Switching a profile's signed-in account does not retroactively identify its old sessions. Repeated records and copied sessions are deduplicated in the combined view; inherited totals are not charged again. Incomplete or oversized records produce a coverage note rather than invented totals.
 

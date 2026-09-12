@@ -153,7 +153,13 @@ final class InsightsTests: XCTestCase {
         print("Local insight scan: \(result.files) files, \(result.samples.count) counter records, \(result.warnings.count) profiles with coverage notes, \(Date().timeIntervalSince(start)) seconds")
         XCTAssertTrue(result.samples.allSatisfy { $0.tokens.valid && ($0.estimatedCost == nil || $0.estimatedCost!.isFinite) })
         let next = Date()
-        _ = try await scanner.scan(profiles: profiles, home: FileManager.default.homeDirectoryForCurrentUser, now: Date())
-        print("Incremental insight scan: \(Date().timeIntervalSince(next)) seconds")
+        let incremental = try await scanner.scan(profiles: profiles, home: FileManager.default.homeDirectoryForCurrentUser, now: Date())
+        print("Incremental insight scan: \(Date().timeIntervalSince(next)) seconds, \(incremental.bytesRead) new bytes")
+        let restoredScanner = InsightsScanner(), restoreStart = Date()
+        let restored = await restoredScanner.cachedSnapshot(profiles: profiles, home: FileManager.default.homeDirectoryForCurrentUser, now: Date())
+        XCTAssertNotNil(restored)
+        print("Restored statistics: \(Date().timeIntervalSince(restoreStart)) seconds")
+        let resumed = try await restoredScanner.scan(profiles: profiles, home: FileManager.default.homeDirectoryForCurrentUser, now: Date())
+        print("Restarted incremental scan: \(resumed.bytesRead) new bytes")
     }
 }

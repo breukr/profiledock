@@ -15,7 +15,7 @@ public enum InsightsPeriod: Int, CaseIterable, Sendable {
     }
 }
 
-public struct InsightTokens: Equatable, Hashable, Sendable {
+public struct InsightTokens: Equatable, Hashable, Codable, Sendable {
     public var input: Int64
     public var cached: Int64
     public var written: Int64
@@ -76,7 +76,7 @@ public enum InsightPricing {
     }
 }
 
-public struct InsightSample: Sendable {
+public struct InsightSample: Codable, Sendable {
     public let id: String
     public let profileID: String
     public let sessionID: String

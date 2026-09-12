@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         NSApp.setActivationPolicy(model.preferences.showDockIcon == true ? .regular : .accessory)
         usage.configure(model.preferences.profiles)
+        insights.prepare(profiles: model.preferences.profiles, home: model.home)
         usage.refreshAll()
         activity.configure(model.preferences.profiles, running: Set(model.running.keys))
         if !previewMode { rebuildIslands(); startMouseMonitoring() }
@@ -63,7 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         model.onPreferencesChanged = { [weak self] in
             guard let self else { return }
             self.usage.configure(self.model.preferences.profiles)
-            self.insights.configure(self.model.preferences.profiles)
+            self.insights.prepare(profiles: self.model.preferences.profiles, home: self.model.home)
             self.activity.configure(self.model.preferences.profiles, running: Set(self.model.running.keys))
             if !self.previewMode, self.islands.first?.layout.placement != self.model.placement { self.cues.dismiss(); self.rebuildIslands() }
             else { self.islands.forEach { $0.updateLayout() } }

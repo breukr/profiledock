@@ -144,7 +144,8 @@ struct InsightsPanel: View {
                 }
             }
             HStack {
-                Text("Local history · not your bill").font(.caption2).foregroundStyle(.secondary)
+                Text(store.showingSavedStatistics ? (store.refreshing ? "Saved statistics · updating…" : "Saved statistics · refresh pending") : "Local history · not your bill").font(.caption2).foregroundStyle(.secondary)
+                    .help(store.lastUpdated.map { "Last loaded " + $0.formatted(date: .abbreviated, time: .shortened) } ?? "Local history only")
                 if store.refreshing && store.lastUpdated != nil { ProgressView().controlSize(.mini) }
                 Spacer()
                 Button("How it’s calculated") { explanation = true }.font(.caption2).buttonStyle(.plain).foregroundStyle(.blue)
