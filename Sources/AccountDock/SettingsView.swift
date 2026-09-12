@@ -242,7 +242,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     Text("Blue: working. Orange: needs you. Green: idle. Red: unread results. Gray: closed or unknown.").font(.callout).foregroundStyle(.secondary)
                     Toggle("Show completion and input cues", isOn: Binding(get: { model.preferences.activityCues != false }, set: { model.preferences.activityCues = $0; model.save(); if !$0 { cues.dismiss() } }))
-                    Text("Cues follow the strip's position. Reduce Motion is respected.").font(.caption).foregroundStyle(.secondary)
+                    Text("One cue grows from the strip: status on the left, environment on the right. Reduce Motion uses a simple fade.").font(.caption).foregroundStyle(.secondary)
                     Toggle("Play quiet activity sounds", isOn: Binding(get: { model.preferences.activitySounds == true }, set: { model.preferences.activitySounds = $0; model.save() }))
                     if model.preferences.activitySounds == true {
                         HStack {

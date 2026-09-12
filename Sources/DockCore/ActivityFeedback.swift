@@ -47,20 +47,44 @@ public struct ActivityEvent: Identifiable, Equatable, Sendable {
 }
 
 public struct ActivityCueLayout: Equatable {
+    public let frame: CGRect
+    public let origin: CGRect
     public let left: CGRect
     public let right: CGRect
-    public init(screen: CGRect, obstacle: CGRect, floating: Bool = false) {
-        let height = min(26, max(12, obstacle.height - 4))
-        let width = min(42, max(0, (screen.width - obstacle.width) / 2 - 8))
+    public init(screen: CGRect, obstacle: CGRect, floating: Bool = false, statusWidth: CGFloat = 88, nameWidth: CGFloat = 140) {
+        origin = obstacle
+        let height = obstacle.height
         if floating {
-            let y = obstacle.maxY + 6 + height <= screen.maxY ? obstacle.maxY + 6 : max(screen.minY, obstacle.minY - height - 6)
-            left = CGRect(x: obstacle.minX, y: y, width: width, height: height)
-            right = CGRect(x: obstacle.maxX - width, y: y, width: width, height: height)
+            let width = min(screen.width, max(obstacle.width, statusWidth + nameWidth + 28))
+            frame = CGRect(x: min(screen.maxX - width, max(screen.minX, obstacle.midX - width / 2)), y: obstacle.minY, width: width, height: height)
+            left = CGRect(x: frame.minX + 12, y: frame.minY, width: min(statusWidth, width * 0.42), height: height)
+            right = CGRect(x: left.maxX + 8, y: frame.minY, width: max(0, frame.maxX - left.maxX - 20), height: height)
             return
         }
-        let y = min(screen.maxY - height, obstacle.midY - height / 2)
-        left = CGRect(x: max(screen.minX, obstacle.minX - width - 5), y: y, width: width, height: height)
-        right = CGRect(x: min(screen.maxX - width, obstacle.maxX + 5), y: y, width: width, height: height)
+        let leftWidth = min(statusWidth + 16, max(0, obstacle.minX - screen.minX))
+        let rightWidth = min(nameWidth + 16, max(0, screen.maxX - obstacle.maxX))
+        frame = CGRect(x: obstacle.minX - leftWidth, y: obstacle.minY, width: leftWidth + obstacle.width + rightWidth, height: height)
+        left = CGRect(x: frame.minX + 12, y: frame.minY, width: max(0, leftWidth - 20), height: height)
+        right = CGRect(x: obstacle.maxX + 8, y: frame.minY, width: max(0, rightWidth - 20), height: height)
+    }
+}
+
+public struct ActivityNotice: Equatable, Sendable {
+    public let signal: ActivitySignal
+    public let profileIDs: [String]
+}
+
+/// Coalesce duplicate profile events without attributing another profile's result to them.
+public struct ActivityCueBatch: Sendable {
+    private var events: [String: ActivitySignal] = [:]
+    public init() {}
+    public mutating func insert(_ event: ActivityEvent) { events[event.profileID] = event.signal }
+    public mutating func next() -> ActivityNotice? {
+        guard !events.isEmpty else { return nil }
+        let signal: ActivitySignal = events.values.contains(.needsInput) ? .needsInput : .finished
+        let ids = events.filter { $0.value == signal }.map(\.key).sorted()
+        ids.forEach { events.removeValue(forKey: $0) }
+        return ActivityNotice(signal: signal, profileIDs: ids)
     }
 }
 

@@ -18,7 +18,8 @@ final class IslandTests: XCTestCase {
                         if y == 1 { XCTAssertFalse(layout.opensUpward) }
                         let cues = ActivityCueLayout(screen: visible, obstacle: layout.collapsed, floating: true)
                         XCTAssertTrue(visible.contains(cues.left)); XCTAssertTrue(visible.contains(cues.right))
-                        XCTAssertFalse(cues.left.intersects(layout.collapsed))
+                        XCTAssertTrue(cues.frame.contains(layout.collapsed))
+                        XCTAssertEqual(cues.origin, layout.collapsed)
                     }
                 }
             }
@@ -61,8 +62,8 @@ final class IslandTests: XCTestCase {
                 XCTAssertTrue(normal.containsPointer(CGPoint(x: normal.collapsed.midX, y: normal.collapsed.midY), expandedOrClosing: false))
                 XCTAssertFalse(normal.containsPointer(CGPoint(x: normal.collapsed.midX, y: screen.maxY), expandedOrClosing: false))
                 XCTAssertFalse(normal.containsPointer(CGPoint(x: normal.expanded.midX, y: normal.expanded.maxY + 1), expandedOrClosing: true))
-                let cues = ActivityCueLayout(screen: screen, obstacle: normal.collapsed, floating: true)
-                XCTAssertGreaterThan(cues.left.minY, normal.collapsed.maxY)
+                let cues = ActivityCueLayout(screen: visible, obstacle: normal.collapsed, floating: true)
+                XCTAssertEqual(cues.frame.minY, normal.collapsed.minY)
                 XCTAssertTrue(visible.contains(cues.left)); XCTAssertTrue(visible.contains(cues.right))
             }
         }

@@ -9,7 +9,7 @@
 
 **Cancel a ChatGPT download:** use **Cancel download** beside its progress bar. During signature verification, cancellation may take a moment. Once app installation starts, cancellation is unavailable and ProfileDock must remain open until it finishes.
 
-**Activity cues:** blue dots mean working, orange needs input, green is idle, red is unread, and gray is closed or unknown. New completion/input events briefly light up both sides of the notch or compact bar. **Appearance → Activity & sound** has previews, a visual-cue toggle, optional quiet chimes, and volume. Sounds are off by default. Repeated events are combined, and startup/reconnect snapshots stay quiet. Reduce Motion disables pulsing.
+**Activity cues:** blue dots mean working, orange needs input, green is idle, red is unread, and gray is closed or unknown. A single cue grows from the strip, showing **Done** or **Needs you** on the left and the environment name on the right, then settles back into the strip. The camera area stays clear on notched screens. **Appearance → Activity & sound** has previews, a visual-cue toggle, optional quiet chimes, and volume. Sounds are off by default. Matching events are combined; different states queue separately so names stay accurate. Startup/reconnect snapshots stay quiet. Reduce Motion uses a simple fade.
 
 **Shared app or separate copy?** Shared profiles use less disk space but update together. A separate, unmodified ChatGPT copy uses more space and can update independently. Use a profile's options menu to create a copy or move it to the Trash and return to the shared app.
 

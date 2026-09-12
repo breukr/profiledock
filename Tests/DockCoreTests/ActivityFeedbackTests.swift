@@ -2,6 +2,38 @@ import XCTest
 @testable import DockCore
 
 final class ActivityFeedbackTests: XCTestCase {
+    func testNoticesKeepEnvironmentNamesWithTheirOwnStateAndQueueBothKinds() {
+        var batch = ActivityCueBatch()
+        batch.insert(ActivityEvent(profileID: "personal", signal: .finished))
+        batch.insert(ActivityEvent(profileID: "work", signal: .needsInput))
+        batch.insert(ActivityEvent(profileID: "personal", signal: .finished))
+        let input = batch.next()
+        XCTAssertEqual(input?.signal, .needsInput)
+        XCTAssertEqual(input?.profileIDs, ["work"])
+        let done = batch.next()
+        XCTAssertEqual(done?.signal, .finished)
+        XCTAssertEqual(done?.profileIDs, ["personal"])
+        XCTAssertNil(batch.next())
+        batch.insert(ActivityEvent(profileID: "work", signal: .needsInput))
+        batch.insert(ActivityEvent(profileID: "work", signal: .finished))
+        XCTAssertEqual(batch.next()?.signal, .finished, "Do not show an input request that was already resolved")
+    }
+
+    func testNoticeCoalescesMatchingEnvironmentsAndMorphsFromTheStrip() {
+        var batch = ActivityCueBatch()
+        batch.insert(ActivityEvent(profileID: "work", signal: .finished))
+        batch.insert(ActivityEvent(profileID: "personal", signal: .finished))
+        XCTAssertEqual(batch.next()?.profileIDs, ["personal", "work"])
+        let screen = CGRect(x: -1920, y: -200, width: 1920, height: 1080)
+        for x in [screen.minX + 12, screen.midX, screen.maxX - 206] {
+            let strip = CGRect(x: x, y: screen.minY + 20, width: 194, height: 32)
+            let cue = ActivityCueLayout(screen: screen, obstacle: strip, floating: true, nameWidth: 180)
+            XCTAssertTrue(screen.contains(cue.frame)); XCTAssertTrue(cue.frame.contains(strip))
+            XCTAssertEqual(cue.origin, strip)
+            XCTAssertTrue(cue.frame.contains(cue.left)); XCTAssertTrue(cue.frame.contains(cue.right))
+            XCTAssertLessThan(cue.left.maxX, cue.right.minX)
+        }
+    }
     func testWaitingTakesPriorityWhenAnotherTaskIsWorking() {
         XCTAssertEqual(ProfileActivityState(summary: ActivitySummary(unread: 3, working: 2, waiting: 1, liveAvailable: true, appOpen: true), isOpen: true), .waiting)
         XCTAssertEqual(ProfileActivityState(summary: ActivitySummary(unread: 3, working: 2, liveAvailable: true, appOpen: true), isOpen: true), .working)
