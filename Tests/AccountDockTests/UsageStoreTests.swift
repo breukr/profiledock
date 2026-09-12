@@ -54,7 +54,9 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertEqual(subject.entries[b.id]?.snapshot?.windows.first?.remainingPercent, 88)
         XCTAssertEqual(subject.entries[a.id]?.snapshot?.bankedResets, 2)
         XCTAssertEqual(subject.entries[b.id]?.snapshot?.bankedResets, 0)
+        XCTAssertEqual(subject.cardUsageRows, 1)
         subject.refreshAll()
+        XCTAssertEqual(subject.cardUsageRows, 1, "Identity validation must not insert an empty usage row")
         try await eventually { !subject.isRefreshing }
         let calls = await client.fetchCalls
         XCTAssertEqual(calls, 2, "Fresh readings should not start another HTTP request")
