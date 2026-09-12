@@ -52,7 +52,7 @@ public struct IslandLayout: Equatable, Sendable {
         self.placement = placement
         self.notchHeight = placement == .topCenter ? max(0, notchHeight) : 0
         let available = Self.usableFrame(screen: screen, visible: visibleFrame)
-        let availableHeight = placement == .topCenter ? screen.maxY - (visibleFrame?.minY ?? screen.minY) - 12 - self.notchHeight : available.height
+        let availableHeight: Double = placement == .topCenter ? Double(screen.maxY - (visibleFrame?.minY ?? screen.minY)) - 12 - self.notchHeight : Double(available.height)
         let expandedWidth = min(placement == .topCenter ? screen.width - 32 : available.width, WidgetSizing.expanded(count: count, scale: scale, preferred: preferredExpanded, insights: showsInsights))
         let insightsHeight = showsInsights ? WidgetSizing.insightsHeight(width: expandedWidth, count: count) : 0
         let singleRowHeight = 325 + 32 * scale + Self.usageHeight(rows: usageRows) - 104 + (hasMessage ? 52 : 0) + (showsResetDetails ? Self.resetDetailsHeight : 0) + 34
@@ -74,7 +74,7 @@ public struct IslandLayout: Equatable, Sendable {
                 let above = available.maxY - collapsed.minY, below = collapsed.maxY - available.minY
                 let upward = above >= expandedHeight || above >= below
                 expanded = CGRect(x: min(available.maxX - expandedWidth, max(available.minX, collapsed.midX - expandedWidth / 2)),
-                                  y: min(available.maxY - expandedHeight, max(available.minY, upward ? collapsed.minY : collapsed.maxY - expandedHeight)),
+                                  y: min(available.maxY - expandedHeight, max(available.minY, upward ? collapsed.minY : collapsed.maxY - CGFloat(expandedHeight))),
                                   width: expandedWidth, height: expandedHeight)
                 return
             }
