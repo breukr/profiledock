@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="540" viewBox="0 0 1200 540">
+  <defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#eef4ff"/><stop offset="1" stop-color="#fafbfe"/></linearGradient><linearGradient id="blue" x2="1" y2="1"><stop stop-color="#5b9cff"/><stop offset="1" stop-color="#2670ed"/></linearGradient></defs>
+  <rect width="1200" height="540" rx="28" fill="url(#bg)"/>
+  <rect x="490" y="0" width="220" height="42" rx="18" fill="#111318"/>
+  <rect x="490" width="220" height="22" fill="#111318"/>
+  <rect x="548" y="84" width="104" height="104" rx="25" fill="#151a25"/>
+  <rect x="568" y="106" width="28" height="28" rx="8" fill="url(#blue)"/>
+  <rect x="604" y="106" width="28" height="28" rx="8" fill="#aed0ff"/>
+  <rect x="568" y="142" width="28" height="28" rx="8" fill="#d9e7ff"/>
+  <rect x="604" y="142" width="28" height="28" rx="8" fill="#629fff"/>
+  <text x="600" y="265" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,Helvetica,sans-serif" font-size="58" font-weight="650" letter-spacing="-2" fill="#151a25">ProfileDock</text>
+  <text x="600" y="316" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,Helvetica,sans-serif" font-size="26" fill="#536176">Your ChatGPT profiles. One place.</text>
+  <rect x="324" y="369" width="552" height="64" rx="20" fill="#111318"/>
+  <circle cx="365" cy="401" r="13" fill="#4a8ffa"/><circle cx="386" cy="411" r="4" fill="#50d28a"/>
+  <text x="397" y="407" font-family="-apple-system,BlinkMacSystemFont,Helvetica,sans-serif" font-size="16" fill="#fff">Personal</text>
+  <path d="M500 386v30" stroke="#343942"/>
+  <circle cx="535" cy="401" r="13" fill="#9071e8"/>
+  <text x="565" y="407" font-family="-apple-system,BlinkMacSystemFont,Helvetica,sans-serif" font-size="16" fill="#fff">Work</text>
+  <path d="M653 386v30" stroke="#343942"/>
+  <circle cx="688" cy="401" r="13" fill="#36b6a0"/>
+  <text x="718" y="407" font-family="-apple-system,BlinkMacSystemFont,Helvetica,sans-serif" font-size="16" fill="#fff">Side project</text>
+  <text x="600" y="488" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,Helvetica,sans-serif" font-size="15" fill="#7c8798" letter-spacing="2">MADE FOR MAC · BY BREUKR</text>
+</svg>
