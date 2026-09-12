@@ -3,6 +3,11 @@ set -euo pipefail
 project_dir="$(cd "$(dirname "$0")/.." && pwd)"
 destination="${1:-/Applications/ProfileDock.app}"
 source_app="$project_dir/dist/ProfileDock.app"
+stage_dir="$(mktemp -d /private/tmp/profiledock-local-install.XXXXXX)"
+trap 'rm -rf "$stage_dir"' EXIT
+ditto --norsrc --noextattr "$source_app" "$stage_dir/ProfileDock.app"
+source_app="$stage_dir/ProfileDock.app"
+xattr -cr "$source_app"
 if pgrep -x AccountDock >/dev/null; then
     echo "Quit ProfileDock or Account Dock before installing." >&2
     exit 1
