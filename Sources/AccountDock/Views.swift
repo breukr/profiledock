@@ -103,15 +103,17 @@ struct CompactIslandView: View {
     @ObservedObject var presentation: IslandPresentation
     let drag: (DockDragPhase, CGPoint) -> Void
     var body: some View {
+        GeometryReader { geometry in
+        let visible = WidgetSizing.visibleDots(count: model.preferences.profiles.count, width: geometry.size.width, floating: model.placement == .free)
         HStack(spacing: 7) {
             if model.placement == .free { DockDragHandle(drag: drag).frame(width: 22).help("Drag to move ProfileDock") }
             BrandMark(size: 11).foregroundStyle(.white.opacity(0.85))
             Text("Accounts").font(.system(size: 10, weight: .medium)).foregroundStyle(.white.opacity(0.9))
             HStack(spacing: 5) {
-                ForEach(Array(model.preferences.profiles.prefix(5))) { profile in
+                ForEach(Array(model.preferences.profiles.prefix(visible))) { profile in
                     ActivityDot(state: ProfileActivityState(summary: activity.entries[profile.id], isOpen: model.running[profile.id]?.isEmpty == false), visible: !presentation.expanded)
                 }
-                if model.preferences.profiles.count > 5 { Text("+\(model.preferences.profiles.count - 5)").font(.system(size: 9)).foregroundStyle(.white.opacity(0.6)) }
+                if model.preferences.profiles.count > visible { Text("+\(model.preferences.profiles.count - visible)").font(.system(size: 9)).foregroundStyle(.white.opacity(0.6)) }
             }
             Image(systemName: presentation.opensUpward ? "chevron.up" : "chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(.white.opacity(0.5))
         }
@@ -122,6 +124,7 @@ struct CompactIslandView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("ProfileDock, hover here to open. " + statusDescription)
         .help(statusDescription)
+        }
     }
     private var statusDescription: String {
         model.preferences.profiles.map { "\($0.name): \(ProfileActivityState(summary: activity.entries[$0.id], isOpen: model.running[$0.id]?.isEmpty == false).label)" }.joined(separator: ". ")
@@ -132,12 +135,21 @@ struct IslandView: View {
     @ObservedObject var model: DockModel
     @ObservedObject var usage: UsageStore
     @ObservedObject var activity: ActivityMonitor
+    @ObservedObject var insights: InsightsStore
     @ObservedObject var presentation: IslandPresentation
     let notchHeight: CGFloat
     let settings: () -> Void
     let drag: (DockDragPhase, CGPoint) -> Void
+    @State private var profilePage = 0
 
     var body: some View {
+        GeometryReader { geometry in
+        let columns = presentation.profileColumns
+        let capacity = max(1, columns * presentation.profileRows)
+        let pageCount = max(1, (model.preferences.profiles.count + capacity - 1) / capacity)
+        let page = min(profilePage, pageCount - 1)
+        let tileWidth = WidgetSizing.tile(count: columns, available: geometry.size.width - 32, scale: model.preferences.scale)
+        ScrollView(.vertical) {
         VStack(spacing: 13) {
             HStack(spacing: 8) {
                 if model.placement == .free { DockDragHandle(drag: drag).frame(width: 22, height: 20).help("Drag to move ProfileDock") }
@@ -151,14 +163,23 @@ struct IslandView: View {
                     Image(systemName: "slider.horizontal.3").frame(width: 22, height: 20)
                 }.accessibilityLabel("Settings").help("Profiles, apps, and settings")
             }.buttonStyle(.plain).foregroundStyle(.white.opacity(0.65))
-            ScrollView(.horizontal) {
-            HStack(alignment: .top, spacing: 10 * model.preferences.scale) {
-                ForEach(Array(model.preferences.profiles.enumerated()), id: \.element.id) { index, profile in
-                    accountCard(profile, index: index).frame(width: 132 * model.preferences.scale)
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(tileWidth), spacing: 10 * model.preferences.scale, alignment: .top), count: columns), alignment: .center, spacing: 10) {
+                ForEach(Array(model.preferences.profiles.enumerated().dropFirst(page * capacity).prefix(capacity)), id: \.element.id) { index, profile in
+                    accountCard(profile, index: index, tileWidth: tileWidth).frame(width: tileWidth)
                 }
             }
-            }.scrollIndicators(.hidden)
+            if pageCount > 1 {
+                HStack(spacing: 14) {
+                    Button { profilePage = max(0, page - 1) } label: { Image(systemName: "chevron.left") }
+                        .disabled(page == 0).accessibilityLabel("Previous accounts")
+                    Text("\(page * capacity + 1)–\(min((page + 1) * capacity, model.preferences.profiles.count)) of \(model.preferences.profiles.count)")
+                        .font(.system(size: 10)).monospacedDigit().foregroundStyle(.secondary)
+                    Button { profilePage = min(pageCount - 1, page + 1) } label: { Image(systemName: "chevron.right") }
+                        .disabled(page == pageCount - 1).accessibilityLabel("Next accounts")
+                }.buttonStyle(.plain).font(.system(size: 10, weight: .semibold)).frame(height: 20)
+            }
             if model.preferences.profiles.isEmpty { Button("Add your first profile", action: settings).buttonStyle(.borderedProminent) }
+            InsightsDrawer(model: model, store: insights, presentation: presentation)
             if let message = model.message {
                 HStack(alignment: .top) {
                     Text(message).font(.system(size: 11)).fixedSize(horizontal: false, vertical: true).lineLimit(3)
@@ -166,14 +187,18 @@ struct IslandView: View {
                 }.foregroundStyle(.orange)
             }
         }
+        }
+        .scrollIndicators(.never)
         .padding(.top, notchHeight + 13)
         .padding(.horizontal, 16)
         .padding(.bottom, 14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .environment(\.colorScheme, .dark)
+        .onChange(of: model.preferences.profiles.map(\.id)) { _, _ in profilePage = 0 }
+        }
     }
 
-    private func accountCard(_ profile: Profile, index: Int) -> some View {
+    private func accountCard(_ profile: Profile, index: Int, tileWidth: CGFloat) -> some View {
         let active = model.activeProfile == profile.id
         let isOpen = model.running[profile.id]?.isEmpty == false
         let entry = usage.entries[profile.id]
@@ -182,11 +207,12 @@ struct IslandView: View {
         return VStack(spacing: 10) {
             Button { model.select(profile) } label: {
                 VStack(spacing: 7) {
-                    ProfileBadge(model: model, profile: profile, size: 52 * model.preferences.scale, activity: taskState, activityVisible: presentation.expanded)
+                    ProfileBadge(model: model, profile: profile, size: min(52 * model.preferences.scale, tileWidth * 0.42), activity: taskState, activityVisible: presentation.expanded)
                     Text(profile.name).font(.system(size: 11, weight: active ? .semibold : .medium))
                         .foregroundStyle(.white.opacity(active ? 1 : 0.8)).lineLimit(1)
                     Text(activityText(taskState) ?? (active ? "Active" : (isOpen ? "Open" : (index < 9 ? "⌥⌘\(index + 1)" : "Open"))))
                         .font(.system(size: 10, weight: (taskState?.working ?? 0) > 0 ? .semibold : .regular))
+                        .lineLimit(1).minimumScaleFactor(0.8)
                         .foregroundStyle((taskState?.working ?? 0) > 0 ? Color(red: 0.4, green: 0.72, blue: 1) : .white.opacity(active ? 1 : 0.65))
                 }
                 .padding(.vertical, 8)
@@ -243,7 +269,7 @@ struct IslandView: View {
         if state.working > 0 { return "\(state.working) working" + (state.waiting > 0 ? " · \(state.waiting) waiting" : "") }
         if state.waiting > 0 { return "\(state.waiting) needs you" }
         if let unread = state.unread, unread > 0 { return "\(unread) unread" }
-        if state.appOpen && !state.liveAvailable { return "Task status unknown" }
+        if state.appOpen && !state.liveAvailable { return state.connectionIssue?.label ?? "Activity unavailable" }
         if state.unread == nil { return "Results unknown" }
         return nil
     }
@@ -251,7 +277,7 @@ struct IslandView: View {
     private func activityHelp(_ state: ActivitySummary?) -> String {
         guard let state else { return "Loading task status…" }
         let unread = state.unread.map { "\($0) completed tasks with unread results." } ?? "Unread results unknown."
-        let live = state.liveAvailable ? "\(state.working) working, \(state.waiting) waiting for you." : (state.appOpen ? "Live task status unavailable." : "Desktop profile closed.")
+        let live = state.liveAvailable ? "\(state.working) working, \(state.waiting) waiting for you." : (state.appOpen ? state.connectionIssue?.explanation ?? "Live task status unavailable." : "Desktop profile closed.")
         return "\(unread) \(live)\nTracks local Work/Codex tasks. Ordinary ChatGPT chats are not counted."
     }
 
@@ -332,6 +358,7 @@ struct ResetInventoryView: View {
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(height: IslandLayout.resetDetailsHeight - 8)
+                .scrollIndicators(.never)
             }
         }
     }

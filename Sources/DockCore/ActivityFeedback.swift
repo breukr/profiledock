@@ -19,7 +19,7 @@ public enum ProfileActivityState: String, CaseIterable, Sendable {
         case .waiting: return "Needs your input"
         case .unread: return "Unread results"
         case .idle: return "Idle"
-        case .unknown: return "Task status unknown"
+        case .unknown: return "Activity unavailable"
         case .closed: return "Closed"
         }
     }

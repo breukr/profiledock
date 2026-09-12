@@ -9,6 +9,35 @@ private actor NoNetworkUsage: UsageFetching {
 }
 
 final class IslandRenderingTests: XCTestCase {
+    @MainActor func testNativeMenuAndSubmenuKeepStripOpenUntilDismissed() async throws {
+        _ = NSApplication.shared
+        guard let screen = NSScreen.screens.first else { throw XCTSkip("No attached screen") }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let model = DockModel(home: directory), usage = UsageStore(client: NoNetworkUsage())
+        let island = IslandController(screen: screen, model: model, usage: usage, presentWindows: false, settings: {})
+        defer { island.shutdown(); usage.shutdown() }
+        let inside = CGPoint(x: island.layout.collapsed.midX, y: island.layout.collapsed.midY)
+        let outside = CGPoint(x: screen.frame.minX - 100, y: screen.frame.minY - 100)
+        island.pointerMoved(to: inside)
+        island.presentation.setInsightsExpanded(true)
+        island.pointerMoved(to: outside) // An already pending close must also be cancelled.
+        let menu = NSMenu(), submenu = NSMenu()
+        NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: menu)
+        NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: submenu)
+        try await Task.sleep(for: .milliseconds(160))
+        island.pointerMoved(to: outside)
+        XCTAssertTrue(island.expanded)
+        NotificationCenter.default.post(name: NSMenu.didEndTrackingNotification, object: submenu)
+        island.pointerMoved(to: outside)
+        XCTAssertTrue(island.expanded)
+        NotificationCenter.default.post(name: NSMenu.didEndTrackingNotification, object: menu)
+        island.pointerMoved(to: outside)
+        try await Task.sleep(for: .milliseconds(160))
+        island.pointerMoved(to: outside)
+        XCTAssertFalse(island.expanded)
+    }
+
     @MainActor func testFreeStripGripDragsWithoutHoverOpeningAndPersistsPosition() throws {
         _ = NSApplication.shared
         guard let screen = NSScreen.screens.first else { throw XCTSkip("No attached screen") }

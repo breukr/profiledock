@@ -41,7 +41,7 @@ final class ActivityMonitor: ObservableObject {
     var diagnostics: [String: Any] {
         entries.mapValues { value -> [String: Any] in
             ["unreadFinished": value.unread as Any? ?? NSNull(), "working": value.working, "waiting": value.waiting,
-             "liveAvailable": value.liveAvailable, "appOpen": value.appOpen, "coverage": "local Work/Codex tasks"]
+             "liveAvailable": value.liveAvailable, "appOpen": value.appOpen, "connectionIssue": value.connectionIssue?.rawValue as Any? ?? NSNull(), "coverage": "local Work/Codex tasks"]
         }
     }
 }
@@ -55,6 +55,10 @@ private final class ProfileActivityObserver: @unchecked Sendable {
     private let signal: (ActivitySignal) -> Void
     private var metadata: ActivityMetadata?
     private var connection: NWConnection?
+    private var socketInode: UInt64?
+    private var connectionIssue: ActivityConnectionIssue? = .connecting
+    private var handshakeWork: DispatchWorkItem?
+    private var healthWork: DispatchWorkItem?
     private var generation = 0
     private var client = "initializing-client"
     private var frames = ActivityFrames()
@@ -81,14 +85,15 @@ private final class ProfileActivityObserver: @unchecked Sendable {
             guard let self, !self.stopped else { return }
             let changed = self.open != value
             self.open = value
-            if !value, changed { self.disconnect() }
+            if !value, changed { self.disconnect(); self.healthWork?.cancel(); self.healthWork = nil }
+            if value, changed { self.connectionIssue = .connecting }
             self.refresh()
         }
     }
 
     func stop() {
         queue.async { [self] in
-            stopped = true; refreshWork?.cancel(); reconnectWork?.cancel()
+            stopped = true; refreshWork?.cancel(); reconnectWork?.cancel(); healthWork?.cancel()
             disconnect()
             watchers.values.forEach { $0.1.cancel() }; watchers.removeAll()
         }
@@ -109,13 +114,35 @@ private final class ProfileActivityObserver: @unchecked Sendable {
             let next = try ActivityMetadata.read(profile: profile, home: home)
             if metadata?.identity != next.identity { disconnect(); attempted.removeAll() }
             metadata = next
+            if let socketInode, currentSocketInode() != socketInode {
+                disconnect(); connectionIssue = .reconnecting
+            }
             if open, connection == nil { connect() }
             if ready { reconcile() }
         } catch {
-            metadata = nil; disconnect()
+            metadata = nil; disconnect(); connectionIssue = .metadata
             scheduleReconnect()
         }
+        scheduleHealthCheck()
         publish()
+    }
+
+    private func currentSocketInode() -> UInt64? {
+        var info = stat()
+        let path = profile.home(in: home).appendingPathComponent("ipc/ipc.sock").path
+        guard lstat(path, &info) == 0, (info.st_mode & S_IFMT) == S_IFSOCK,
+              info.st_uid == geteuid(), (info.st_mode & 0o022) == 0 else { return nil }
+        return UInt64(info.st_ino)
+    }
+
+    private func scheduleHealthCheck() {
+        guard open, !stopped, healthWork == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.healthWork = nil
+            if self.open { self.refresh() }
+        }
+        healthWork = work; queue.asyncAfter(deadline: .now() + 10, execute: work)
     }
 
     private func installWatchers() {
@@ -141,9 +168,8 @@ private final class ProfileActivityObserver: @unchecked Sendable {
     private func connect() {
         guard open, !stopped, metadata != nil, connection == nil else { return }
         let path = profile.home(in: home).appendingPathComponent("ipc/ipc.sock").path
-        var info = stat()
-        guard lstat(path, &info) == 0, (info.st_mode & S_IFMT) == S_IFSOCK,
-              info.st_uid == geteuid(), (info.st_mode & 0o022) == 0 else { scheduleReconnect(); return }
+        guard let inode = currentSocketInode() else { connectionIssue = .reconnecting; scheduleReconnect(); return }
+        socketInode = inode
         generation += 1
         let current = generation
         let connection = NWConnection(to: .unix(path: path), using: .tcp)
@@ -154,12 +180,17 @@ private final class ProfileActivityObserver: @unchecked Sendable {
             case .ready:
                 self.request("initialize", version: 0, params: ["clientType": "account-dock-read-only"])
                 self.receive(connection, generation: current)
-            case .failed, .cancelled:
-                self.disconnect(); self.publish(); self.scheduleReconnect()
+            case .waiting, .failed, .cancelled:
+                self.disconnect(); self.connectionIssue = .reconnecting; self.publish(); self.scheduleReconnect()
             default: break
             }
         }
         connection.start(queue: queue)
+        let deadline = DispatchWorkItem { [weak self] in
+            guard let self, self.generation == current, !self.ready, !self.stopped else { return }
+            self.disconnect(); self.connectionIssue = .reconnecting; self.publish(); self.scheduleReconnect()
+        }
+        handshakeWork = deadline; queue.asyncAfter(deadline: .now() + 4, execute: deadline)
     }
 
     private func scheduleReconnect() {
@@ -173,6 +204,7 @@ private final class ProfileActivityObserver: @unchecked Sendable {
     }
 
     private func disconnect() {
+        handshakeWork?.cancel(); handshakeWork = nil; socketInode = nil
         for (thread, owner) in owners { follow(thread, owner: owner, value: false) }
         generation += 1
         if let old = connection {
@@ -196,8 +228,8 @@ private final class ProfileActivityObserver: @unchecked Sendable {
                     // JSON messages live only in this autorelease scope; no transcript is cached or logged.
                     try autoreleasepool { for message in try self.frames.append(data) { self.handle(message) } }
                 }
-            } catch { self.disconnect(); self.publish(); self.scheduleReconnect(); return }
-            if complete || error != nil { self.disconnect(); self.publish(); self.scheduleReconnect() }
+            } catch { self.disconnect(); self.connectionIssue = .reconnecting; self.publish(); self.scheduleReconnect(); return }
+            if complete || error != nil { self.disconnect(); self.connectionIssue = .reconnecting; self.publish(); self.scheduleReconnect() }
             else if self.generation == current { self.receive(connection, generation: current) }
         }
     }
@@ -239,7 +271,10 @@ private final class ProfileActivityObserver: @unchecked Sendable {
             if let requestID = message["requestId"] { send(["type": "client-discovery-response", "requestId": requestID, "response": ["canHandle": false]]) }
         case "response":
             if message["method"] as? String == "initialize", let result = message["result"] as? [String: Any], let id = result["clientId"] as? String {
-                client = id; ready = true; reconcile(); publish()
+                client = id; ready = true; connectionIssue = nil
+                handshakeWork?.cancel(); handshakeWork = nil
+                reconnectWork?.cancel(); reconnectWork = nil
+                reconcile(); publish()
             } else if let id = message["requestId"] as? String, let thread = pending.removeValue(forKey: id),
                       message["resultType"] as? String == "success", let owner = message["handledByClientId"] as? String,
                       metadata?.candidates.contains(thread) == true {
@@ -248,6 +283,11 @@ private final class ProfileActivityObserver: @unchecked Sendable {
             }
         case "broadcast":
             guard let method = message["method"] as? String, let params = message["params"] as? [String: Any] else { return }
+            if method == "thread-stream-state-changed", message["version"] as? Int != 11,
+               let thread = params["conversationId"] as? String, let owner = owners[thread],
+               owner == message["sourceClientId"] as? String {
+                projections[thread] = ActivityProjection(); connectionIssue = .unsupported; publish(); return
+            }
             if method == "thread-stream-state-changed", message["version"] as? Int == 11,
                params["hostId"] as? String == "local", let thread = params["conversationId"] as? String,
                let owner = owners[thread], owner == message["sourceClientId"] as? String,
@@ -293,7 +333,8 @@ private final class ProfileActivityObserver: @unchecked Sendable {
         }
         let summary = ActivitySummary(unread: unread?.count, working: projections.values.filter { $0.activity == .working }.count,
                                       waiting: projections.values.filter { $0.activity == .waiting }.count,
-                                      liveAvailable: ready && metadata != nil && !projections.values.contains(where: { $0.activity == .unavailable }), appOpen: open)
+                                      liveAvailable: ready && metadata != nil && connectionIssue != .unsupported && !projections.values.contains(where: { $0.activity == .unavailable }), appOpen: open,
+                                      connectionIssue: open ? connectionIssue : nil)
         if previous != summary { previous = summary; deliver(summary) }
     }
 }

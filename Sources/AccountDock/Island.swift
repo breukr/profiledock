@@ -12,9 +12,17 @@ final class AccountPanel: NSPanel {
 @MainActor final class IslandPresentation: ObservableObject {
     @Published var expanded: Bool
     @Published var opensUpward = false
+    @Published var profileColumns = 1
+    @Published var profileRows = 1
     @Published private(set) var resetDetails: Set<String> = []
+    @Published private(set) var insightsExpanded = false
+    var insightsPopoverPresented = false
     var onResetDetailsChange: (() -> Void)?
     init(expanded: Bool = false) { self.expanded = expanded }
+    func setInsightsExpanded(_ value: Bool) {
+        guard value != insightsExpanded else { return }
+        insightsExpanded = value; onResetDetailsChange?()
+    }
     func toggleResetDetails(_ profileID: String) {
         if !resetDetails.insert(profileID).inserted { resetDetails.remove(profileID) }
         onResetDetailsChange?()
@@ -39,6 +47,8 @@ final class IslandController {
     private var hoverIntent = HoverIntent()
     private var animationGeneration = 0
     private var usageSubscription: AnyCancellable?
+    private var menuSubscriptions = Set<AnyCancellable>()
+    private var trackedMenus: Set<ObjectIdentifier> = []
     private var dragStart: (pointer: CGPoint, origin: CGPoint)?
     private var draggedPosition: FloatingPosition?
     private let frameMeter = AnimationFrameMeter()
@@ -53,21 +63,22 @@ final class IslandController {
         return screen.localizedName
     }
 
-    static func layout(screen: NSScreen, model: DockModel, showsResetDetails: Bool = false, position: FloatingPosition? = nil, usageRows: Int = 2) -> IslandLayout {
+    static func layout(screen: NSScreen, model: DockModel, showsResetDetails: Bool = false, position: FloatingPosition? = nil, usageRows: Int = 2, showsInsights: Bool = false) -> IslandLayout {
         let notchWidth: CGFloat
         if screen.safeAreaInsets.top > 0, let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
             notchWidth = right.minX - left.maxX
         } else { notchWidth = 180 }
         let topInset = screen.frame.maxY - screen.visibleFrame.maxY
         let menuBarHeight = topInset > 0 ? topInset : NSStatusBar.system.thickness
-        return IslandLayout(screen: screen.frame, notchHeight: screen.safeAreaInsets.top, notchWidth: notchWidth, count: model.preferences.profiles.count, scale: model.preferences.scale, hasMessage: model.message != nil, menuBarHeight: menuBarHeight, showsResetDetails: showsResetDetails, placement: model.placement, visibleFrame: screen.visibleFrame, position: position ?? model.floatingPosition(for: positionKey(for: screen)), usageRows: usageRows)
+        return IslandLayout(screen: screen.frame, notchHeight: screen.safeAreaInsets.top, notchWidth: notchWidth, count: model.preferences.profiles.count, scale: model.preferences.scale, hasMessage: model.message != nil, menuBarHeight: menuBarHeight, showsResetDetails: showsResetDetails, placement: model.placement, visibleFrame: screen.visibleFrame, position: position ?? model.floatingPosition(for: positionKey(for: screen)), usageRows: usageRows, showsInsights: showsInsights || model.preferences.insightsExpansion == .always, compactWidth: model.preferences.compactWidth, expandedWidth: model.preferences.expandedWidth)
     }
 
-    init(screen: NSScreen, model: DockModel, usage: UsageStore, activity: ActivityMonitor? = nil, presentWindows: Bool = true, settings: @escaping () -> Void) {
+    init(screen: NSScreen, model: DockModel, usage: UsageStore, activity: ActivityMonitor? = nil, insights: InsightsStore? = nil, presentWindows: Bool = true, settings: @escaping () -> Void) {
         self.screen = screen; self.model = model; self.usage = usage
         self.presentWindows = presentWindows
         let activity = activity ?? ActivityMonitor(home: model.home)
         layout = Self.layout(screen: screen, model: model, usageRows: usage.cardUsageRows)
+        presentation.profileColumns = layout.profileColumns; presentation.profileRows = layout.profileRows
         panel = Self.makePanel(frame: layout.expanded, title: "Account Dock · \(screen.localizedName)")
         compactPanel = Self.makePanel(frame: layout.collapsed, title: "Account Dock · \(screen.localizedName)")
         compactPanel.hasShadow = false
@@ -79,7 +90,7 @@ final class IslandController {
             compactPanel.alphaValue = 0
             compactPanel.ignoresMouseEvents = true
         }
-        let content = NSHostingView(rootView: IslandView(model: model, usage: usage, activity: activity, presentation: presentation, notchHeight: layout.notchHeight, settings: settings, drag: { [weak self] phase, point in self?.drag(phase, at: point) }))
+        let content = NSHostingView(rootView: IslandView(model: model, usage: usage, activity: activity, insights: insights ?? InsightsStore(), presentation: presentation, notchHeight: layout.notchHeight, settings: settings, drag: { [weak self] phase, point in self?.drag(phase, at: point) }))
         content.sizingOptions = []
         surface.install(content)
         panel.contentView = surface
@@ -92,6 +103,16 @@ final class IslandController {
         presentation.onResetDetailsChange = { [weak self] in self?.updateLayout() }
         presentation.opensUpward = layout.opensUpward
         usageSubscription = usage.$entries.receive(on: RunLoop.main).map { _ in usage.cardUsageRows }.removeDuplicates().sink { [weak self] _ in self?.updateLayout() }
+        NotificationCenter.default.publisher(for: NSMenu.didBeginTrackingNotification).sink { [weak self] notice in
+            guard let self, let menu = notice.object as? NSMenu else { return }
+            self.trackedMenus.insert(ObjectIdentifier(menu))
+            self.cancelCollapseForInteraction()
+        }.store(in: &menuSubscriptions)
+        NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification).sink { [weak self] notice in
+            guard let self, let menu = notice.object as? NSMenu else { return }
+            self.trackedMenus.remove(ObjectIdentifier(menu))
+            if self.trackedMenus.isEmpty { self.checkHover() }
+        }.store(in: &menuSubscriptions)
         showPanel()
     }
 
@@ -118,6 +139,7 @@ final class IslandController {
 
     func shutdown() {
         usageSubscription?.cancel()
+        menuSubscriptions.removeAll(); trackedMenus.removeAll()
         presentation.expanded = false
         animationGeneration += 1
         collapseTimer?.invalidate(); frameMeter.stop()
@@ -126,10 +148,11 @@ final class IslandController {
     }
 
     func updateLayout() {
-        let next = Self.layout(screen: screen, model: model, showsResetDetails: !presentation.resetDetails.isEmpty, position: draggedPosition, usageRows: usage.cardUsageRows)
+        let next = Self.layout(screen: screen, model: model, showsResetDetails: !presentation.resetDetails.isEmpty, position: draggedPosition, usageRows: usage.cardUsageRows, showsInsights: presentation.insightsExpanded)
         guard next != layout else { return }
         animationGeneration += 1; animating = false; frameMeter.stop()
         layout = next
+        presentation.profileColumns = layout.profileColumns; presentation.profileRows = layout.profileRows
         presentation.opensUpward = next.opensUpward
         surface.compactOrigin = layout.compactOrigin; surface.floating = layout.placement != .topCenter
         panel.setFrame(layout.expanded, display: false)
@@ -148,6 +171,10 @@ final class IslandController {
 
     private func checkHover(at point: NSPoint = NSEvent.mouseLocation) {
         guard dragStart == nil else { return }
+        if presentation.insightsPopoverPresented || !trackedMenus.isEmpty {
+            cancelCollapseForInteraction()
+            return
+        }
         // Keep the collapsed grip under the pointer so pressing it can begin a drag.
         if model.placement == .free, !expanded,
            CGRect(x: layout.collapsed.minX, y: layout.collapsed.minY, width: 30, height: layout.collapsed.height).contains(point) { return }
@@ -164,6 +191,11 @@ final class IslandController {
             collapseTimer = timer
             RunLoop.main.add(timer, forMode: .common)
         }
+    }
+
+    private func cancelCollapseForInteraction() {
+        collapseTimer?.invalidate(); collapseTimer = nil; scheduledCollapse = nil
+        if expanded { _ = hoverIntent.update(inside: true, now: ProcessInfo.processInfo.systemUptime) }
     }
 
     func drag(_ phase: DockDragPhase, at point: CGPoint) {
@@ -203,7 +235,11 @@ final class IslandController {
             guard let self, self.animationGeneration == generation else { return }
             self.animating = false
             self.frameMeter.stop()
-            if !self.expanded { self.panel.orderOut(nil); self.showPanel() }
+            if !self.expanded {
+                self.panel.orderOut(nil)
+                if self.model.preferences.insightsExpansion != .always { self.presentation.setInsightsExpanded(false) }
+                self.showPanel()
+            }
         }
         usage.setVisible(value, screen: screenKey)
     }

@@ -38,6 +38,8 @@ public struct IslandLayout: Equatable, Sendable {
     public let collapsed: CGRect
     public let expanded: CGRect
     public let placement: DockPlacement
+    public let profileColumns: Int
+    public let profileRows: Int
     public var opensUpward: Bool { expanded.midY > collapsed.midY }
     public var compactOrigin: CGPoint { CGPoint(x: collapsed.minX - expanded.minX, y: collapsed.minY - expanded.minY) }
     public static func usableFrame(screen: CGRect, visible: CGRect?) -> CGRect {
@@ -45,15 +47,26 @@ public struct IslandLayout: Equatable, Sendable {
     }
     public static func usageHeight(rows: Int) -> Double { Double(max(1, rows)) * 46 + Double(max(0, rows - 1)) * 10 }
 
-    public init(screen: CGRect, notchHeight: Double, notchWidth: Double, count: Int, scale: Double, hasMessage: Bool, menuBarHeight: Double = 24, showsResetDetails: Bool = false, placement: DockPlacement = .topCenter, visibleFrame: CGRect? = nil, position: FloatingPosition = FloatingPosition(), usageRows: Int = 2) {
+    public init(screen: CGRect, notchHeight: Double, notchWidth: Double, count: Int, scale: Double, hasMessage: Bool, menuBarHeight: Double = 24, showsResetDetails: Bool = false, placement: DockPlacement = .topCenter, visibleFrame: CGRect? = nil, position: FloatingPosition = FloatingPosition(), usageRows: Int = 2, showsInsights: Bool = false, compactWidth preferredCompact: Double? = nil, expandedWidth preferredExpanded: Double? = nil) {
         self.screen = screen
         self.placement = placement
         self.notchHeight = placement == .topCenter ? max(0, notchHeight) : 0
-        let contentHeight = 325 + 32 * scale + Self.usageHeight(rows: usageRows) - 104 + (hasMessage ? 52 : 0) + (showsResetDetails ? Self.resetDetailsHeight : 0)
+        let available = Self.usableFrame(screen: screen, visible: visibleFrame)
+        let availableHeight = placement == .topCenter ? screen.maxY - (visibleFrame?.minY ?? screen.minY) - 12 - self.notchHeight : available.height
+        let expandedWidth = min(placement == .topCenter ? screen.width - 32 : available.width, WidgetSizing.expanded(count: count, scale: scale, preferred: preferredExpanded, insights: showsInsights))
+        let insightsHeight = showsInsights ? WidgetSizing.insightsHeight(width: expandedWidth, count: count) : 0
+        let singleRowHeight = 325 + 32 * scale + Self.usageHeight(rows: usageRows) - 104 + (hasMessage ? 52 : 0) + (showsResetDetails ? Self.resetDetailsHeight : 0) + 34
+        let cardHeight = singleRowHeight - 110 - (hasMessage ? 52 : 0)
+        profileColumns = WidgetSizing.columns(count: count, available: expandedWidth - 32, scale: scale)
+        let desiredRows = (max(1, count) + profileColumns - 1) / profileColumns
+        // Keep row count stable when reset details open, so the clicked account cannot disappear onto another page.
+        let resetReserve = showsResetDetails ? 0 : Self.resetDetailsHeight
+        let extraRows = max(0, Int((availableHeight - singleRowHeight - resetReserve - insightsHeight - 28) / (cardHeight + resetReserve + 10)))
+        profileRows = min(desiredRows, min(2, 1 + extraRows))
+        let paged = count > profileRows * profileColumns
+        let contentHeight = singleRowHeight + Double(profileRows - 1) * (cardHeight + 10) + insightsHeight + (paged ? 28 : 0)
         if placement != .topCenter {
-            let available = Self.usableFrame(screen: screen, visible: visibleFrame)
-            let compactWidth = min(194, available.width)
-            let expandedWidth = min(available.width, max(320, Double(max(1, count)) * 142 * scale + 32))
+            let compactWidth = min(WidgetSizing.compact(count: count, preferred: preferredCompact), available.width)
             let expandedHeight = min(available.height, contentHeight)
             if placement == .free {
                 let size = CGSize(width: compactWidth, height: min(32, available.height))
@@ -69,10 +82,9 @@ public struct IslandLayout: Equatable, Sendable {
             expanded = CGRect(x: placement == .bottomLeft ? available.minX : available.maxX - expandedWidth, y: available.minY, width: expandedWidth, height: expandedHeight)
             return
         }
-        let compactWidth = notchHeight > 0 ? max(1, notchWidth) : 194.0
+        let compactWidth = notchHeight > 0 ? max(1, notchWidth) : min(screen.width - 32, WidgetSizing.compact(count: count, preferred: preferredCompact))
         let compactHeight = notchHeight > 0 ? notchHeight : menuBarHeight
-        let expandedWidth = min(screen.width - 32, max(320, Double(max(1, count)) * 142 * scale + 32))
-        let expandedHeight = notchHeight + contentHeight
+        let expandedHeight = min(notchHeight + contentHeight, screen.maxY - (visibleFrame?.minY ?? screen.minY) - 12)
         collapsed = CGRect(x: screen.midX - compactWidth / 2, y: screen.maxY - compactHeight, width: compactWidth, height: compactHeight)
         expanded = CGRect(x: screen.midX - expandedWidth / 2, y: screen.maxY - expandedHeight, width: expandedWidth, height: expandedHeight)
     }

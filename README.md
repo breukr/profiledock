@@ -14,8 +14,9 @@ ProfileDock puts your ChatGPT and Codex profiles within reach on every screen. H
 - **One home for your accounts.** Create profiles and Finder launchers; switch with a click or ⌥⌘1–9.
 - **ChatGPT updates on your terms.** Select all app groups or just the ones you can restart. Separate copies update independently.
 - **At a glance.** Colored activity dots, brief completion/input cues beside the notch, and optional quiet chimes.
-- **Fits your Mac.** Use the notch/menu bar, or drag a floating launcher anywhere on each display. Keep the notch free for other apps. Extra profiles scroll.
+- **Fits your Mac.** Use the notch/menu bar, or drag a floating launcher anywhere on each display. Keep the notch free for other apps. Tiles adapt into rows, with pages for more accounts.
 - **Saved resets, explained.** Expand the resets row for an oldest-first expiry countdown.
+- **See your activity over time.** Expand Usage insights for tokens, API-equivalent estimates, and session activity. Compare Today, 7 days, or 30 days for one account or all local profiles.
 
 Requires **macOS 14+**, an **Apple Silicon Mac (M1 or newer)**, and the **current [ChatGPT desktop app](https://chatgpt.com/download/)**. ChatGPT Classic is not supported. ProfileDock does not include or redistribute ChatGPT. Intel Macs can use the older v1.0.1 release; new releases target Apple Silicon.
 
@@ -65,6 +66,8 @@ A profile's options menu lets you change its picture, create a Finder launcher o
 In **Appearance**, choose **Top center** or **Free position**. Drag the grip to move a floating strip; each display remembers its position. Hover over the rest to open your profiles. You can preview activity cues and enable optional chimes. Blue means working, orange needs input, green is idle, red is unread, and gray is closed or unknown. Old activity detected at startup stays quiet. An optional macOS Dock icon opens settings on click.
 
 [Full guide](docs/GUIDE.md) · [Privacy & security](PRIVACY.md)
+
+**Usage insights** opens with a click, on hover, or by default when the strip expands. Choose its behavior from the drawer's menu or **Settings → Usage insights**. Switch the chart between cost, tokens, and sessions. Estimates use local session history and published Standard API rates, not your subscription bill. [How it is calculated](docs/INSIGHTS.md).
 
 Activity covers local Work/Codex tasks. Profiles are not a security boundary, and OpenAI's desktop interfaces may change. ProfileDock never redeems reset credits. It is independent of OpenAI.
 

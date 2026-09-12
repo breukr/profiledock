@@ -17,6 +17,10 @@
 
 **Start at login:** enable it in **Appearance**. ProfileDock follows macOS Reduce Motion and responds to display changes automatically.
 
+**Fit more accounts:** Appearance has separate compact-strip and expanded-panel width controls. Leave **Automatic** on to adapt to the account count, or choose a width with the slider. Tiles shrink to a readable minimum and wrap into rows. When the screen is full, use the page arrows to reach additional accounts. Compact dots use the available width, with a `+N` count for additional accounts. On a notched display, the compact trigger stays the size of the physical notch. Insights keep a minimum readable width.
+
+**After a ChatGPT update or restart:** ProfileDock reconnects to local activity automatically. **Reconnecting…** means the connection is recovering; **Activity unavailable** means metadata cannot be read; **Update needed** means the activity protocol has changed. Hover the account for an explanation. Unavailable activity is never presented as idle, and reconnecting does not replay completion sounds.
+
 **Place it anywhere:** choose **Appearance → Placement → Free position**. Drag the six-dot grip on the strip or panel header to move it anywhere inside that display's usable area. Each screen remembers its position, including after resizing or reconnecting it. Hover over the rest of the strip to open profiles; the panel opens toward available space and stays on screen. **Reset strip positions** brings the strips back to their starting positions. Choose **Top center** to return to the notch/menu bar. Activity cues move with the strip, leaving room for other notch apps.
 
 **Show ProfileDock in the macOS Dock** adds a regular icon that opens settings on click. Custom hover expansion belongs to the floating strips, not the system Dock icon.

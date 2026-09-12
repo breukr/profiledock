@@ -17,6 +17,9 @@ struct Preferences: Codable {
     var placement: DockPlacement?
     var floatingPositions: [String: FloatingPosition]?
     var showDockIcon: Bool?
+    var insightsExpansion: InsightsExpansion?
+    var compactWidth: Double?
+    var expandedWidth: Double?
 }
 
 @MainActor

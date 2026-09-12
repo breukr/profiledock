@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     let model: DockModel
     let previewMode = CommandLine.arguments.contains("--preview")
     let usage = UsageStore()
+    let insights = InsightsStore()
     let activity = ActivityMonitor()
     let loginItem = LoginItemModel()
     let appUpdates = AppUpdates()
@@ -62,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         model.onPreferencesChanged = { [weak self] in
             guard let self else { return }
             self.usage.configure(self.model.preferences.profiles)
+            self.insights.configure(self.model.preferences.profiles)
             self.activity.configure(self.model.preferences.profiles, running: Set(self.model.running.keys))
             if !self.previewMode, self.islands.first?.layout.placement != self.model.placement { self.cues.dismiss(); self.rebuildIslands() }
             else { self.islands.forEach { $0.updateLayout() } }
@@ -105,6 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if let localMouseMonitor { NSEvent.removeMonitor(localMouseMonitor) }
         islands.forEach { $0.shutdown() }
         usage.shutdown()
+        insights.shutdown()
         activity.shutdown()
     }
 
@@ -117,7 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     func rebuildIslands() {
         islands.forEach { $0.shutdown() }
-        islands = NSScreen.screens.map { screen in IslandController(screen: screen, model: model, usage: usage, activity: activity, settings: { [weak self] in self?.showSettings() }) }
+        islands = NSScreen.screens.map { screen in IslandController(screen: screen, model: model, usage: usage, activity: activity, insights: insights, settings: { [weak self] in self?.showSettings() }) }
     }
 
     @objc func screenChanged() { cues.dismiss(); if !previewMode { rebuildIslands() } }
@@ -209,7 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 840, height: 620), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
             window.title = "ProfileDock"
             if previewMode { window.subtitle = "New installation preview" }
-            window.contentView = NSHostingView(rootView: SettingsView(model: model, loginItem: loginItem, activity: activity, updates: appUpdates, selfUpdates: selfUpdates, cues: cues, chooseImage: { [weak self, weak window] profile in self?.model.chooseImage(for: profile, window: window) }))
+            window.contentView = NSHostingView(rootView: SettingsView(model: model, loginItem: loginItem, activity: activity, updates: appUpdates, selfUpdates: selfUpdates, insights: insights, cues: cues, chooseImage: { [weak self, weak window] profile in self?.model.chooseImage(for: profile, window: window) }))
             window.minSize = NSSize(width: 760, height: 560)
             window.isReleasedWhenClosed = false
             window.center()

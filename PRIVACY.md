@@ -1,12 +1,13 @@
 # Privacy & security
 
-ProfileDock has no account system, advertising, or analytics.
+ProfileDock has no account system, advertising, or external analytics. Usage insights stay on your Mac.
 
 ## What it reads
 
 - Profile preferences, your selected pictures, running app arguments, and local profile directories.
 - The signed-in profile's existing `auth.json` to request usage and reset-expiry information directly from `chatgpt.com` over HTTPS. Tokens are not written to ProfileDock's preferences or sent to a ProfileDock server.
 - Local Work/Codex task metadata, read markers, and the desktop observer socket to display activity. Stream payloads may contain task content transiently; ProfileDock retains only the status/count metadata it needs, not transcripts.
+- When Usage insights is opened, local `sessions` and `archived_sessions` JSONL files for the configured profiles. These files can contain conversation text; the scanner discards it and keeps only token counters, model names, timestamps, and session identifiers in memory. Insights are not uploaded or stored in a new on-disk history database. Reopening ProfileDock starts a fresh scan.
 
 ## What it writes
 
@@ -30,5 +31,7 @@ Repository and donation links open when clicked. The terminal installer uses Git
 Separate profiles are a convenience within one macOS account, not isolation of Keychain, filesystem, developer tools, or server-side access. Verify the signed-in account in each ChatGPT window. Use separate macOS users when you need stronger separation.
 
 The reset and activity interfaces are not a compatibility guarantee from OpenAI. Unknown and unavailable readings are shown explicitly. ProfileDock does not redeem resets or alter subscription plans.
+
+Usage insights cover local profile history, not an account-wide billing record. Changing a profile's sign-in does not reassign older records. API-equivalent amounts compare recorded text tokens against a dated table of Standard USD API rates; they are not invoices or subscription savings. Unpriced and incomplete records are identified. See [the calculation guide](docs/INSIGHTS.md).
 
 Diagnostics are opt-in local files and can contain profile identifiers and app paths. Review them before sharing; never attach credentials, raw task databases, or private screenshots to a public issue.

@@ -62,15 +62,37 @@ public struct ActivityProjection {
     }
 }
 
+public enum ActivityConnectionIssue: String, Sendable {
+    case connecting, reconnecting, metadata, unsupported
+    public var label: String {
+        switch self {
+        case .connecting: return "Connecting…"
+        case .reconnecting: return "Reconnecting…"
+        case .metadata: return "Activity unavailable"
+        case .unsupported: return "Update needed"
+        }
+    }
+    public var explanation: String {
+        switch self {
+        case .connecting: return "Connecting to the desktop app's local activity stream."
+        case .reconnecting: return "The activity connection was interrupted, for example by an app restart or update. ProfileDock retries automatically."
+        case .metadata: return "Local activity metadata is unavailable or has changed format. ProfileDock retries automatically; it cannot confirm idle status yet."
+        case .unsupported: return "This desktop version uses an activity format ProfileDock does not support yet. Check for a ProfileDock update."
+        }
+    }
+}
+
 public struct ActivitySummary: Equatable, Sendable {
     public var unread: Int?
     public var working = 0
     public var waiting = 0
     public var liveAvailable = false
     public var appOpen = false
-    public init(unread: Int? = nil, working: Int = 0, waiting: Int = 0, liveAvailable: Bool = false, appOpen: Bool = false) {
+    public var connectionIssue: ActivityConnectionIssue?
+    public init(unread: Int? = nil, working: Int = 0, waiting: Int = 0, liveAvailable: Bool = false, appOpen: Bool = false, connectionIssue: ActivityConnectionIssue? = nil) {
         self.unread = unread; self.working = working; self.waiting = waiting
         self.liveAvailable = liveAvailable; self.appOpen = appOpen
+        self.connectionIssue = connectionIssue
     }
     public var badge: String? { unread.flatMap { $0 > 0 ? ($0 > 99 ? "99+" : String($0)) : nil } }
 }

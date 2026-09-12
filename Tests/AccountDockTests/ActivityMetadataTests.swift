@@ -101,6 +101,32 @@ final class ActivityMetadataTests: XCTestCase {
         await fulfillment(of: [server.unsubscribed], timeout: 3)
     }
 
+    @MainActor func testSilentHandshakeTimesOutAndReconnectsWithoutAppRestart() async throws {
+        let home = URL(fileURLWithPath: "/private/tmp/ad-reconnect-" + String(UUID().uuidString.prefix(8)))
+        let profile = Profile(id: "default", name: "Fixture", color: "000000")
+        let directory = profile.home(in: home)
+        try FileManager.default.createDirectory(at: directory.appendingPathComponent("ipc"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        try database(directory.appendingPathComponent("state_5.sqlite"), sql: "CREATE TABLE threads (id TEXT, archived INTEGER, source TEXT, agent_path TEXT, thread_source TEXT);")
+        try writeAuth(directory, account: "fixture")
+        let server = try ActivityFixtureServer(path: directory.appendingPathComponent("ipc/ipc.sock").path, ignoreInitializations: 1)
+        defer { server.stop() }
+        await fulfillment(of: [server.listening], timeout: 3)
+        let monitor = ActivityMonitor(home: home)
+        defer { monitor.shutdown() }
+        monitor.configure([profile], running: [profile.id])
+        var sawReconnect = false
+        for _ in 0..<650 {
+            if monitor.entries[profile.id]?.connectionIssue == .reconnecting { sawReconnect = true }
+            if monitor.entries[profile.id]?.liveAvailable == true { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertTrue(sawReconnect)
+        XCTAssertEqual(monitor.entries[profile.id]?.liveAvailable, true)
+        XCTAssertNil(monitor.entries[profile.id]?.connectionIssue)
+        XCTAssertNil(monitor.event, "Reconnecting must not generate a completion cue")
+    }
+
     @MainActor func testAutomationInboxReadAllOverridesStaleChatFlagsAndWakesMonitor() async throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let profile = Profile(id: "default", name: "Fixture", color: "000000")
@@ -184,7 +210,9 @@ private final class ActivityFixtureServer {
     private let queue = DispatchQueue(label: "account-dock-test-ipc")
     private var connection: NWConnection?
     private var frames = ActivityFrames()
-    init(path: String) throws {
+    private var ignoredInitializations: Int
+    init(path: String, ignoreInitializations: Int = 0) throws {
+        ignoredInitializations = ignoreInitializations
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .unix(path: path)
         listener = try NWListener(using: parameters)
@@ -193,6 +221,7 @@ private final class ActivityFixtureServer {
         }
         listener.newConnectionHandler = { [weak self] connection in
             guard let self else { return }
+            self.frames = ActivityFrames()
             self.connection = connection; connection.start(queue: self.queue); self.receive(connection)
         }
         listener.start(queue: queue)
@@ -213,6 +242,7 @@ private final class ActivityFixtureServer {
                 for message in messages {
                     let method = message["method"] as? String
                     if method == "initialize" {
+                        if self.ignoredInitializations > 0 { self.ignoredInitializations -= 1; continue }
                         self.send(["type": "response", "method": "initialize", "requestId": message["requestId"]!, "resultType": "success", "result": ["clientId": "fixture-observer"]])
                     } else if method == "thread-owner-discovery" {
                         self.send(["type": "response", "method": "thread-owner-discovery", "requestId": message["requestId"]!, "resultType": "success", "handledByClientId": "fixture-owner"])

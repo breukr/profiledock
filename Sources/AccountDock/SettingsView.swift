@@ -8,10 +8,10 @@ enum AppBrand {
 }
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
-    case profiles = "Profiles", updates = "ChatGPT updates", appearance = "Appearance", support = "Support"
+    case profiles = "Profiles", insights = "Usage insights", updates = "ChatGPT updates", appearance = "Appearance", support = "Support"
     var id: String { rawValue }
     var symbol: String {
-        switch self { case .profiles: return "person.crop.rectangle.stack"; case .updates: return "arrow.down.circle"; case .appearance: return "macwindow"; case .support: return "heart" }
+        switch self { case .profiles: return "person.crop.rectangle.stack"; case .insights: return "chart.bar.xaxis"; case .updates: return "arrow.down.circle"; case .appearance: return "macwindow"; case .support: return "heart" }
     }
 }
 
@@ -21,6 +21,7 @@ struct SettingsView: View {
     @ObservedObject var activity: ActivityMonitor
     @ObservedObject var updates: AppUpdates
     @ObservedObject var selfUpdates: ProfileDockUpdates
+    @ObservedObject var insights: InsightsStore
     let cues: ActivityCues
     let chooseImage: (Profile) -> Void
     @State private var section: SettingsSection? = .profiles
@@ -60,13 +61,14 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 20) {
                         switch section ?? .profiles {
                         case .profiles: profiles
+                        case .insights: insightsSettings
                         case .updates: updateSettings
                         case .appearance: appearance
                         case .support: support
                         }
                         if let message = model.message { Text(message).font(.callout).foregroundStyle(.orange).textSelection(.enabled) }
                     }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
-                }
+                }.scrollIndicators(.never)
             }.frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
         }
         .sheet(isPresented: $adding) { AddProfileSheet(model: model) }
@@ -154,6 +156,18 @@ struct SettingsView: View {
         }.disabled(updates.busy || copying)
     }
 
+    private var insightsSettings: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("A clearer picture of your local AI activity.").foregroundStyle(.secondary)
+            InsightsPanel(model: model, store: insights)
+            Picker("In the profile strip", selection: Binding(get: { model.preferences.insightsExpansion ?? .button }, set: { model.preferences.insightsExpansion = $0; model.save() })) {
+                ForEach(InsightsExpansion.allCases, id: \.self) { Text($0.label).tag($0) }
+            }.pickerStyle(.segmented)
+            Text("Choose how the Usage insights drawer opens inside your expanded profile strip. Hover mode stays open until you leave the strip.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
     private var updateSettings: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Update your ChatGPT app copies together, or choose the ones you can restart.").foregroundStyle(.secondary)
@@ -231,10 +245,12 @@ struct SettingsView: View {
                     Toggle("Show ProfileDock in the macOS Dock", isOn: Binding(get: { model.preferences.showDockIcon == true }, set: { model.preferences.showDockIcon = $0; model.save() }))
                     Text("Click the Dock icon to open settings. Hover expansion works on ProfileDock's floating launchers.").font(.caption).foregroundStyle(.secondary)
                     Divider()
-                    Picker("Expanded size", selection: Binding(get: { model.preferences.scale }, set: { model.preferences.scale = $0; model.save() })) {
+                    Picker("Tile size", selection: Binding(get: { model.preferences.scale }, set: { model.preferences.scale = $0; model.save() })) {
                         Text("Small").tag(0.85); Text("Default").tag(1.0); Text("Large").tag(1.3)
                     }.pickerStyle(.segmented)
-                    Text("The panel opens toward available space and stays on screen. Extra profiles scroll horizontally.").font(.caption).foregroundStyle(.secondary)
+                    widthControl("Compact strip width", value: Binding(get: { model.preferences.compactWidth }, set: { model.preferences.compactWidth = $0; model.save() }), range: 160...480, automatic: WidgetSizing.compact(count: model.preferences.profiles.count, preferred: nil))
+                    widthControl("Expanded panel width", value: Binding(get: { model.preferences.expandedWidth }, set: { model.preferences.expandedWidth = $0; model.save() }), range: 320...1400, automatic: WidgetSizing.expanded(count: model.preferences.profiles.count, scale: model.preferences.scale, preferred: nil, insights: false))
+                    Text("Automatic widths adapt to your account count. Tiles adapt into rows, with page controls for additional accounts. Insights need at least 520 pt. The compact width applies to floating strips and screens without a notch; the physical notch keeps its own size.").font(.caption).foregroundStyle(.secondary)
                 }.padding(12)
             }
             Label(model.placement.instruction, systemImage: "cursorarrow.motionlines")
@@ -258,6 +274,24 @@ struct SettingsView: View {
                 }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
             }
             Text("Activity covers local Work and Codex tasks. Ordinary chats and tasks running on another computer are outside this view.").font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func widthControl(_ title: String, value: Binding<Double?>, range: ClosedRange<Double>, automatic: Double) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(title)
+                Spacer()
+                Toggle("Automatic", isOn: Binding(get: { value.wrappedValue == nil }, set: { value.wrappedValue = $0 ? nil : automatic }))
+                    .toggleStyle(.checkbox).controlSize(.small)
+            }
+            if let current = value.wrappedValue {
+                HStack {
+                    Slider(value: Binding(get: { value.wrappedValue ?? automatic }, set: { value.wrappedValue = $0 }), in: range, step: 10)
+                        .accessibilityLabel(title)
+                    Text("\(Int(current)) pt").font(.caption).monospacedDigit().frame(width: 52, alignment: .trailing)
+                }
+            }
         }
     }
 

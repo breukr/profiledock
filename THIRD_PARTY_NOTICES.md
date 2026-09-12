@@ -10,6 +10,8 @@ The original chimes and generator are dedicated under [CC0 1.0](Resources/Sounds
 
 The usage integration follows CodexBar's account-scoped OAuth request approach and service schema.
 
+The local Usage insights scanner also follows the documented `event_msg/token_count` and `turn_context` conventions examined in CodexBar's `CostUsageScanner.swift` and `CodexSubagentRolloutShape.swift` at revision `0f5735e1aedabc6dd3249c544d0a72fdd555845b`. ProfileDock implements its own bounded reader, aggregation, Standard-rate estimates, and native charts; it does not bundle the CodexBar app or its full scanner.
+
 - Project: https://github.com/steipete/CodexBar
 - Inspected revision: `4cfb60692bdd8cfbba7a491e94bb121b59a835a5`
 - References: `docs/codex.md`, `Sources/CodexBarCore/Providers/Codex/CodexOAuth/CodexOAuthUsageFetcher.swift`, `Sources/CodexBarCore/Providers/Codex/CodexOAuth/CodexOAuthCredentials.swift`, and `Sources/CodexBarCore/CreditsModels.swift`.
