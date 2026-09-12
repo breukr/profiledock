@@ -8,7 +8,7 @@ enum AppBrand {
 }
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
-    case profiles = "Profiles", updates = "Updates", appearance = "Appearance", support = "Support"
+    case profiles = "Profiles", updates = "ChatGPT updates", appearance = "Appearance", support = "Support"
     var id: String { rawValue }
     var symbol: String {
         switch self { case .profiles: return "person.crop.rectangle.stack"; case .updates: return "arrow.down.circle"; case .appearance: return "macwindow"; case .support: return "heart" }
@@ -81,7 +81,7 @@ struct SettingsView: View {
                 }
             }.padding(28).frame(width: 460)
         }
-        .alert("Update the selected apps?", isPresented: $confirmingUpdate) {
+        .alert("Update the selected ChatGPT apps?", isPresented: $confirmingUpdate) {
             Button("Cancel", role: .cancel) {}
             Button("Download & update") { updates.install(groups: selectedGroups, model: model, activity: activity) }
         } message: {
@@ -154,9 +154,10 @@ struct SettingsView: View {
 
     private var updateSettings: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Update all apps, or choose the ones you can restart.").foregroundStyle(.secondary)
+            Text("Update your ChatGPT app copies together, or choose the ones you can restart.").foregroundStyle(.secondary)
+            Text("Checks when you open this panel. Updates install only after you confirm.").font(.caption).foregroundStyle(.secondary)
             HStack {
-                Button(updates.checking ? "Checking…" : "Check for updates") { Task { await updates.check() } }.disabled(updates.checking || updates.busy)
+                Button(updates.checking ? "Checking ChatGPT…" : "Check ChatGPT updates") { Task { await updates.check() } }.disabled(updates.checking || updates.busy)
                 Spacer()
                 Button("Select all") { updates.selected = Set(groups.filter { updates.needsUpdate($0) }.map(\.id)) }.disabled(updates.busy)
             }
@@ -175,11 +176,18 @@ struct SettingsView: View {
             if updates.busy { ProgressView().controlSize(.small) }
             if let status = updates.status { Text(status).font(.callout).foregroundStyle(.secondary) }
             if let error = updates.error { Text(error).font(.callout).foregroundStyle(.orange).textSelection(.enabled) }
-            Button("Update selected apps") { confirmingUpdate = true }.buttonStyle(.borderedProminent).disabled(selectedGroups.isEmpty || updates.busy)
+            Button("Update selected ChatGPT apps") { confirmingUpdate = true }.buttonStyle(.borderedProminent).disabled(selectedGroups.isEmpty || updates.busy)
             Text("Only selected app groups close. Your profiles, sign-ins, and chats stay in place. ChatGPT's own updater remains available.").font(.caption).foregroundStyle(.secondary)
             Divider()
-            Link("ProfileDock releases ↗", destination: AppBrand.repository.appendingPathComponent("releases"))
-        }.task { if updates.latest == nil { await updates.check() } }
+            GroupBox {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("ProfileDock · Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development")").font(.headline)
+                    Text("Updates for ProfileDock are available on GitHub. Download the latest release to update this app.").font(.callout).foregroundStyle(.secondary)
+                    Link("View ProfileDock releases", destination: AppBrand.repository.appendingPathComponent("releases/latest"))
+                    Text("ProfileDock does not check for its own updates automatically.").font(.caption).foregroundStyle(.secondary)
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(10)
+            }
+        }.task { await updates.check() }
     }
 
     private var appearance: some View {

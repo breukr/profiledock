@@ -12,7 +12,7 @@ ProfileDock puts your ChatGPT and Codex profiles at the top of every screen. Hov
 **Free. Open source. Mac-native. Made by [Breukr](https://github.com/breukr).**
 
 - **One home for your accounts.** Create profiles and Finder launchers; switch with a click or ⌥⌘1–9.
-- **Updates on your terms.** Select all app groups or just the ones you can restart. Separate copies update independently.
+- **ChatGPT updates on your terms.** Select all app groups or just the ones you can restart. Separate copies update independently.
 - **At a glance.** Blue means working, orange means waiting for you, red means unread results.
 - **Fits your Mac.** Matches the notch on a MacBook and the menu-bar height on external displays. Extra profiles scroll.
 - **Saved resets, explained.** Expand the resets row for an oldest-first expiry countdown.
@@ -56,9 +56,11 @@ The build creates a universal app for Apple Silicon and Intel. Local builds use 
 1. **Add a profile**, then open it and sign in to ChatGPT.
 2. **Hover at the top center** of any screen. Click a profile or press ⌥⌘1–9.
 3. **Expand Resets** for expiry countdowns. Blue means working, orange means waiting for you, red means unread results.
-4. **Choose updates** in Settings. Shared profiles update together; separate app copies can update independently.
+4. **Choose ChatGPT updates** in Settings. Shared profiles update together; separate app copies can update independently.
 
 A profile's options menu lets you change its picture, create a Finder launcher or app copy, and remove it. Data stays on your Mac by default. **Appearance** includes startup at login and display sizing.
+
+ChatGPT updates are checked whenever you open **ChatGPT updates**; installation needs your confirmation. ProfileDock itself does not check for updates automatically. Download its latest version from [Releases](https://github.com/breukr/profiledock/releases/latest), quit ProfileDock, and replace it in Applications.
 
 [Full guide](docs/GUIDE.md) · [Privacy & security](PRIVACY.md)
 

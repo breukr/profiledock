@@ -85,7 +85,7 @@ final class AppUpdates: ObservableObject {
             #endif
             let os = ProcessInfo.processInfo.operatingSystemVersion
             latest = try UpdateFeed.latest(data: data, architecture: architecture, systemVersion: "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)")
-            status = latest.map { "Latest release: \($0.version)" } ?? "No compatible release is listed for this Mac. Use ChatGPT's own update menu."
+            status = latest.map { "Latest ChatGPT release: \($0.version)" } ?? "No compatible ChatGPT release is listed for this Mac. Use ChatGPT's own update menu."
         } catch { self.error = error.localizedDescription }
     }
 

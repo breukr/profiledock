@@ -3,7 +3,9 @@
 1. **Add a profile.** Choose a name and either the shared ChatGPT app or a separate app copy. New profiles start empty.
 2. **Open and sign in.** Use ProfileDock or the new Finder launcher in `~/Applications/ProfileDock Launchers`. Each launcher opens its assigned profile. Check the account shown inside ChatGPT.
 3. **Hover and switch.** Move to the top center of any display. Click a profile or use ⌥⌘1–9. Expand **Resets** to see expiry countdowns.
-4. **Choose what updates.** In **Updates**, check for a release, select app groups, and click **Update selected apps**. Selected groups close and previously running profiles reopen. Active tasks must finish first.
+4. **Choose what updates.** Open **ChatGPT updates**, select app groups, and click **Update selected ChatGPT apps**. The panel checks whenever you open it. Selected groups close and previously running profiles reopen. Active tasks must finish first.
+
+**Update ProfileDock:** use **View ProfileDock releases** in that panel, or visit [Releases](https://github.com/breukr/profiledock/releases/latest). Download the latest version, quit ProfileDock, and replace it in Applications. Your profiles stay in place. There is no automatic check for ProfileDock releases yet.
 
 **Shared app or separate copy?** Shared profiles use less disk space but update together. A separate, unmodified ChatGPT copy uses more space and can update independently. Use a profile's options menu to create a copy or move it to the Trash and return to the shared app.
 
