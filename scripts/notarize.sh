@@ -9,12 +9,12 @@ trap 'rm -rf "$stage_dir"' EXIT
 ditto --norsrc --noextattr dist/ProfileDock.app "$stage_dir/ProfileDock.app"
 xattr -cr "$stage_dir/ProfileDock.app"
 codesign --verify --strict "$stage_dir/ProfileDock.app"
-ditto -c -k --keepParent "$stage_dir/ProfileDock.app" "$stage_dir/ProfileDock.zip"
+ditto --norsrc --noextattr -c -k --keepParent "$stage_dir/ProfileDock.app" "$stage_dir/ProfileDock.zip"
 xcrun notarytool submit "$stage_dir/ProfileDock.zip" --keychain-profile "$NOTARY_PROFILE" --wait
 xcrun stapler staple "$stage_dir/ProfileDock.app"
 xcrun stapler validate "$stage_dir/ProfileDock.app"
 spctl --assess --type execute --verbose=2 "$stage_dir/ProfileDock.app"
-ditto -c -k --keepParent "$stage_dir/ProfileDock.app" "$stage_dir/ProfileDock.zip"
+ditto --norsrc --noextattr -c -k --keepParent "$stage_dir/ProfileDock.app" "$stage_dir/ProfileDock.zip"
 cp "$stage_dir/ProfileDock.zip" dist/ProfileDock.zip
 ditto --norsrc --noextattr "$stage_dir/ProfileDock.app" dist/ProfileDock.app
 (cd dist && shasum -a 256 ProfileDock.zip > SHA256SUMS)

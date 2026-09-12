@@ -48,5 +48,5 @@ if [[ -e "$project_dir/dist/ProfileDock.app" ]]; then
 fi
 ditto --norsrc --noextattr "$bundle" "$project_dir/dist/ProfileDock.app"
 xattr -cr "$project_dir/dist/ProfileDock.app"
-ditto -c -k --keepParent "$bundle" "$project_dir/dist/ProfileDock.zip"
+ditto --norsrc --noextattr -c -k --keepParent "$bundle" "$project_dir/dist/ProfileDock.zip"
 echo "Built: $project_dir/dist/ProfileDock.app (Apple Silicon + Intel)"
