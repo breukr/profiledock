@@ -84,7 +84,7 @@ public struct IslandLayout: Equatable, Sendable {
         }
         let compactWidth = notchHeight > 0 ? max(1, notchWidth) : min(screen.width - 32, WidgetSizing.compact(count: count, preferred: preferredCompact))
         let compactHeight = notchHeight > 0 ? notchHeight : menuBarHeight
-        let expandedHeight = min(notchHeight + contentHeight, screen.maxY - (visibleFrame?.minY ?? screen.minY) - 12)
+        let expandedHeight = min(self.notchHeight + contentHeight, availableHeight + self.notchHeight)
         collapsed = CGRect(x: screen.midX - compactWidth / 2, y: screen.maxY - compactHeight, width: compactWidth, height: compactHeight)
         expanded = CGRect(x: screen.midX - expandedWidth / 2, y: screen.maxY - expandedHeight, width: expandedWidth, height: expandedHeight)
     }
