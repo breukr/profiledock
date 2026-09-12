@@ -28,8 +28,15 @@ extension ProfileActivityState {
 struct ActivityDot: View {
     let state: ProfileActivityState
     var size: CGFloat = 6
+    var visible = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         Circle().fill(state.color).frame(width: size, height: size)
+            .background {
+                if state == .working {
+                    WorkingDotGlow(visible: visible, reduceMotion: reduceMotion).frame(width: size + 12, height: size + 12)
+                }
+            }
             .overlay { if state == .unknown { Circle().stroke(.white.opacity(0.6), lineWidth: 1).padding(-2) } }
             .accessibilityLabel(state.label)
     }
@@ -102,7 +109,7 @@ struct CompactIslandView: View {
             Text("Accounts").font(.system(size: 10, weight: .medium)).foregroundStyle(.white.opacity(0.9))
             HStack(spacing: 5) {
                 ForEach(Array(model.preferences.profiles.prefix(5))) { profile in
-                    ActivityDot(state: ProfileActivityState(summary: activity.entries[profile.id], isOpen: model.running[profile.id]?.isEmpty == false))
+                    ActivityDot(state: ProfileActivityState(summary: activity.entries[profile.id], isOpen: model.running[profile.id]?.isEmpty == false), visible: !presentation.expanded)
                 }
                 if model.preferences.profiles.count > 5 { Text("+\(model.preferences.profiles.count - 5)").font(.system(size: 9)).foregroundStyle(.white.opacity(0.6)) }
             }

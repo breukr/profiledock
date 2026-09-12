@@ -23,6 +23,8 @@
 
 The app, menu bar, and GitHub use matching four-tile [artwork](BRANDING.md), with light/dark headers and a monochrome template mark.
 
+**Working indicators:** a blue rim, soft halo, and outer ring breathe around working profiles; compact working dots glow gently too. The image stays still. Hidden indicators stop animating, and Reduce Motion keeps a steady blue glow.
+
 ## A few useful boundaries
 
 - Activity covers local **Work/Codex** tasks, not ordinary chats or tasks on another computer. Missing data is shown as unknown.
