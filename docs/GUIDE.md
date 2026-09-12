@@ -17,7 +17,9 @@
 
 **Start at login:** enable it in **Appearance**. ProfileDock follows macOS Reduce Motion and responds to display changes automatically.
 
-**Use another notch app:** choose **Appearance → Placement → Bottom left** or **Bottom right**. The floating launcher sits in the screen's usable lower corner, accounting for a visible Dock, and expands upward on hover. Activity cues move with it, keeping the notch free. **Show ProfileDock in the macOS Dock** adds a regular icon that opens settings on click. Custom hover expansion belongs to the floating launchers, not the system Dock icon.
+**Place it anywhere:** choose **Appearance → Placement → Free position**. Drag the six-dot grip on the strip or panel header to move it anywhere inside that display's usable area. Each screen remembers its position, including after resizing or reconnecting it. Hover over the rest of the strip to open profiles; the panel opens toward available space and stays on screen. **Reset strip positions** brings the strips back to their starting positions. Choose **Top center** to return to the notch/menu bar. Activity cues move with the strip, leaving room for other notch apps.
+
+**Show ProfileDock in the macOS Dock** adds a regular icon that opens settings on click. Custom hover expansion belongs to the floating strips, not the system Dock icon.
 
 The app, menu bar, and GitHub use matching four-tile [artwork](BRANDING.md), with light/dark headers and a monochrome template mark.
 

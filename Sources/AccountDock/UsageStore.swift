@@ -13,6 +13,7 @@ struct UsageEntry: Equatable {
 @MainActor
 final class UsageStore: ObservableObject {
     @Published private(set) var entries: [String: UsageEntry] = [:]
+    var cardUsageRows: Int { max(1, entries.values.compactMap { $0.validatingIdentity == false ? $0.snapshot?.windows.count : nil }.max() ?? 2) }
     @Published private(set) var now = Date()
     private let client: any UsageFetching
     private var profiles: [Profile] = []

@@ -15,13 +15,21 @@ struct Preferences: Codable {
     var activitySounds: Bool?
     var activitySoundVolume: Double?
     var placement: DockPlacement?
+    var floatingPositions: [String: FloatingPosition]?
     var showDockIcon: Bool?
 }
 
 @MainActor
 final class DockModel: ObservableObject {
     @Published var preferences = Preferences()
-    var placement: DockPlacement { preferences.placement ?? .topCenter }
+    var placement: DockPlacement { preferences.placement == nil || preferences.placement == .topCenter ? .topCenter : .free }
+    func floatingPosition(for screenID: String) -> FloatingPosition {
+        preferences.floatingPositions?[screenID] ?? FloatingPosition(x: preferences.placement == .bottomLeft ? 0 : preferences.placement == .bottomRight ? 1 : 0.5, y: preferences.placement == .bottomLeft || preferences.placement == .bottomRight ? 0 : 0.1)
+    }
+    func savePosition(_ position: FloatingPosition, for screenID: String) {
+        preferences.floatingPositions = (preferences.floatingPositions ?? [:]).merging([screenID: position]) { _, new in new }
+        save()
+    }
     @Published var running: [String: [NSRunningApplication]] = [:]
     @Published var activeProfile: String?
     @Published var opening: Set<String> = []

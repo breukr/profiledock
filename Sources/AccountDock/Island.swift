@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import QuartzCore
 import DockCore
+import Combine
 
 final class AccountPanel: NSPanel {
     override var canBecomeKey: Bool { true }
@@ -10,6 +11,7 @@ final class AccountPanel: NSPanel {
 
 @MainActor final class IslandPresentation: ObservableObject {
     @Published var expanded: Bool
+    @Published var opensUpward = false
     @Published private(set) var resetDetails: Set<String> = []
     var onResetDetailsChange: (() -> Void)?
     init(expanded: Bool = false) { self.expanded = expanded }
@@ -36,37 +38,48 @@ final class IslandController {
     private var scheduledCollapse: TimeInterval?
     private var hoverIntent = HoverIntent()
     private var animationGeneration = 0
+    private var usageSubscription: AnyCancellable?
+    private var dragStart: (pointer: CGPoint, origin: CGPoint)?
+    private var draggedPosition: FloatingPosition?
     private let frameMeter = AnimationFrameMeter()
     var measureAnimations = false
     private var screenKey: String { String(describing: screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] ?? screen.localizedName) }
 
-    static func layout(screen: NSScreen, model: DockModel, showsResetDetails: Bool = false) -> IslandLayout {
+    static func positionKey(for screen: NSScreen) -> String {
+        if let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber,
+           let uuid = CGDisplayCreateUUIDFromDisplayID(number.uint32Value)?.takeRetainedValue() {
+            return CFUUIDCreateString(nil, uuid) as String
+        }
+        return screen.localizedName
+    }
+
+    static func layout(screen: NSScreen, model: DockModel, showsResetDetails: Bool = false, position: FloatingPosition? = nil, usageRows: Int = 2) -> IslandLayout {
         let notchWidth: CGFloat
         if screen.safeAreaInsets.top > 0, let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
             notchWidth = right.minX - left.maxX
         } else { notchWidth = 180 }
         let topInset = screen.frame.maxY - screen.visibleFrame.maxY
         let menuBarHeight = topInset > 0 ? topInset : NSStatusBar.system.thickness
-        return IslandLayout(screen: screen.frame, notchHeight: screen.safeAreaInsets.top, notchWidth: notchWidth, count: model.preferences.profiles.count, scale: model.preferences.scale, hasMessage: model.message != nil, menuBarHeight: menuBarHeight, showsResetDetails: showsResetDetails, placement: model.placement, visibleFrame: screen.visibleFrame)
+        return IslandLayout(screen: screen.frame, notchHeight: screen.safeAreaInsets.top, notchWidth: notchWidth, count: model.preferences.profiles.count, scale: model.preferences.scale, hasMessage: model.message != nil, menuBarHeight: menuBarHeight, showsResetDetails: showsResetDetails, placement: model.placement, visibleFrame: screen.visibleFrame, position: position ?? model.floatingPosition(for: positionKey(for: screen)), usageRows: usageRows)
     }
 
     init(screen: NSScreen, model: DockModel, usage: UsageStore, activity: ActivityMonitor? = nil, presentWindows: Bool = true, settings: @escaping () -> Void) {
         self.screen = screen; self.model = model; self.usage = usage
         self.presentWindows = presentWindows
         let activity = activity ?? ActivityMonitor(home: model.home)
-        layout = Self.layout(screen: screen, model: model)
+        layout = Self.layout(screen: screen, model: model, usageRows: usage.cardUsageRows)
         panel = Self.makePanel(frame: layout.expanded, title: "Account Dock · \(screen.localizedName)")
         compactPanel = Self.makePanel(frame: layout.collapsed, title: "Account Dock · \(screen.localizedName)")
         compactPanel.hasShadow = false
         if layout.notchHeight == 0 {
-            let compact = NSHostingView(rootView: CompactIslandView(model: model, activity: activity))
+            let compact = NSHostingView(rootView: CompactIslandView(model: model, activity: activity, presentation: presentation, drag: { [weak self] phase, point in self?.drag(phase, at: point) }))
             compact.sizingOptions = []
             compactPanel.contentView = compact
         } else {
             compactPanel.alphaValue = 0
             compactPanel.ignoresMouseEvents = true
         }
-        let content = NSHostingView(rootView: IslandView(model: model, usage: usage, activity: activity, presentation: presentation, notchHeight: layout.notchHeight, settings: settings))
+        let content = NSHostingView(rootView: IslandView(model: model, usage: usage, activity: activity, presentation: presentation, notchHeight: layout.notchHeight, settings: settings, drag: { [weak self] phase, point in self?.drag(phase, at: point) }))
         content.sizingOptions = []
         surface.install(content)
         panel.contentView = surface
@@ -77,6 +90,8 @@ final class IslandController {
         surface.compactOrigin = layout.compactOrigin; surface.floating = layout.placement != .topCenter
         surface.reveal(expanded: false, compactSize: layout.collapsed.size, duration: 0, fps: preferredFPS)
         presentation.onResetDetailsChange = { [weak self] in self?.updateLayout() }
+        presentation.opensUpward = layout.opensUpward
+        usageSubscription = usage.$entries.receive(on: RunLoop.main).map { _ in usage.cardUsageRows }.removeDuplicates().sink { [weak self] _ in self?.updateLayout() }
         showPanel()
     }
 
@@ -102,6 +117,7 @@ final class IslandController {
     }
 
     func shutdown() {
+        usageSubscription?.cancel()
         presentation.expanded = false
         animationGeneration += 1
         collapseTimer?.invalidate(); frameMeter.stop()
@@ -110,10 +126,11 @@ final class IslandController {
     }
 
     func updateLayout() {
-        let next = Self.layout(screen: screen, model: model, showsResetDetails: !presentation.resetDetails.isEmpty)
+        let next = Self.layout(screen: screen, model: model, showsResetDetails: !presentation.resetDetails.isEmpty, position: draggedPosition, usageRows: usage.cardUsageRows)
         guard next != layout else { return }
         animationGeneration += 1; animating = false; frameMeter.stop()
         layout = next
+        presentation.opensUpward = next.opensUpward
         surface.compactOrigin = layout.compactOrigin; surface.floating = layout.placement != .topCenter
         panel.setFrame(layout.expanded, display: false)
         compactPanel.setFrame(layout.collapsed, display: false)
@@ -124,11 +141,16 @@ final class IslandController {
     }
 
     func pointerMoved(to point: NSPoint) {
+        guard dragStart == nil else { return }
         if model.placement != .topCenter { updateLayout() }
         checkHover(at: point)
     }
 
     private func checkHover(at point: NSPoint = NSEvent.mouseLocation) {
+        guard dragStart == nil else { return }
+        // Keep the collapsed grip under the pointer so pressing it can begin a drag.
+        if model.placement == .free, !expanded,
+           CGRect(x: layout.collapsed.minX, y: layout.collapsed.minY, width: 30, height: layout.collapsed.height).contains(point) { return }
         // One stable source of pointer truth; animated SwiftUI enter/exit events cannot toggle the island.
         let inside = layout.containsPointer(point, expandedOrClosing: expanded || animating)
         setExpanded(hoverIntent.update(inside: inside, now: ProcessInfo.processInfo.systemUptime))
@@ -141,6 +163,25 @@ final class IslandController {
             }
             collapseTimer = timer
             RunLoop.main.add(timer, forMode: .common)
+        }
+    }
+
+    func drag(_ phase: DockDragPhase, at point: CGPoint) {
+        guard model.placement == .free else { return }
+        if phase == .began {
+            dragStart = (point, layout.collapsed.origin)
+            collapseTimer?.invalidate(); collapseTimer = nil; scheduledCollapse = nil
+        }
+        guard let start = dragStart else { return }
+        let origin = CGPoint(x: start.origin.x + point.x - start.pointer.x, y: start.origin.y + point.y - start.pointer.y)
+        let position = FloatingPosition(origin: origin, available: IslandLayout.usableFrame(screen: screen.frame, visible: screen.visibleFrame), size: layout.collapsed.size)
+        draggedPosition = position
+        updateLayout()
+        if phase == .ended {
+            dragStart = nil
+            model.savePosition(position, for: Self.positionKey(for: screen))
+            draggedPosition = nil
+            checkHover(at: point)
         }
     }
 
@@ -171,7 +212,7 @@ final class IslandController {
         ["screen": screen.localizedName, "actualFrame": NSStringFromRect(expanded ? panel.frame : compactPanel.frame),
          "expandedPanelFrame": NSStringFromRect(panel.frame), "contentFrame": NSStringFromRect(surface.bounds),
          "collapsedFrame": NSStringFromRect(layout.collapsed), "expanded": expanded, "animating": animating,
-         "resetDetails": presentation.resetDetails.sorted(),
+         "resetDetails": presentation.resetDetails.sorted(), "placement": model.placement.rawValue,
          "alpha": expanded ? panel.alphaValue : compactPanel.alphaValue,
          "maximumScreenFPS": screen.maximumFramesPerSecond, "requestedAnimationFPS": preferredFPS,
          "frameMeasurement": frameMeter.report, "animationCount": animationGeneration]

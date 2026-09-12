@@ -53,7 +53,7 @@ public struct ActivityCueLayout: Equatable {
         let height = min(26, max(12, obstacle.height - 4))
         let width = min(42, max(0, (screen.width - obstacle.width) / 2 - 8))
         if floating {
-            let y = min(screen.maxY - height, obstacle.maxY + 6)
+            let y = obstacle.maxY + 6 + height <= screen.maxY ? obstacle.maxY + 6 : max(screen.minY, obstacle.minY - height - 6)
             left = CGRect(x: obstacle.minX, y: y, width: width, height: height)
             right = CGRect(x: obstacle.maxX - width, y: y, width: width, height: height)
             return

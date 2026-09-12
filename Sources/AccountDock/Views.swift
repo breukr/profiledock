@@ -93,8 +93,11 @@ struct ProfileBadge: View {
 struct CompactIslandView: View {
     @ObservedObject var model: DockModel
     @ObservedObject var activity: ActivityMonitor
+    @ObservedObject var presentation: IslandPresentation
+    let drag: (DockDragPhase, CGPoint) -> Void
     var body: some View {
         HStack(spacing: 7) {
+            if model.placement == .free { DockDragHandle(drag: drag).frame(width: 22).help("Drag to move ProfileDock") }
             BrandMark(size: 11).foregroundStyle(.white.opacity(0.85))
             Text("Accounts").font(.system(size: 10, weight: .medium)).foregroundStyle(.white.opacity(0.9))
             HStack(spacing: 5) {
@@ -103,12 +106,13 @@ struct CompactIslandView: View {
                 }
                 if model.preferences.profiles.count > 5 { Text("+\(model.preferences.profiles.count - 5)").font(.system(size: 9)).foregroundStyle(.white.opacity(0.6)) }
             }
-            Image(systemName: model.placement == .topCenter ? "chevron.down" : "chevron.up").font(.system(size: 8, weight: .semibold)).foregroundStyle(.white.opacity(0.5))
+            Image(systemName: presentation.opensUpward ? "chevron.up" : "chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(.white.opacity(0.5))
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: model.placement == .free ? .leading : .center)
+        .padding(.horizontal, model.placement == .free ? 8 : 0)
         .background(.black)
         .clipShape(UnevenRoundedRectangle(topLeadingRadius: model.placement == .topCenter ? 2 : 12, bottomLeadingRadius: 12, bottomTrailingRadius: 12, topTrailingRadius: model.placement == .topCenter ? 2 : 12))
-        .accessibilityElement(children: .ignore)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel("ProfileDock, hover here to open. " + statusDescription)
         .help(statusDescription)
     }
@@ -124,10 +128,12 @@ struct IslandView: View {
     @ObservedObject var presentation: IslandPresentation
     let notchHeight: CGFloat
     let settings: () -> Void
+    let drag: (DockDragPhase, CGPoint) -> Void
 
     var body: some View {
         VStack(spacing: 13) {
             HStack(spacing: 8) {
+                if model.placement == .free { DockDragHandle(drag: drag).frame(width: 22, height: 20).help("Drag to move ProfileDock") }
                 Text("ProfileDock").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.85))
                 Spacer()
                 Text(usage.isRefreshing ? "Refreshing…" : "Remaining").font(.system(size: 10)).foregroundStyle(.white.opacity(0.55))
@@ -204,9 +210,8 @@ struct IslandView: View {
                     Text(snapshot == nil ? "Loading usage…" : "No usage data")
                         .font(.system(size: 10)).foregroundStyle(.white.opacity(0.45))
                 }
-                Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity, minHeight: 104, maxHeight: 104, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: IslandLayout.usageHeight(rows: snapshot?.windows.count ?? 1), maxHeight: IslandLayout.usageHeight(rows: snapshot?.windows.count ?? 1), alignment: .topLeading)
             .help(snapshot.map { "Updated at \(Self.absoluteDate($0.fetchedAt))." } ?? "Usage for this account.")
             ResetInventoryView(snapshot: snapshot, now: usage.now, expanded: presentation.resetDetails.contains(profile.id)) {
                 presentation.toggleResetDetails(profile.id)
@@ -219,6 +224,7 @@ struct IslandView: View {
             } else { Text(" ").font(.system(size: 8)).accessibilityHidden(true) }
         }
         .padding(.horizontal, 8)
+        .padding(.top, 12)
         .padding(.bottom, 6)
         .frame(maxWidth: .infinity)
         .background(active ? .white.opacity(0.075) : .white.opacity(0.025), in: RoundedRectangle(cornerRadius: 17))

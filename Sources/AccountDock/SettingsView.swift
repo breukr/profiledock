@@ -224,14 +224,17 @@ struct SettingsView: View {
                     Picker("Placement", selection: Binding(get: { model.placement }, set: { model.preferences.placement = $0; model.save() })) {
                         ForEach(DockPlacement.allCases, id: \.self) { Text($0.label).tag($0) }
                     }.pickerStyle(.segmented)
-                    Text("Lower corners keep the notch free for other apps. Floating launchers sit inside the screen's usable area, above or beside the macOS Dock.").font(.caption).foregroundStyle(.secondary)
+                    Text("Top center follows the notch or menu bar. Free position lets you drag the grip anywhere within each display; positions are remembered separately.").font(.caption).foregroundStyle(.secondary)
+                    if model.placement == .free {
+                        Button("Reset strip positions") { model.preferences.floatingPositions = nil; model.preferences.placement = .free; model.save() }
+                    }
                     Toggle("Show ProfileDock in the macOS Dock", isOn: Binding(get: { model.preferences.showDockIcon == true }, set: { model.preferences.showDockIcon = $0; model.save() }))
                     Text("Click the Dock icon to open settings. Hover expansion works on ProfileDock's floating launchers.").font(.caption).foregroundStyle(.secondary)
                     Divider()
                     Picker("Expanded size", selection: Binding(get: { model.preferences.scale }, set: { model.preferences.scale = $0; model.save() })) {
                         Text("Small").tag(0.85); Text("Default").tag(1.0); Text("Large").tag(1.3)
                     }.pickerStyle(.segmented)
-                    Text("The top bar fits the notch or menu bar; lower launchers expand upward. Extra profiles scroll horizontally.").font(.caption).foregroundStyle(.secondary)
+                    Text("The panel opens toward available space and stays on screen. Extra profiles scroll horizontally.").font(.caption).foregroundStyle(.secondary)
                 }.padding(12)
             }
             Label(model.placement.instruction, systemImage: "cursorarrow.motionlines")
@@ -239,7 +242,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     Text("Blue: working. Orange: needs you. Green: idle. Red: unread results. Gray: closed or unknown.").font(.callout).foregroundStyle(.secondary)
                     Toggle("Show completion and input cues", isOn: Binding(get: { model.preferences.activityCues != false }, set: { model.preferences.activityCues = $0; model.save(); if !$0 { cues.dismiss() } }))
-                    Text("Cues follow your placement: beside the notch or above a lower launcher. Reduce Motion is respected.").font(.caption).foregroundStyle(.secondary)
+                    Text("Cues follow the strip's position. Reduce Motion is respected.").font(.caption).foregroundStyle(.secondary)
                     Toggle("Play quiet activity sounds", isOn: Binding(get: { model.preferences.activitySounds == true }, set: { model.preferences.activitySounds = $0; model.save() }))
                     if model.preferences.activitySounds == true {
                         HStack {

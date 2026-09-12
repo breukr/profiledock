@@ -14,7 +14,7 @@ ProfileDock puts your ChatGPT and Codex profiles within reach on every screen. H
 - **One home for your accounts.** Create profiles and Finder launchers; switch with a click or ⌥⌘1–9.
 - **ChatGPT updates on your terms.** Select all app groups or just the ones you can restart. Separate copies update independently.
 - **At a glance.** Colored activity dots, brief completion/input cues beside the notch, and optional quiet chimes.
-- **Fits your Mac.** Use the notch/menu bar, or a floating launcher in either lower corner. Keep the notch free for other apps. Extra profiles scroll.
+- **Fits your Mac.** Use the notch/menu bar, or drag a floating launcher anywhere on each display. Keep the notch free for other apps. Extra profiles scroll.
 - **Saved resets, explained.** Expand the resets row for an oldest-first expiry countdown.
 
 Requires **macOS 14+**, an **Apple Silicon Mac (M1 or newer)**, and the **current [ChatGPT desktop app](https://chatgpt.com/download/)**. ChatGPT Classic is not supported. ProfileDock does not include or redistribute ChatGPT. Intel Macs can use the older v1.0.1 release; new releases target Apple Silicon.
@@ -62,7 +62,7 @@ A profile's options menu lets you change its picture, create a Finder launcher o
 
 **ChatGPT updates** show download progress and can be cancelled before installation. **ProfileDock updates** check daily while running, with a prompt before downloading or installing. Only ProfileDock restarts. Version 1.0.x users need to install this release manually once.
 
-In **Appearance**, choose top center, bottom left, or bottom right; preview the activity cues and enable optional chimes. Blue means working, orange needs input, green is idle, red is unread, and gray is closed or unknown. Old activity detected at startup stays quiet. An optional macOS Dock icon opens settings on click; floating launchers open on hover.
+In **Appearance**, choose **Top center** or **Free position**. Drag the grip to move a floating strip; each display remembers its position. Hover over the rest to open your profiles. You can preview activity cues and enable optional chimes. Blue means working, orange needs input, green is idle, red is unread, and gray is closed or unknown. Old activity detected at startup stays quiet. An optional macOS Dock icon opens settings on click.
 
 [Full guide](docs/GUIDE.md) · [Privacy & security](PRIVACY.md)
 

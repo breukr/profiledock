@@ -3,6 +3,50 @@ import CoreGraphics
 @testable import DockCore
 
 final class IslandTests: XCTestCase {
+    func testFreePositionKeepsStripAndPanelVisibleAcrossEdgesSizesAndScreenOrigins() {
+        for screen in [CGRect(x: 0, y: 0, width: 1512, height: 982), CGRect(x: -2560, y: -600, width: 2560, height: 1440), CGRect(x: 1920, y: 200, width: 900, height: 1440)] {
+            let visible = screen.insetBy(dx: 65, dy: 40)
+            for x in [0.0, 0.25, 0.5, 0.75, 1] {
+                for y in [0.0, 0.25, 0.5, 0.75, 1] {
+                    for count in [1, 5, 20] {
+                        let layout = IslandLayout(screen: screen, notchHeight: 38, notchWidth: 190, count: count, scale: 1.3, hasMessage: true, showsResetDetails: true, placement: .free, visibleFrame: visible, position: FloatingPosition(x: x, y: y), usageRows: 1)
+                        XCTAssertTrue(visible.contains(layout.collapsed)); XCTAssertTrue(visible.contains(layout.expanded))
+                        XCTAssertTrue(layout.expanded.contains(layout.collapsed))
+                        XCTAssertFalse(layout.containsPointer(CGPoint(x: screen.midX, y: screen.maxY), expandedOrClosing: false))
+                        XCTAssertEqual(layout.notchHeight, 0)
+                        if y == 0 { XCTAssertTrue(layout.opensUpward) }
+                        if y == 1 { XCTAssertFalse(layout.opensUpward) }
+                        let cues = ActivityCueLayout(screen: visible, obstacle: layout.collapsed, floating: true)
+                        XCTAssertTrue(visible.contains(cues.left)); XCTAssertTrue(visible.contains(cues.right))
+                        XCTAssertFalse(cues.left.intersects(layout.collapsed))
+                    }
+                }
+            }
+        }
+    }
+
+    func testPositionClampsAndRestoresProportionallyAfterDisplayResize() throws {
+        let position = FloatingPosition(x: 0.25, y: 0.75)
+        let restored = try JSONDecoder().decode(FloatingPosition.self, from: JSONEncoder().encode(position))
+        for available in [CGRect(x: -1900, y: 80, width: 1800, height: 1000), CGRect(x: 20, y: -500, width: 1300, height: 750)] {
+            let size = CGSize(width: 194, height: 32)
+            let origin = restored.origin(in: available, size: size)
+            let roundTrip = FloatingPosition(origin: origin, available: available, size: size)
+            XCTAssertEqual(roundTrip.x, position.x, accuracy: 0.0001)
+            XCTAssertEqual(roundTrip.y, position.y, accuracy: 0.0001)
+        }
+        XCTAssertEqual(FloatingPosition(x: -5, y: 5), FloatingPosition(x: 0, y: 1))
+        XCTAssertEqual(DockPlacement.allCases, [.topCenter, .free])
+    }
+
+    func testSingleUsageMeterDoesNotReserveAnEmptySecondRow() {
+        let screen = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        let one = IslandLayout(screen: screen, notchHeight: 0, notchWidth: 0, count: 5, scale: 1, hasMessage: false, usageRows: 1)
+        let two = IslandLayout(screen: screen, notchHeight: 0, notchWidth: 0, count: 5, scale: 1, hasMessage: false, usageRows: 2)
+        XCTAssertEqual(two.expanded.height - one.expanded.height, 56)
+        XCTAssertEqual(two.expanded.maxY, one.expanded.maxY)
+    }
+
     func testLowerPlacementsStayInsideDockInsetsAndNeverHoverAtNotch() {
         let screen = CGRect(x: -1920, y: -200, width: 1920, height: 1080)
         for visible in [screen.insetBy(dx: 0, dy: 80), CGRect(x: -1820, y: -200, width: 1820, height: 1048), CGRect(x: -1920, y: -200, width: 1820, height: 1048)] {
