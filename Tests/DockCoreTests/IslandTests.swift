@@ -3,6 +3,26 @@ import CoreGraphics
 @testable import DockCore
 
 final class IslandTests: XCTestCase {
+    func testLowerPlacementsStayInsideDockInsetsAndNeverHoverAtNotch() {
+        let screen = CGRect(x: -1920, y: -200, width: 1920, height: 1080)
+        for visible in [screen.insetBy(dx: 0, dy: 80), CGRect(x: -1820, y: -200, width: 1820, height: 1048), CGRect(x: -1920, y: -200, width: 1820, height: 1048)] {
+            for placement in [DockPlacement.bottomLeft, .bottomRight] {
+                let normal = IslandLayout(screen: screen, notchHeight: 38, notchWidth: 190, count: 12, scale: 1.3, hasMessage: false, placement: placement, visibleFrame: visible)
+                let details = IslandLayout(screen: screen, notchHeight: 38, notchWidth: 190, count: 12, scale: 1.3, hasMessage: false, showsResetDetails: true, placement: placement, visibleFrame: visible)
+                XCTAssertTrue(visible.contains(normal.collapsed))
+                XCTAssertTrue(visible.contains(normal.expanded))
+                XCTAssertEqual(normal.notchHeight, 0)
+                XCTAssertEqual(normal.expanded.minY, details.expanded.minY)
+                XCTAssertGreaterThan(details.expanded.maxY, normal.expanded.maxY)
+                XCTAssertTrue(normal.containsPointer(CGPoint(x: normal.collapsed.midX, y: normal.collapsed.midY), expandedOrClosing: false))
+                XCTAssertFalse(normal.containsPointer(CGPoint(x: normal.collapsed.midX, y: screen.maxY), expandedOrClosing: false))
+                XCTAssertFalse(normal.containsPointer(CGPoint(x: normal.expanded.midX, y: normal.expanded.maxY + 1), expandedOrClosing: true))
+                let cues = ActivityCueLayout(screen: screen, obstacle: normal.collapsed, floating: true)
+                XCTAssertGreaterThan(cues.left.minY, normal.collapsed.maxY)
+                XCTAssertTrue(visible.contains(cues.left)); XCTAssertTrue(visible.contains(cues.right))
+            }
+        }
+    }
     func testExactTopEdgeStaysInsideForBothDisplayTypes() {
         for notch in [0.0, 38.0] {
             let screen = CGRect(x: -1800, y: 220, width: 1800, height: 1200)

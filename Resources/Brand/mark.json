@@ -1,0 +1,12 @@
+{
+  "size": 104,
+  "radius": 25,
+  "darkBackground": "151A25",
+  "lightBackground": "EEF4FF",
+  "tiles": [
+    { "x": 20, "y": 22, "size": 28, "radius": 8, "dark": "4A8FFA", "light": "2670ED" },
+    { "x": 56, "y": 22, "size": 28, "radius": 8, "dark": "AED0FF", "light": "5595EF" },
+    { "x": 20, "y": 58, "size": 28, "radius": 8, "dark": "D9E7FF", "light": "8AB9F5" },
+    { "x": 56, "y": 58, "size": 28, "radius": 8, "dark": "629FFF", "light": "367FE9" }
+  ]
+}

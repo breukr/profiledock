@@ -14,6 +14,11 @@ enum AppFiles {
             try FileManager.default.createDirectory(at: contents.appendingPathComponent("MacOS"), withIntermediateDirectories: true)
             try FileManager.default.createDirectory(at: contents.appendingPathComponent("Resources"), withIntermediateDirectories: true)
             try FileManager.default.copyItem(at: executable, to: contents.appendingPathComponent("MacOS/ProfileLauncher"))
+            // Finder launchers carry their executable's linked frameworks as well.
+            let frameworks = executable.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Frameworks")
+            if FileManager.default.fileExists(atPath: frameworks.path) {
+                _ = try run("/usr/bin/ditto", ["--norsrc", "--noextattr", frameworks.path, contents.appendingPathComponent("Frameworks").path])
+            }
             if let icon, FileManager.default.fileExists(atPath: icon.path) { try FileManager.default.copyItem(at: icon, to: contents.appendingPathComponent("Resources/AppIcon.icns")) }
             let plist: [String: Any] = ["CFBundleIdentifier": "nl.breukr.profiledock.launcher.\(profile.id)", "CFBundleName": "ChatGPT \(profile.name)", "CFBundleExecutable": "ProfileLauncher", "CFBundlePackageType": "APPL", "CFBundleVersion": "1", "CFBundleIconFile": "AppIcon", "LSUIElement": true, "LSMinimumSystemVersion": "14.0", "ProfileDockProfileID": profile.id]
             try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0).write(to: contents.appendingPathComponent("Info.plist"))

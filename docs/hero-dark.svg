@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="540" viewBox="0 0 1200 540">
-  <defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#eef4ff"/><stop offset="1" stop-color="#fafbfe"/></linearGradient><linearGradient id="blue" x2="1" y2="1"><stop stop-color="#5b9cff"/><stop offset="1" stop-color="#2670ed"/></linearGradient></defs>
+  <defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#11151d"/><stop offset="1" stop-color="#1b2331"/></linearGradient><linearGradient id="blue" x2="1" y2="1"><stop stop-color="#5b9cff"/><stop offset="1" stop-color="#2670ed"/></linearGradient></defs>
   <rect width="1200" height="540" rx="28" fill="url(#bg)"/>
   <rect x="490" y="0" width="220" height="42" rx="18" fill="#111318"/>
   <rect x="490" width="220" height="22" fill="#111318"/>
@@ -12,8 +12,8 @@
   <rect x="56" y="58" width="28" height="28" rx="8" fill="#629FFF"/>
   </g>
   <!-- brand-mark:end -->
-  <text x="600" y="265" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,Helvetica,sans-serif" font-size="58" font-weight="650" letter-spacing="-2" fill="#151a25">ProfileDock</text>
-  <text x="600" y="316" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,Helvetica,sans-serif" font-size="26" fill="#536176">Your ChatGPT profiles. One place.</text>
+  <text x="600" y="265" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,Helvetica,sans-serif" font-size="58" font-weight="650" letter-spacing="-2" fill="#f1f5ff">ProfileDock</text>
+  <text x="600" y="316" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,Helvetica,sans-serif" font-size="26" fill="#acb9ce">Your ChatGPT profiles. One place.</text>
   <rect x="324" y="369" width="552" height="64" rx="20" fill="#111318"/>
   <circle cx="365" cy="401" r="13" fill="#4a8ffa"/><circle cx="386" cy="411" r="4" fill="#50d28a"/>
   <text x="397" y="407" font-family="-apple-system,BlinkMacSystemFont,Helvetica,sans-serif" font-size="16" fill="#fff">Personal</text>
@@ -23,5 +23,5 @@
   <path d="M653 386v30" stroke="#343942"/>
   <circle cx="688" cy="401" r="13" fill="#36b6a0"/>
   <text x="718" y="407" font-family="-apple-system,BlinkMacSystemFont,Helvetica,sans-serif" font-size="16" fill="#fff">Side project</text>
-  <text x="600" y="488" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,Helvetica,sans-serif" font-size="15" fill="#7c8798" letter-spacing="2">MADE FOR MAC · BY BREUKR</text>
+  <text x="600" y="488" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,Helvetica,sans-serif" font-size="15" fill="#8fa1bd" letter-spacing="2">MADE FOR MAC · BY BREUKR</text>
 </svg>

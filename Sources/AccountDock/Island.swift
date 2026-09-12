@@ -47,25 +47,26 @@ final class IslandController {
         } else { notchWidth = 180 }
         let topInset = screen.frame.maxY - screen.visibleFrame.maxY
         let menuBarHeight = topInset > 0 ? topInset : NSStatusBar.system.thickness
-        return IslandLayout(screen: screen.frame, notchHeight: screen.safeAreaInsets.top, notchWidth: notchWidth, count: model.preferences.profiles.count, scale: model.preferences.scale, hasMessage: model.message != nil, menuBarHeight: menuBarHeight, showsResetDetails: showsResetDetails)
+        return IslandLayout(screen: screen.frame, notchHeight: screen.safeAreaInsets.top, notchWidth: notchWidth, count: model.preferences.profiles.count, scale: model.preferences.scale, hasMessage: model.message != nil, menuBarHeight: menuBarHeight, showsResetDetails: showsResetDetails, placement: model.placement, visibleFrame: screen.visibleFrame)
     }
 
     init(screen: NSScreen, model: DockModel, usage: UsageStore, activity: ActivityMonitor? = nil, presentWindows: Bool = true, settings: @escaping () -> Void) {
         self.screen = screen; self.model = model; self.usage = usage
         self.presentWindows = presentWindows
+        let activity = activity ?? ActivityMonitor(home: model.home)
         layout = Self.layout(screen: screen, model: model)
         panel = Self.makePanel(frame: layout.expanded, title: "Account Dock · \(screen.localizedName)")
         compactPanel = Self.makePanel(frame: layout.collapsed, title: "Account Dock · \(screen.localizedName)")
         compactPanel.hasShadow = false
-        if screen.safeAreaInsets.top == 0 {
-            let compact = NSHostingView(rootView: CompactIslandView(model: model))
+        if layout.notchHeight == 0 {
+            let compact = NSHostingView(rootView: CompactIslandView(model: model, activity: activity))
             compact.sizingOptions = []
             compactPanel.contentView = compact
         } else {
             compactPanel.alphaValue = 0
             compactPanel.ignoresMouseEvents = true
         }
-        let content = NSHostingView(rootView: IslandView(model: model, usage: usage, activity: activity ?? ActivityMonitor(home: model.home), presentation: presentation, notchHeight: screen.safeAreaInsets.top, settings: settings))
+        let content = NSHostingView(rootView: IslandView(model: model, usage: usage, activity: activity, presentation: presentation, notchHeight: layout.notchHeight, settings: settings))
         content.sizingOptions = []
         surface.install(content)
         panel.contentView = surface
@@ -73,6 +74,7 @@ final class IslandController {
         panel.setFrame(layout.expanded, display: false)
         compactPanel.setFrame(layout.collapsed, display: false)
         surface.layoutSubtreeIfNeeded()
+        surface.compactOrigin = layout.compactOrigin; surface.floating = layout.placement != .topCenter
         surface.reveal(expanded: false, compactSize: layout.collapsed.size, duration: 0, fps: preferredFPS)
         presentation.onResetDetailsChange = { [weak self] in self?.updateLayout() }
         showPanel()
@@ -96,7 +98,7 @@ final class IslandController {
     func showPanel() {
         guard presentWindows else { return }
         if expanded { panel.orderFrontRegardless() }
-        else if screen.safeAreaInsets.top == 0 { compactPanel.orderFrontRegardless() }
+        else if layout.notchHeight == 0 { compactPanel.orderFrontRegardless() }
     }
 
     func shutdown() {
@@ -112,6 +114,7 @@ final class IslandController {
         guard next != layout else { return }
         animationGeneration += 1; animating = false; frameMeter.stop()
         layout = next
+        surface.compactOrigin = layout.compactOrigin; surface.floating = layout.placement != .topCenter
         panel.setFrame(layout.expanded, display: false)
         compactPanel.setFrame(layout.collapsed, display: false)
         surface.layoutSubtreeIfNeeded()
@@ -120,7 +123,10 @@ final class IslandController {
         showPanel()
     }
 
-    func pointerMoved(to point: NSPoint) { checkHover(at: point) }
+    func pointerMoved(to point: NSPoint) {
+        if model.placement != .topCenter { updateLayout() }
+        checkHover(at: point)
+    }
 
     private func checkHover(at point: NSPoint = NSEvent.mouseLocation) {
         // One stable source of pointer truth; animated SwiftUI enter/exit events cannot toggle the island.
@@ -174,6 +180,8 @@ final class IslandController {
 
 @MainActor
 final class IslandSurface: NSView {
+    var compactOrigin: CGPoint?
+    var floating = false
     private var hosted: NSView?
     private let revealMask = CAShapeLayer()
     private let border = CAShapeLayer()
@@ -200,8 +208,8 @@ final class IslandSurface: NSView {
     var presentationBounds: CGRect? { revealMask.presentation()?.path?.boundingBoxOfPath }
 
     func reveal(expanded: Bool, compactSize: CGSize, duration: TimeInterval, fps: Float, completion: @escaping () -> Void = {}) {
-        let rect = expanded ? bounds : CGRect(x: (bounds.width - compactSize.width) / 2, y: bounds.height - compactSize.height, width: compactSize.width, height: compactSize.height)
-        let target = Self.path(in: rect, bottomRadius: expanded ? 27 : 10)
+        let rect = expanded ? bounds : CGRect(origin: compactOrigin ?? CGPoint(x: (bounds.width - compactSize.width) / 2, y: bounds.height - compactSize.height), size: compactSize)
+        let target = Self.path(in: rect, bottomRadius: expanded ? 27 : 10, roundedTop: floating)
         let previous = revealMask.presentation()?.path ?? revealMask.path ?? target
         let oldOpacity = hosted?.layer?.presentation()?.opacity ?? hosted?.layer?.opacity ?? 0
         CATransaction.begin()
@@ -226,9 +234,9 @@ final class IslandSurface: NSView {
         if duration == 0 { completion() }
     }
 
-    private static func path(in rect: CGRect, bottomRadius: CGFloat) -> CGPath {
+    private static func path(in rect: CGRect, bottomRadius: CGFloat, roundedTop: Bool = false) -> CGPath {
         let x = rect.minX, y = rect.minY, right = rect.maxX, top = rect.maxY
-        let b = min(bottomRadius, min(rect.width, rect.height) / 2), t = min(2, b), k: CGFloat = 0.5522847498
+        let b = min(bottomRadius, min(rect.width, rect.height) / 2), t = roundedTop ? b : min(2, b), k: CGFloat = 0.5522847498
         let path = CGMutablePath()
         path.move(to: CGPoint(x: x + b, y: y))
         path.addLine(to: CGPoint(x: right - b, y: y))

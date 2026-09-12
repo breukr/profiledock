@@ -4,6 +4,26 @@ import DockCore
 @testable import AccountDock
 
 final class AppManagementTests: XCTestCase {
+    func testPackagedFinderLauncherIncludesFrameworksAndStarts() throws {
+        guard let appPath = ProcessInfo.processInfo.environment["PROFILEDOCK_APP_PATH"] else { throw XCTSkip("Opt-in packaged launcher validation") }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = URL(fileURLWithPath: appPath)
+        let profile = Profile(id: "profile-launch-test", name: "Launch test", color: "377CF6")
+        let launcher = root.appendingPathComponent("Test.app")
+        try AppFiles.createLauncher(profile: profile, executable: app.appendingPathComponent("Contents/MacOS/AccountDock"), icon: nil, destination: launcher)
+        _ = try AppFiles.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", launcher.path])
+        let process = Process(), output = Pipe()
+        process.executableURL = launcher.appendingPathComponent("Contents/MacOS/ProfileLauncher")
+        process.arguments = ["--validate-launcher"]
+        process.standardOutput = output
+        process.standardError = FileHandle.standardError
+        try process.run()
+        let result = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+        XCTAssertEqual(String(data: result, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), profile.id)
+    }
     func testAtomicSwapRetainsOldAppAndCanRollBackWithoutTouchingOtherApps() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

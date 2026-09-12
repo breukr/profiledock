@@ -1,3 +1,11 @@
+# Sparkle
+
+ProfileDock uses [Sparkle 2.9.6](https://github.com/sparkle-project/Sparkle) for signed application updates. Its complete license and bundled dependency notices are included as `Sparkle-LICENSE.txt` in the app's Resources folder and in the resolved Sparkle package.
+
+# ProfileDock chimes
+
+The original chimes and generator are dedicated under [CC0 1.0](Resources/Sounds/LICENSE.md). They contain no third-party recordings.
+
 # CodexBar
 
 The usage integration follows CodexBar's account-scoped OAuth request approach and service schema.

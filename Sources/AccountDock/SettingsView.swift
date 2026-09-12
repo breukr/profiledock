@@ -19,7 +19,9 @@ struct SettingsView: View {
     @ObservedObject var model: DockModel
     @ObservedObject var loginItem: LoginItemModel
     @ObservedObject var activity: ActivityMonitor
-    @StateObject private var updates = AppUpdates()
+    @ObservedObject var updates: AppUpdates
+    @ObservedObject var selfUpdates: ProfileDockUpdates
+    let cues: ActivityCues
     let chooseImage: (Profile) -> Void
     @State private var section: SettingsSection? = .profiles
     @State private var adding = false
@@ -35,7 +37,7 @@ struct SettingsView: View {
         HSplitView {
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("ProfileDock").font(.system(size: 17, weight: .semibold))
+                    HStack(spacing: 8) { BrandMark(size: 17); Text("ProfileDock").font(.system(size: 17, weight: .semibold)) }
                     Text("by Breukr").font(.caption).foregroundStyle(.secondary)
                 }.padding(20)
                 List(SettingsSection.allCases, selection: $section) { item in
@@ -173,18 +175,36 @@ struct SettingsView: View {
                     }.toggleStyle(.checkbox).padding(8)
                 }.disabled(!updates.needsUpdate(group) || updates.busy)
             }
-            if updates.busy { ProgressView().controlSize(.small) }
+            if updates.busy {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let progress = updates.progress, !updates.verifying, !updates.cancelling {
+                        ProgressView(value: progress.fraction ?? 0).accessibilityLabel("ChatGPT download progress")
+                        HStack {
+                            Text(progress.label).monospacedDigit()
+                            Spacer()
+                            if let fraction = progress.fraction { Text("\(Int(fraction * 100))%").monospacedDigit() }
+                        }.font(.caption).foregroundStyle(.secondary)
+                    } else { ProgressView().controlSize(.small) }
+                    if updates.canCancel {
+                        Button("Cancel download") { updates.cancel() }
+                    } else if !updates.cancelling {
+                        Text("Installation is in progress. Keep ProfileDock open until it finishes.").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
             if let status = updates.status { Text(status).font(.callout).foregroundStyle(.secondary) }
             if let error = updates.error { Text(error).font(.callout).foregroundStyle(.orange).textSelection(.enabled) }
-            Button("Update selected ChatGPT apps") { confirmingUpdate = true }.buttonStyle(.borderedProminent).disabled(selectedGroups.isEmpty || updates.busy)
+            Button("Update selected ChatGPT apps") { confirmingUpdate = true }.buttonStyle(.borderedProminent).disabled(selectedGroups.isEmpty || updates.busy || selfUpdates.sessionInProgress)
             Text("Only selected app groups close. Your profiles, sign-ins, and chats stay in place. ChatGPT's own updater remains available.").font(.caption).foregroundStyle(.secondary)
             Divider()
             GroupBox {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("ProfileDock · Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development")").font(.headline)
-                    Text("Updates for ProfileDock are available on GitHub. Download the latest release to update this app.").font(.callout).foregroundStyle(.secondary)
+                    Text("ProfileDock checks daily while it is running. You choose when to download and install; only ProfileDock restarts.").font(.callout).foregroundStyle(.secondary)
+                    Toggle("Automatically check for ProfileDock updates", isOn: Binding(get: { selfUpdates.automatic }, set: { selfUpdates.setAutomatic($0) })).disabled(!selfUpdates.enabled)
+                    Button("Check ProfileDock for updates…") { selfUpdates.check() }.disabled(!selfUpdates.canCheck || updates.busy)
+                    if let last = selfUpdates.lastChecked { Text("Last checked \(last.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(.secondary) }
                     Link("View ProfileDock releases", destination: AppBrand.repository.appendingPathComponent("releases/latest"))
-                    Text("ProfileDock does not check for its own updates automatically.").font(.caption).foregroundStyle(.secondary)
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(10)
             }
         }.task { await updates.check() }
@@ -201,21 +221,46 @@ struct SettingsView: View {
                     }
                     if let error = loginItem.error { Text(error).foregroundStyle(.orange) }
                     Divider()
+                    Picker("Placement", selection: Binding(get: { model.placement }, set: { model.preferences.placement = $0; model.save() })) {
+                        ForEach(DockPlacement.allCases, id: \.self) { Text($0.label).tag($0) }
+                    }.pickerStyle(.segmented)
+                    Text("Lower corners keep the notch free for other apps. Floating launchers sit inside the screen's usable area, above or beside the macOS Dock.").font(.caption).foregroundStyle(.secondary)
+                    Toggle("Show ProfileDock in the macOS Dock", isOn: Binding(get: { model.preferences.showDockIcon == true }, set: { model.preferences.showDockIcon = $0; model.save() }))
+                    Text("Click the Dock icon to open settings. Hover expansion works on ProfileDock's floating launchers.").font(.caption).foregroundStyle(.secondary)
+                    Divider()
                     Picker("Expanded size", selection: Binding(get: { model.preferences.scale }, set: { model.preferences.scale = $0; model.save() })) {
                         Text("Small").tag(0.85); Text("Default").tag(1.0); Text("Large").tag(1.3)
                     }.pickerStyle(.segmented)
-                    Text("The closed bar always fits the notch or menu bar on each screen. Extra profiles scroll horizontally.").font(.caption).foregroundStyle(.secondary)
+                    Text("The top bar fits the notch or menu bar; lower launchers expand upward. Extra profiles scroll horizontally.").font(.caption).foregroundStyle(.secondary)
                 }.padding(12)
             }
-            Label("Hover at the top center of any screen to open your profiles.", systemImage: "cursorarrow.motionlines")
-            Label("Blue: working. Orange: needs you. Red: unread results.", systemImage: "circle.dotted")
+            Label(model.placement.instruction, systemImage: "cursorarrow.motionlines")
+            GroupBox("Activity & sound") {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Blue: working. Orange: needs you. Green: idle. Red: unread results. Gray: closed or unknown.").font(.callout).foregroundStyle(.secondary)
+                    Toggle("Show completion and input cues", isOn: Binding(get: { model.preferences.activityCues != false }, set: { model.preferences.activityCues = $0; model.save(); if !$0 { cues.dismiss() } }))
+                    Text("Cues follow your placement: beside the notch or above a lower launcher. Reduce Motion is respected.").font(.caption).foregroundStyle(.secondary)
+                    Toggle("Play quiet activity sounds", isOn: Binding(get: { model.preferences.activitySounds == true }, set: { model.preferences.activitySounds = $0; model.save() }))
+                    if model.preferences.activitySounds == true {
+                        HStack {
+                            Image(systemName: "speaker.wave.1")
+                            Slider(value: Binding(get: { model.preferences.activitySoundVolume ?? 0.18 }, set: { model.preferences.activitySoundVolume = $0; model.save() }), in: 0...0.5).accessibilityLabel("Activity sound volume")
+                            Image(systemName: "speaker.wave.2")
+                        }
+                    }
+                    HStack {
+                        Button("Preview completion") { cues.present(.finished, model: model, preview: true) }
+                        Button("Preview input request") { cues.present(.needsInput, model: model, preview: true) }
+                    }
+                }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+            }
             Text("Activity covers local Work and Codex tasks. Ordinary chats and tasks running on another computer are outside this view.").font(.caption).foregroundStyle(.secondary)
         }
     }
 
     private var support: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Image(systemName: "square.stack.3d.up.fill").font(.system(size: 44)).foregroundStyle(.blue)
+            BrandMark(size: 44).foregroundStyle(.blue)
             Text("A little less switching.\nA little more flow.").font(.system(size: 26, weight: .semibold))
             Text("Free, open source, and made by Breukr.").foregroundStyle(.secondary)
             HStack {

@@ -21,7 +21,9 @@ Imported profiles are kept in their existing locations. Removing a profile keeps
 
 Usage requests go directly to OpenAI and reject redirects. Update checks and selected downloads use OpenAI's `persistent.oaistatic.com` update feed. Downloads must pass its Ed25519 signature and the installed app must have OpenAI's Apple developer signature. No update requires signing into a third-party service.
 
-GitHub and donation links open only when you click them. The terminal installer uses GitHub's public release API and download servers.
+ProfileDock uses Sparkle to check a public GitHub update feed daily while running. Automatic checks can be disabled in Settings. GitHub receives normal web-request metadata, including your IP address and updater user agent; ProfileDock does not send profile names, accounts, chats, or system-profile analytics. Its feed and downloads are signed with Ed25519, and published apps are Developer ID signed and notarized. Download and installation require your choice.
+
+Repository and donation links open when clicked. The terminal installer uses GitHub's public download servers. Activity sounds are local audio files with no network requests.
 
 ## Boundaries
 

@@ -10,6 +10,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     let usage = UsageStore()
     let activity = ActivityMonitor()
     let loginItem = LoginItemModel()
+    let appUpdates = AppUpdates()
+    let selfUpdates = ProfileDockUpdates()
+    let cues = ActivityCues()
     var islands: [IslandController] = []
     var status: NSStatusItem!
     var settingsWindow: NSWindow?
@@ -36,25 +39,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             NSApp.terminate(nil)
             return
         }
-        NSApp.setActivationPolicy(.accessory)
+        NSApp.setActivationPolicy(model.preferences.showDockIcon == true ? .regular : .accessory)
         usage.configure(model.preferences.profiles)
         usage.refreshAll()
         activity.configure(model.preferences.profiles, running: Set(model.running.keys))
         if !previewMode { rebuildIslands(); startMouseMonitoring() }
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        status.button?.image = NSImage(systemSymbolName: "square.stack.3d.up.fill", accessibilityDescription: "ProfileDock")
+        status.button?.image = BrandArtwork.template(size: 16)
         status.button?.toolTip = "ProfileDock"
         status.button?.target = self
         status.button?.action = #selector(statusClick)
         status.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         configureMenu()
+        selfUpdates.mayUpdate = { [weak self] in self?.appUpdates.busy == false }
+        if !previewMode { selfUpdates.start() }
+        activity.$event.compactMap { $0 }.sink { [weak self] event in
+            guard let self, !self.previewMode else { return }
+            self.cues.receive(event, model: self.model)
+        }.store(in: &subscriptions)
         if !previewMode { registerHotKeys() }
         if model.preferences.profiles.isEmpty || CommandLine.arguments.contains("--settings") { showSettings() }
         model.onPreferencesChanged = { [weak self] in
             guard let self else { return }
             self.usage.configure(self.model.preferences.profiles)
             self.activity.configure(self.model.preferences.profiles, running: Set(self.model.running.keys))
-            self.islands.forEach { $0.updateLayout() }; self.configureMenu(); if !self.previewMode { self.registerHotKeys() }
+            if !self.previewMode, self.islands.first?.layout.placement != self.model.placement { self.cues.dismiss(); self.rebuildIslands() }
+            else { self.islands.forEach { $0.updateLayout() } }
+            let policy: NSApplication.ActivationPolicy = self.model.preferences.showDockIcon == true ? .regular : .accessory
+            if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
+            self.configureMenu(); if !self.previewMode { self.registerHotKeys() }
         }
         DistributedNotificationCenter.default().addObserver(self, selector: #selector(showPanel), name: Notification.Name("nl.breukr.account-dock.show"), object: nil)
         DistributedNotificationCenter.default().addObserver(self, selector: #selector(writeDiagnostics), name: Notification.Name("nl.breukr.account-dock.diagnostics"), object: nil)
@@ -87,6 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        cues.shutdown()
         if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
         if let localMouseMonitor { NSEvent.removeMonitor(localMouseMonitor) }
         islands.forEach { $0.shutdown() }
@@ -94,12 +108,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         activity.shutdown()
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard appUpdates.busy else { return .terminateNow }
+        model.message = appUpdates.canCancel ? "Cancel the ChatGPT download before quitting ProfileDock." : "Keep ProfileDock open until the ChatGPT installation finishes."
+        showSettings()
+        return .terminateCancel
+    }
+
     func rebuildIslands() {
         islands.forEach { $0.shutdown() }
         islands = NSScreen.screens.map { screen in IslandController(screen: screen, model: model, usage: usage, activity: activity, settings: { [weak self] in self?.showSettings() }) }
     }
 
-    @objc func screenChanged() { if !previewMode { rebuildIslands() } }
+    @objc func screenChanged() { cues.dismiss(); if !previewMode { rebuildIslands() } }
     @objc func showPanel() { islands.forEach { $0.showPanel() } }
     @objc func measureAnimations(_ notification: Notification) { islands.forEach { $0.measureAnimations = notification.object as? String == "start" } }
     @objc func writeDiagnostics(_ notification: Notification) {
@@ -111,7 +132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             try? data.write(to: destination, options: .atomic)
         }
     }
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { showPanel(); return true }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { showSettings(); return true }
 
     @objc func statusClick() {
         if NSApp.currentEvent?.type == .rightMouseUp, let menu = statusMenu {
@@ -149,6 +170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         menu.addItem(.separator())
         menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",").target = self
+        menu.addItem(withTitle: "Check ProfileDock for Updates…", action: #selector(checkProfileDockUpdates), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Open at Login", action: #selector(toggleLoginItem), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Quit ProfileDock", action: #selector(quit), keyEquivalent: "q").target = self
         statusMenu = menu
@@ -168,6 +190,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         main.addItem(editItem)
         NSApp.mainMenu = main
     }
+    @objc func checkProfileDockUpdates() { selfUpdates.check() }
 
     @objc func menuSelect(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String, let profile = model.preferences.profiles.first(where: { $0.id == id }) else { return }
@@ -186,7 +209,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 840, height: 620), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
             window.title = "ProfileDock"
             if previewMode { window.subtitle = "New installation preview" }
-            window.contentView = NSHostingView(rootView: SettingsView(model: model, loginItem: loginItem, activity: activity, chooseImage: { [weak self, weak window] profile in self?.model.chooseImage(for: profile, window: window) }))
+            window.contentView = NSHostingView(rootView: SettingsView(model: model, loginItem: loginItem, activity: activity, updates: appUpdates, selfUpdates: selfUpdates, cues: cues, chooseImage: { [weak self, weak window] profile in self?.model.chooseImage(for: profile, window: window) }))
             window.minSize = NSSize(width: 760, height: 560)
             window.isReleasedWhenClosed = false
             window.center()
@@ -229,6 +252,10 @@ import Combine
 struct AccountDock {
     static func main() {
         let application = NSApplication.shared
+        if CommandLine.arguments.contains("--validate-launcher") {
+            guard let id = Bundle.main.object(forInfoDictionaryKey: "ProfileDockProfileID") as? String, Profile.validID(id) else { exit(1) }
+            print(id); return
+        }
         if let id = Bundle.main.object(forInfoDictionaryKey: "ProfileDockProfileID") as? String {
             let model = DockModel()
             guard Profile.validID(id), let profile = model.preferences.profiles.first(where: { $0.id == id }) else {

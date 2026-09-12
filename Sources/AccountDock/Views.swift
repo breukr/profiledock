@@ -12,6 +12,29 @@ struct StatusDot: View {
     }
 }
 
+extension ProfileActivityState {
+    var color: Color {
+        switch self {
+        case .working: return Color(red: 0.3, green: 0.65, blue: 1)
+        case .waiting: return .orange
+        case .unread: return Color(red: 0.98, green: 0.35, blue: 0.35)
+        case .idle: return Color(red: 0.23, green: 0.9, blue: 0.42)
+        case .unknown: return .white.opacity(0.5)
+        case .closed: return .white.opacity(0.22)
+        }
+    }
+}
+
+struct ActivityDot: View {
+    let state: ProfileActivityState
+    var size: CGFloat = 6
+    var body: some View {
+        Circle().fill(state.color).frame(width: size, height: size)
+            .overlay { if state == .unknown { Circle().stroke(.white.opacity(0.6), lineWidth: 1).padding(-2) } }
+            .accessibilityLabel(state.label)
+    }
+}
+
 struct ProfileBadge: View {
     @ObservedObject var model: DockModel
     let profile: Profile
@@ -69,24 +92,28 @@ struct ProfileBadge: View {
 
 struct CompactIslandView: View {
     @ObservedObject var model: DockModel
+    @ObservedObject var activity: ActivityMonitor
     var body: some View {
         HStack(spacing: 7) {
-            Image(systemName: "square.stack.3d.up.fill").font(.system(size: 10, weight: .medium)).foregroundStyle(.white.opacity(0.85))
+            BrandMark(size: 11).foregroundStyle(.white.opacity(0.85))
             Text("Accounts").font(.system(size: 10, weight: .medium)).foregroundStyle(.white.opacity(0.9))
             HStack(spacing: 5) {
                 ForEach(Array(model.preferences.profiles.prefix(5))) { profile in
-                    StatusDot(isOpen: model.running[profile.id]?.isEmpty == false, size: 5)
+                    ActivityDot(state: ProfileActivityState(summary: activity.entries[profile.id], isOpen: model.running[profile.id]?.isEmpty == false))
                 }
                 if model.preferences.profiles.count > 5 { Text("+\(model.preferences.profiles.count - 5)").font(.system(size: 9)).foregroundStyle(.white.opacity(0.6)) }
             }
-            Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(.white.opacity(0.5))
+            Image(systemName: model.placement == .topCenter ? "chevron.down" : "chevron.up").font(.system(size: 8, weight: .semibold)).foregroundStyle(.white.opacity(0.5))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.black)
-        .clipShape(UnevenRoundedRectangle(topLeadingRadius: 2, bottomLeadingRadius: 10, bottomTrailingRadius: 10, topTrailingRadius: 2))
+        .clipShape(UnevenRoundedRectangle(topLeadingRadius: model.placement == .topCenter ? 2 : 12, bottomLeadingRadius: 12, bottomTrailingRadius: 12, topTrailingRadius: model.placement == .topCenter ? 2 : 12))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("ProfileDock, hover here to open. \(model.running.count) of \(model.preferences.profiles.count) open")
-        .help("Hover here to open your profiles")
+        .accessibilityLabel("ProfileDock, hover here to open. " + statusDescription)
+        .help(statusDescription)
+    }
+    private var statusDescription: String {
+        model.preferences.profiles.map { "\($0.name): \(ProfileActivityState(summary: activity.entries[$0.id], isOpen: model.running[$0.id]?.isEmpty == false).label)" }.joined(separator: ". ")
     }
 }
 

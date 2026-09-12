@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/hero.svg" alt="ProfileDock — your ChatGPT profiles, one place" width="860"></p>
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/hero-dark.svg"><img src="docs/hero.svg" alt="ProfileDock: your ChatGPT profiles, one place" width="860"></picture></p>
 
 <p align="center">
   <a href="https://github.com/breukr/profiledock/releases/latest">Download for Mac</a> ·
@@ -7,17 +7,17 @@
   <a href="https://github.com/breukr/profiledock/issues">Feedback</a>
 </p>
 
-ProfileDock puts your ChatGPT and Codex profiles at the top of every screen. Hover to switch accounts, check usage, see unread Work results, and find out when saved resets expire.
+ProfileDock puts your ChatGPT and Codex profiles within reach on every screen. Hover to switch accounts, check usage, see unread Work results, and find out when saved resets expire.
 
 **Free. Open source. Mac-native. Made by [Breukr](https://github.com/breukr).**
 
 - **One home for your accounts.** Create profiles and Finder launchers; switch with a click or ⌥⌘1–9.
 - **ChatGPT updates on your terms.** Select all app groups or just the ones you can restart. Separate copies update independently.
-- **At a glance.** Blue means working, orange means waiting for you, red means unread results.
-- **Fits your Mac.** Matches the notch on a MacBook and the menu-bar height on external displays. Extra profiles scroll.
+- **At a glance.** Colored activity dots, brief completion/input cues beside the notch, and optional quiet chimes.
+- **Fits your Mac.** Use the notch/menu bar, or a floating launcher in either lower corner. Keep the notch free for other apps. Extra profiles scroll.
 - **Saved resets, explained.** Expand the resets row for an oldest-first expiry countdown.
 
-Requires **macOS 14+**, Apple Silicon or Intel, and the **current [ChatGPT desktop app](https://chatgpt.com/download/)**. ChatGPT Classic is not supported. ProfileDock does not include or redistribute ChatGPT.
+Requires **macOS 14+**, an **Apple Silicon Mac (M1 or newer)**, and the **current [ChatGPT desktop app](https://chatgpt.com/download/)**. ChatGPT Classic is not supported. ProfileDock does not include or redistribute ChatGPT. Intel Macs can use the older v1.0.1 release; new releases target Apple Silicon.
 
 ## Install
 
@@ -49,7 +49,7 @@ cd profiledock
 open /Applications/ProfileDock.app
 ```
 
-The build creates a universal app for Apple Silicon and Intel. Local builds use a local signature; published downloads are identified separately in their release notes.
+The build creates an Apple Silicon app. Local builds use a local signature; published downloads are signed and notarized.
 
 ## How it works
 
@@ -60,7 +60,9 @@ The build creates a universal app for Apple Silicon and Intel. Local builds use 
 
 A profile's options menu lets you change its picture, create a Finder launcher or app copy, and remove it. Data stays on your Mac by default. **Appearance** includes startup at login and display sizing.
 
-ChatGPT updates are checked whenever you open **ChatGPT updates**; installation needs your confirmation. ProfileDock itself does not check for updates automatically. Download its latest version from [Releases](https://github.com/breukr/profiledock/releases/latest), quit ProfileDock, and replace it in Applications.
+**ChatGPT updates** show download progress and can be cancelled before installation. **ProfileDock updates** check daily while running, with a prompt before downloading or installing. Only ProfileDock restarts. Version 1.0.x users need to install this release manually once.
+
+In **Appearance**, choose top center, bottom left, or bottom right; preview the activity cues and enable optional chimes. Blue means working, orange needs input, green is idle, red is unread, and gray is closed or unknown. Old activity detected at startup stays quiet. An optional macOS Dock icon opens settings on click; floating launchers open on hover.
 
 [Full guide](docs/GUIDE.md) · [Privacy & security](PRIVACY.md)
 
@@ -77,4 +79,4 @@ swift test
 ./scripts/build-app.sh
 ```
 
-Swift, SwiftUI, and AppKit. No third-party runtime dependencies. See [release notes](docs/RELEASING.md) for signing and notarization. [MIT licensed](LICENSE); third-party acknowledgments are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Swift, SwiftUI, AppKit, and [Sparkle](https://sparkle-project.org/) for updates. See [release notes](docs/RELEASING.md) for signing and notarization. [MIT licensed](LICENSE); chimes are [CC0](Resources/Sounds/LICENSE.md), and third-party acknowledgments are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

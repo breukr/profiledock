@@ -11,9 +11,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Test
         run: swift test
-      - name: Build universal app
+      - name: Build Apple Silicon app
         run: ./scripts/build-app.sh
       - name: Verify architectures and signature
         run: |
-          lipo dist/ProfileDock.app/Contents/MacOS/AccountDock -verify_arch arm64 x86_64
-          codesign --verify --strict dist/ProfileDock.app
+          test "$(lipo -archs dist/ProfileDock.app/Contents/MacOS/AccountDock)" = arm64
+          codesign --verify --deep --strict dist/ProfileDock.app

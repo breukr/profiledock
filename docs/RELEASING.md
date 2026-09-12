@@ -10,7 +10,9 @@
    ```
 
 4. Scan the source and release artifacts for secrets, private paths, and personal data. Publish from this clean repository only, never a personal development repository's history.
-5. Create a tagged GitHub release with `ProfileDock.zip` and `SHA256SUMS`. Confirm notarization and both architectures before calling a download signed and notarized.
+5. Generate the signed Sparkle feed with `SPARKLE_KEY_ACCOUNT='YOUR KEY ACCOUNT' ./scripts/generate-feed.sh`. The private key stays in the macOS Keychain. Generate one initially using Sparkle's `bin/generate_keys --account YOUR_KEY_ACCOUNT` and place only its public key in `scripts/build-app.sh`.
+6. Create a tagged GitHub release with `ProfileDock.zip` and `SHA256SUMS`. Confirm notarization, nested framework signatures, and Apple Silicon architecture before publishing. Then copy the exact signed `dist/appcast.xml` into `docs/appcast.xml`, commit and push it. Do not edit the signed XML by hand. Verify the public feed and archive signature after publishing.
+7. Test a ProfileDock upgrade through Sparkle, and a fresh installation with empty profiles. Confirm ChatGPT processes and existing profile preferences remain intact. Check cue previews on a MacBook display and an external display. Do not claim physical-device coverage beyond the Macs actually tested.
 
 Do not commit certificates, signing identities, keychain profile names, local diagnostics, or developer machine paths. GitHub CI builds unsigned artifacts and runs tests; it does not receive signing credentials.
 

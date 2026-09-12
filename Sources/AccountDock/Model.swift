@@ -11,11 +11,17 @@ struct Preferences: Codable {
     var iconSetVersion: Int?
     var hiddenProfileIDs: [String]?
     var removedProfiles: [Profile]?
+    var activityCues: Bool?
+    var activitySounds: Bool?
+    var activitySoundVolume: Double?
+    var placement: DockPlacement?
+    var showDockIcon: Bool?
 }
 
 @MainActor
 final class DockModel: ObservableObject {
     @Published var preferences = Preferences()
+    var placement: DockPlacement { preferences.placement ?? .topCenter }
     @Published var running: [String: [NSRunningApplication]] = [:]
     @Published var activeProfile: String?
     @Published var opening: Set<String> = []

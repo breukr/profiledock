@@ -1,6 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 [[ "$(uname -s)" == "Darwin" ]] || { echo "ProfileDock is for macOS." >&2; exit 1; }
+[[ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" == 1 ]] || { echo "ProfileDock requires an Apple Silicon Mac." >&2; exit 1; }
 work_dir="$(mktemp -d /private/tmp/profiledock-install.XXXXXX)"
 trap 'rm -rf "$work_dir"' EXIT
 release_url="https://github.com/breukr/profiledock/releases/latest/download"

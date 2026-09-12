@@ -6,6 +6,7 @@ import DockCore
 @MainActor
 final class ActivityMonitor: ObservableObject {
     @Published private(set) var entries: [String: ActivitySummary] = [:]
+    @Published private(set) var event: ActivityEvent?
     private var observers: [String: ProfileActivityObserver] = [:]
     private var observerIDs: [String: UUID] = [:]
     private let home: URL
@@ -20,7 +21,12 @@ final class ActivityMonitor: ObservableObject {
             if observers[profile.id] == nil {
                 let observerID = UUID()
                 observerIDs[profile.id] = observerID
-                let observer = ProfileActivityObserver(profile: profile, home: home) { [weak self] summary in
+                let observer = ProfileActivityObserver(profile: profile, home: home, signal: { [weak self] signal in
+                    Task { @MainActor in
+                        guard let self, self.observerIDs[profile.id] == observerID else { return }
+                        self.event = ActivityEvent(profileID: profile.id, signal: signal)
+                    }
+                }) { [weak self] summary in
                     Task { @MainActor in
                         guard let self, self.observerIDs[profile.id] == observerID else { return }
                         if self.entries[profile.id] != summary { self.entries[profile.id] = summary }
@@ -46,6 +52,7 @@ private final class ProfileActivityObserver: @unchecked Sendable {
     private let home: URL
     private let queue: DispatchQueue
     private let deliver: (ActivitySummary) -> Void
+    private let signal: (ActivitySignal) -> Void
     private var metadata: ActivityMetadata?
     private var connection: NWConnection?
     private var generation = 0
@@ -63,7 +70,8 @@ private final class ProfileActivityObserver: @unchecked Sendable {
     private var reconnectWork: DispatchWorkItem?
     private var previous: ActivitySummary?
 
-    init(profile: Profile, home: URL, deliver: @escaping (ActivitySummary) -> Void) {
+    init(profile: Profile, home: URL, signal: @escaping (ActivitySignal) -> Void, deliver: @escaping (ActivitySummary) -> Void) {
+        self.signal = signal
         self.profile = profile; self.home = home; self.deliver = deliver
         queue = DispatchQueue(label: "nl.breukr.account-dock.activity.\(profile.id)", qos: .utility)
     }
@@ -248,6 +256,7 @@ private final class ProfileActivityObserver: @unchecked Sendable {
                 let old = projection.activity, oldUnread = projection.unread
                 let accepted = projection.apply(change)
                 projections[thread] = projection
+                if accepted, let event = ActivitySignal.transition(from: old, to: projection.activity, isLivePatch: change["type"] as? String == "patches") { signal(event) }
                 if !accepted { follow(thread, owner: owner, value: true) }
                 if old != projection.activity || oldUnread != projection.unread { publish(); scheduleRefresh() }
             } else if method == "thread-stream-following-status-requested" {

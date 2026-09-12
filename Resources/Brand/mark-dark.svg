@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 104 104" width="104" height="104" role="img" aria-label="ProfileDock">
+  <rect width="104" height="104" rx="25" fill="#151A25"/>
+  <rect x="20" y="22" width="28" height="28" rx="8" fill="#4A8FFA"/>
+  <rect x="56" y="22" width="28" height="28" rx="8" fill="#AED0FF"/>
+  <rect x="20" y="58" width="28" height="28" rx="8" fill="#D9E7FF"/>
+  <rect x="56" y="58" width="28" height="28" rx="8" fill="#629FFF"/>
+</svg>

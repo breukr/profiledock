@@ -4,22 +4,38 @@ import CryptoKit
 import Darwin
 import DockCore
 
+final class VendorDownloadObserver: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    let expected: Int64
+    let progress: @Sendable (DownloadProgress) -> Void
+    private var lastReport = Date.distantPast
+    init(expected: Int64, progress: @escaping @Sendable (DownloadProgress) -> Void) { self.expected = expected; self.progress = progress }
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {}
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
+        guard totalBytesWritten <= expected else { downloadTask.cancel(); return }
+        guard totalBytesWritten == expected || Date().timeIntervalSince(lastReport) >= 0.1 else { return }
+        lastReport = Date()
+        progress(DownloadProgress(received: totalBytesWritten, expected: expected))
+    }
+}
+
 enum VendorDownload {
     static let feed = URL(string: "https://persistent.oaistatic.com/codex-app-prod/appcast.xml")!
     // Public Ed25519 key shipped in OpenAI's desktop application, not a credential.
     static let publicKey = "mNfr1v9t63BfgDtlw4C8lRvSY6uMggIXABDOCi3tS6k="
 
-    static func prepare(_ release: VendorRelease, in directory: URL) async throws -> URL {
-        let configuration = URLSessionConfiguration.ephemeral
+    static func prepare(_ release: VendorRelease, in directory: URL, configuration: URLSessionConfiguration = .ephemeral, progress: @escaping @Sendable (DownloadProgress) -> Void = { _ in }, verifying: @escaping @Sendable () -> Void = {}) async throws -> URL {
         configuration.timeoutIntervalForResource = 1800
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
-        let (temporary, response) = try await session.download(from: release.url)
+        let observer = VendorDownloadObserver(expected: Int64(release.length), progress: progress)
+        let (temporary, response) = try await session.download(from: release.url, delegate: observer)
+        try Task.checkCancellation()
         guard let response = response as? HTTPURLResponse, response.statusCode == 200,
               let final = response.url, VendorRelease.allowedDownload(final) else { throw AppOperationError.message("The download was not served by OpenAI's update server.") }
         let archive = directory.appendingPathComponent("update.zip")
         try FileManager.default.moveItem(at: temporary, to: archive)
-        return try await Task.detached {
+        verifying()
+        let prepared = try await Task.detached {
             let data = try Data(contentsOf: archive, options: .mappedIfSafe)
             let key = try Curve25519.Signing.PublicKey(rawRepresentation: Data(base64Encoded: publicKey)!)
             guard data.count == release.length, key.isValidSignature(release.signature, for: data) else {
@@ -33,6 +49,8 @@ enum VendorDownload {
             guard AppUpdates.installedBuild(at: app) == release.build else { throw AppOperationError.message("The downloaded app does not match the advertised version.") }
             return app
         }.value
+        try Task.checkCancellation()
+        return prepared
     }
 }
 
@@ -54,7 +72,18 @@ final class AppUpdates: ObservableObject {
     @Published var status: String?
     @Published var error: String?
     @Published var selected: Set<String> = []
+    @Published private(set) var progress: DownloadProgress?
+    @Published private(set) var canCancel = false
+    @Published private(set) var cancelling = false
+    @Published private(set) var verifying = false
     private var task: Task<Void, Never>?
+
+    func cancel() {
+        guard canCancel, !cancelling else { return }
+        cancelling = true; canCancel = false
+        status = "Cancelling… Your ChatGPT apps will stay open."
+        task?.cancel()
+    }
 
     nonisolated static func installedBuild(at url: URL) -> Int? {
         guard let data = try? Data(contentsOf: url.appendingPathComponent("Contents/Info.plist")),
@@ -78,11 +107,7 @@ final class AppUpdates: ObservableObject {
             request.timeoutInterval = 30
             let (data, response) = try await session.data(for: request)
             guard (response as? HTTPURLResponse)?.statusCode == 200, data.count < 5_000_000 else { throw AppOperationError.message("OpenAI's update feed is unavailable.") }
-            #if arch(arm64)
             let architecture = "arm64"
-            #else
-            let architecture = "x86_64"
-            #endif
             let os = ProcessInfo.processInfo.operatingSystemVersion
             latest = try UpdateFeed.latest(data: data, architecture: architecture, systemVersion: "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)")
             status = latest.map { "Latest ChatGPT release: \($0.version)" } ?? "No compatible ChatGPT release is listed for this Mac. Use ChatGPT's own update menu."
@@ -91,7 +116,8 @@ final class AppUpdates: ObservableObject {
 
     func install(groups: [AppUpdateGroup], model: DockModel, activity: ActivityMonitor) {
         guard !busy, let release = latest, !groups.isEmpty else { return }
-        busy = true; error = nil
+        busy = true; error = nil; canCancel = true; cancelling = false; verifying = false
+        progress = DownloadProgress(received: 0, expected: Int64(release.length))
         task = Task {
             let workspace = FileManager.default.temporaryDirectory.appendingPathComponent("profiledock-update-" + UUID().uuidString)
             var reopen: [Profile] = []
@@ -100,12 +126,25 @@ final class AppUpdates: ObservableObject {
                 model.updatingApplications = []
                 model.refresh()
                 for profile in reopen where model.running[profile.id]?.isEmpty != false { model.select(profile) }
-                busy = false
+                busy = false; canCancel = false; cancelling = false; verifying = false; progress = nil; task = nil
             }
             do {
                 try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
-                status = "Downloading and verifying ChatGPT \(release.version)… You can keep working."
-                let prepared = try await VendorDownload.prepare(release, in: workspace)
+                status = "Downloading ChatGPT \(release.version)… You can keep working."
+                let prepared = try await VendorDownload.prepare(release, in: workspace, progress: { [weak self] progress in
+                    Task { @MainActor in
+                        guard let self, self.busy, self.canCancel, !self.verifying else { return }
+                        self.progress = progress
+                    }
+                }, verifying: { [weak self] in
+                    Task { @MainActor in
+                        guard let self, self.busy, !self.cancelling else { return }
+                        self.verifying = true
+                        self.status = "Verifying the ChatGPT download…"
+                    }
+                })
+                try Task.checkCancellation()
+                canCancel = false; verifying = false; progress = nil
                 let currentGroups = AppUpdateGroup.make(profiles: model.preferences.profiles, defaultApplication: model.defaultApplication)
                 guard groups.allSatisfy({ group in currentGroups.contains(group) && needsUpdate(group) }) else {
                     throw AppOperationError.message("The profiles or installed versions changed. Check for updates again.")
@@ -158,7 +197,13 @@ final class AppUpdates: ObservableObject {
                 }
                 status = "Updated \(groups.count) app \(groups.count == 1 ? "group" : "groups"). Reopening the profiles that were running."
                 selected = []
-            } catch { self.error = error.localizedDescription; status = "The update stopped. Completed groups keep their new version; the remaining apps are unchanged." }
+            } catch {
+                if Task.isCancelled {
+                    self.error = nil; status = "Download cancelled. Your ChatGPT apps are unchanged."
+                } else {
+                    self.error = error.localizedDescription; status = "The update stopped. Completed groups keep their new version; the remaining apps are unchanged."
+                }
+            }
         }
     }
 }
