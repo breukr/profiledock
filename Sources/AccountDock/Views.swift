@@ -337,14 +337,11 @@ struct ResetInventoryView: View {
     }
 }
 
-private struct UsageWindowView: View {
+struct UsageWindowView: View {
     let window: UsageWindow
     let now: Date
-    private var tint: Color {
-        if window.remainingPercent <= 10 { return Color(red: 0.96, green: 0.36, blue: 0.32) }
-        if window.remainingPercent <= 25 { return Color(red: 0.98, green: 0.71, blue: 0.29) }
-        return Color(red: 0.29, green: 0.85, blue: 0.52)
-    }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var tint: Color { UsageTint.remaining(window.remainingPercent).color }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -353,12 +350,14 @@ private struct UsageWindowView: View {
                 Spacer(minLength: 3)
                 Text("\(Int(window.remainingPercent.rounded()))%").monospacedDigit().foregroundStyle(tint)
             }.font(.system(size: 11, weight: .medium))
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.45), value: window.remainingPercent)
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     Capsule().fill(.white.opacity(0.12))
                     Capsule().fill(tint).frame(width: proxy.size.width * window.remainingPercent / 100)
                 }
             }.frame(height: 4)
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.45), value: window.remainingPercent)
             ViewThatFits(in: .horizontal) {
                 Text(resetText).fixedSize()
                 Text(resetText.replacingOccurrences(of: "Reset in", with: "Reset in")
