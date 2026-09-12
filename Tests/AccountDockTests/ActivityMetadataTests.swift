@@ -65,12 +65,20 @@ final class ActivityMetadataTests: XCTestCase {
     }
 
     @MainActor func testLiveObserverTracksWorkCompletionUnreadAndUnsubscribes() async throws {
+        try await assertLiveLifecycle(source: "vscode")
+    }
+
+    @MainActor func testUnknownSourceRootTracksLiveWorkCompletionAndUnread() async throws {
+        try await assertLiveLifecycle(source: "unknown")
+    }
+
+    @MainActor private func assertLiveLifecycle(source: String) async throws {
         let home = URL(fileURLWithPath: "/private/tmp/ad-ipc-" + String(UUID().uuidString.prefix(8)))
         let profile = Profile(id: "default", name: "Fixture", color: "000000")
         let directory = profile.home(in: home)
         try FileManager.default.createDirectory(at: directory.appendingPathComponent("ipc"), withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
-        try database(directory.appendingPathComponent("state_5.sqlite"), sql: "CREATE TABLE threads (id TEXT, archived INTEGER, source TEXT, agent_path TEXT, thread_source TEXT); INSERT INTO threads VALUES ('one',0,'vscode','/root',NULL);")
+        try database(directory.appendingPathComponent("state_5.sqlite"), sql: "CREATE TABLE threads (id TEXT, archived INTEGER, source TEXT, agent_path TEXT, thread_source TEXT); INSERT INTO threads VALUES ('one',0,'\(source)',NULL,NULL);")
         try database(directory.appendingPathComponent("thread_history_1.sqlite"), sql: "CREATE TABLE thread_turns (thread_id TEXT, rollout_ordinal INTEGER, status TEXT); INSERT INTO thread_turns VALUES ('one',1,'inProgress');")
         // A checkpointed WAL history with no sidecars must still discover the real live owner.
         try removeFixtureWALSidecars(directory.appendingPathComponent("thread_history_1.sqlite"))
@@ -178,6 +186,20 @@ final class ActivityMetadataTests: XCTestCase {
         XCTAssertTrue(metadata.candidates.contains("one"))
         XCTAssertTrue(metadata.candidates.isSubset(of: ["one", "idle"]))
         XCTAssertEqual(try Data(contentsOf: history), before, "Metadata discovery must not change the database")
+    }
+
+    func testUnknownSourceDiscoveryExcludesArchivedAndChildTasks() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let profile = Profile(id: "default", name: "Fixture", color: "000000")
+        let directory = profile.home(in: home)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        try database(directory.appendingPathComponent("state_5.sqlite"), sql: "CREATE TABLE threads (id TEXT, archived INTEGER, source TEXT, agent_path TEXT, thread_source TEXT); INSERT INTO threads VALUES ('one',0,'unknown',NULL,NULL),('root',0,'unknown','/root',NULL),('archived',1,'unknown',NULL,NULL),('child',0,'unknown','/root/child',NULL),('guardian',0,'{\"subagent\":{\"other\":\"guardian\"}}',NULL,NULL);")
+        try database(directory.appendingPathComponent("thread_history_1.sqlite"), sql: "CREATE TABLE thread_turns (thread_id TEXT, rollout_ordinal INTEGER, status TEXT); INSERT INTO thread_turns VALUES ('one',1,'inProgress'),('root',1,'inProgress'),('archived',1,'inProgress'),('child',1,'inProgress'),('guardian',1,'inProgress');")
+        try writeAuth(directory, account: "fixture")
+        let metadata = try ActivityMetadata.read(profile: profile, home: home)
+        XCTAssertEqual(metadata.roots, ["one", "root"])
+        XCTAssertEqual(metadata.candidates, ["one", "root"])
     }
 
     private func removeFixtureWALSidecars(_ path: URL) throws {

@@ -42,7 +42,10 @@ struct ActivityMetadata {
         let identity = try ActivityIdentity.read(profile: profile, home: home)
         let directory = profile.home(in: home)
         let stateDatabase = directory.appendingPathComponent("state_5.sqlite")
-        let roots = try strings(database: stateDatabase, sql: "SELECT id FROM threads WHERE archived = 0 AND source IN ('vscode','cli') AND (agent_path IS NULL OR agent_path = '/root')")
+        // The desktop also creates top-level Work tasks with source "unknown".
+        // This only makes them eligible for discovery; the live owner still confirms activity.
+        // Explicit child paths and structured subagent sources remain excluded.
+        let roots = try strings(database: stateDatabase, sql: "SELECT id FROM threads WHERE archived = 0 AND source IN ('vscode','cli','unknown') AND (agent_path IS NULL OR agent_path = '/root')")
         let automationThreads = try strings(database: stateDatabase, sql: "SELECT id FROM threads WHERE thread_source = 'automation'").intersection(roots)
         let history = directory.appendingPathComponent("thread_history_1.sqlite")
         let candidates: Set<String>
