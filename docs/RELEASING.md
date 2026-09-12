@@ -14,6 +14,8 @@
 6. Create a tagged GitHub release with `ProfileDock.zip` and `SHA256SUMS`. Confirm notarization, nested framework signatures, and Apple Silicon architecture before publishing. Then copy the exact signed `dist/appcast.xml` into `docs/appcast.xml`, commit and push it. Do not edit the signed XML by hand. Verify the public feed and archive signature after publishing.
 7. Test a ProfileDock upgrade through Sparkle, and a fresh installation with empty profiles. Confirm ChatGPT processes and existing profile preferences remain intact. Check cue previews on a MacBook display and an external display. Do not claim physical-device coverage beyond the Macs actually tested.
 
+Signing may ask for access to the publisher's Sparkle private key in macOS Keychain. This is a release-tool prompt, not a requirement for people installing ProfileDock. For verification, use `swift scripts/verify-update.swift dist/appcast.xml dist/ProfileDock.zip PUBLIC_KEY`, with the `SUPublicEDKey` value from the app's Info.plist. This checks both signatures without accessing the Keychain. Sparkle's `sign_update --verify` also reads the private-key item and may cause an unnecessary extra prompt.
+
 Do not commit certificates, signing identities, keychain profile names, local diagnostics, or developer machine paths. GitHub CI builds unsigned artifacts and runs tests; it does not receive signing credentials.
 
 The internal executable, bundle identifier, and preferences folder retain their original Account Dock names so existing installations keep their profiles and login-item identity.
