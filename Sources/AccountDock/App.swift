@@ -15,10 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     let selfUpdates = ProfileDockUpdates()
     let cues = ActivityCues()
     var islands: [IslandController] = []
-    var desktopDocks: [DesktopDockController] = []
-    var desktopDockStore: DesktopDockStore?
     let iconAppearance = AppIconController()
-    var systemDockAutoHide: SystemDockAutoHide?
     var status: NSStatusItem!
     var settingsWindow: NSWindow?
     var hotKeys: [EventHotKeyRef] = []
@@ -32,10 +29,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent("profiledock-preview-" + UUID().uuidString)
             try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             model = DockModel(home: directory)
-            if CommandLine.arguments.contains("--dock-preview") {
-                model.preferences.desktopDockEnabled = true
-                model.preferences.profiles = [Profile(id: "profile-preview-one", name: "Personal", color: "377CF6"), Profile(id: "profile-preview-two", name: "Work", color: "009B87")]
-            }
         } else { model = DockModel() }
         super.init()
     }
@@ -49,10 +42,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             return
         }
         NSApp.setActivationPolicy(model.preferences.showDockIcon == true ? .regular : .accessory)
-        if !previewMode {
-            systemDockAutoHide = SystemDockAutoHide(directory: model.settingsURL.deletingLastPathComponent())
-            do { try systemDockAutoHide?.restore() } catch { model.message = "Could not restore macOS Dock settings: \(error.localizedDescription)" }
-        }
         usage.configure(model.preferences.profiles)
         insights.prepare(profiles: model.preferences.profiles, home: model.home)
         usage.refreshAll()
@@ -66,7 +55,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         status.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         configureMenu()
         iconAppearance.update(model.preferences.appIconAppearance ?? .auto)
-        updateDesktopDock()
         selfUpdates.mayUpdate = { [weak self] in self?.appUpdates.busy == false }
         if !previewMode { selfUpdates.start() }
         activity.$event.compactMap { $0 }.sink { [weak self] event in
@@ -85,7 +73,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             let policy: NSApplication.ActivationPolicy = self.model.preferences.showDockIcon == true ? .regular : .accessory
             if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
             self.iconAppearance.update(self.model.preferences.appIconAppearance ?? .auto)
-            self.updateDesktopDock()
             self.configureMenu(); if !self.previewMode { self.registerHotKeys() }
         }
         DistributedNotificationCenter.default().addObserver(self, selector: #selector(showPanel), name: Notification.Name("nl.breukr.account-dock.show"), object: nil)
@@ -119,9 +106,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        do { try systemDockAutoHide?.restore() } catch { NSLog("ProfileDock could not restore Dock autohide: %@", error.localizedDescription) }
+        iconAppearance.shutdown()
         cues.shutdown()
-        desktopDocks.forEach { $0.close() }; desktopDockStore?.shutdown(); iconAppearance.shutdown()
         if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
         if let localMouseMonitor { NSEvent.removeMonitor(localMouseMonitor) }
         islands.forEach { $0.shutdown() }
@@ -142,34 +128,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         islands = NSScreen.screens.map { screen in IslandController(screen: screen, model: model, usage: usage, activity: activity, insights: insights, settings: { [weak self] in self?.showSettings() }) }
     }
 
-    func updateDesktopDock(rebuild: Bool = false) {
-        if !previewMode {
-            do { try systemDockAutoHide?.apply(model.preferences.desktopDockEnabled == true && model.preferences.desktopDockAutoHideSystem == true) }
-            catch { model.message = "Could not change macOS Dock autohide: \(error.localizedDescription)" }
-        }
-        guard model.preferences.desktopDockEnabled == true else {
-            desktopDocks.forEach { $0.close() }; desktopDocks.removeAll()
-            desktopDockStore?.shutdown(); desktopDockStore = nil
-            return
-        }
-        if desktopDockStore == nil { desktopDockStore = DesktopDockStore(model: model, observesWorkspace: !previewMode) }
-        guard let store = desktopDockStore else { return }
-        store.refresh()
-        if rebuild { desktopDocks.forEach { $0.close() }; desktopDocks.removeAll() }
-        if desktopDocks.isEmpty {
-            desktopDocks = NSScreen.screens.map { screen in
-                DesktopDockController(screen: screen, model: model, store: store, settings: { [weak self] in self?.showSettings() })
-            }
-        } else { desktopDocks.forEach { $0.layout() } }
-    }
-
-    @objc func screenChanged() { cues.dismiss(); if !previewMode { rebuildIslands() }; updateDesktopDock(rebuild: true) }
+    @objc func screenChanged() { cues.dismiss(); if !previewMode { rebuildIslands() } }
     @objc func showPanel() { islands.forEach { $0.showPanel() } }
     @objc func measureAnimations(_ notification: Notification) { islands.forEach { $0.measureAnimations = notification.object as? String == "start" } }
     @objc func writeDiagnostics(_ notification: Notification) {
         let destination = model.settingsURL.deletingLastPathComponent().appendingPathComponent("live-diagnostics.json")
         loginItem.refresh()
-        let output: [String: Any] = ["requestID": notification.object as? String ?? "", "islands": islands.map(\.diagnostics), "usage": usage.diagnostics, "activity": activity.diagnostics, "mouseEvents": mouseEvents, "globalMouseMonitor": globalMouseMonitor != nil, "localMouseMonitor": localMouseMonitor != nil, "profileRefreshes": model.refreshCount, "loginItem": loginItem.statusName, "menuBarItem": status.isVisible, "pid": ProcessInfo.processInfo.processIdentifier, "desktopDock": ["enabled": model.preferences.desktopDockEnabled == true, "grouped": model.preferences.groupChatGPTApps != false, "displayCount": desktopDocks.count, "tileCount": desktopDockStore?.entries.count ?? 0, "chatGPTGroupCount": desktopDockStore?.entries.filter { $0.id == DesktopDockEntry.groupID }.count ?? 0], "iconAppearance": (model.preferences.appIconAppearance ?? .auto).rawValue]
+        let output: [String: Any] = ["requestID": notification.object as? String ?? "", "islands": islands.map(\.diagnostics), "usage": usage.diagnostics, "activity": activity.diagnostics, "mouseEvents": mouseEvents, "globalMouseMonitor": globalMouseMonitor != nil, "localMouseMonitor": localMouseMonitor != nil, "profileRefreshes": model.refreshCount, "loginItem": loginItem.statusName, "menuBarItem": status.isVisible, "pid": ProcessInfo.processInfo.processIdentifier, "iconAppearance": (model.preferences.appIconAppearance ?? .auto).rawValue]
         if let data = try? JSONSerialization.data(withJSONObject: output, options: [.prettyPrinted, .sortedKeys]) {
             try? FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? data.write(to: destination, options: .atomic)

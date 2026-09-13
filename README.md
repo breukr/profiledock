@@ -14,7 +14,6 @@ ProfileDock puts your ChatGPT and Codex profiles within reach on every screen. H
 - **One home for your accounts.** Create profiles and Finder launchers; switch with a click or ⌥⌘1–9.
 - **ChatGPT updates on your terms.** Select all app groups or just the ones you can restart. Separate copies update independently.
 - **At a glance.** Colored activity dots, brief completion/input cues beside the notch, and optional quiet chimes.
-- **An optional full Dock.** Show pinned and running apps alongside one ChatGPT group. Switch grouping off to show each profile separately.
 - **Monochrome app icon.** Choose Auto, Dark, Light, Tinted or Clear; Auto follows the native macOS icon appearance.
 - **Fits your Mac.** Use the notch/menu bar, or drag a floating launcher anywhere on each display. Keep the notch free for other apps. Tiles adapt into rows, with pages for more accounts.
 - **Saved resets, explained.** Expand the resets row for an oldest-first expiry countdown.
@@ -67,7 +66,7 @@ A profile's options menu lets you change its picture, create a Finder launcher o
 
 In **Appearance**, choose **Top center** or **Free position**. Drag the grip to move a floating strip; each display remembers its position. Hover over the rest to open your profiles. You can preview activity cues and enable optional chimes. Blue means working, orange needs input, green is idle, red is unread, and gray is closed or unknown. Old activity detected at startup stays quiet. An optional macOS Dock icon opens settings on click.
 
-Enable the full Dock under **Settings → Dock**. ChatGPT grouping is on by default. Hiding the macOS Dock is a separate optional setting. Choose your app icon under **Settings → Appearance**. [Dock and icon details](docs/DESKTOP-DOCK.md).
+Choose your app icon under **Settings → Appearance**. [Icon appearance details](docs/ICON-APPEARANCES.md).
 
 [Full guide](docs/GUIDE.md) · [Privacy & security](PRIVACY.md)
 
