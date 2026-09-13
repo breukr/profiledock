@@ -21,7 +21,7 @@ final class AppIconController {
     }
     private func apply() {
         // nil restores the bundled layered icon, allowing macOS to choose its rendition.
-        NSApp.applicationIconImage = mode == .auto ? nil : AppIconImages.image(mode: mode, dark: NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
+        NSApp.applicationIconImage = mode == .auto ? nil : AppIconImages.dockImage(from: AppIconImages.image(mode: mode, dark: NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua))
     }
     func shutdown() {
         appearanceObserver = nil
@@ -30,6 +30,17 @@ final class AppIconController {
 }
 
 enum AppIconImages {
+    /// Icon Composer exports full-bleed artwork. Raster Dock overrides need the
+    /// same 100-point margin on a 1024-point canvas as the compiled macOS icon.
+    static func dockImage(from artwork: NSImage) -> NSImage {
+        let canvas = NSSize(width: 512, height: 512)
+        let inset: CGFloat = 50
+        return NSImage(size: canvas, flipped: false) { bounds in
+            artwork.draw(in: bounds.insetBy(dx: inset, dy: inset), from: .zero, operation: .sourceOver, fraction: 1)
+            return true
+        }
+    }
+
     static func image(mode: AppIconAppearance, dark: Bool) -> NSImage {
         let name: String
         switch mode {
