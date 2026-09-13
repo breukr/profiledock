@@ -2,7 +2,7 @@ import SwiftUI
 import Charts
 import DockCore
 
-private enum InsightMetric: String, CaseIterable {
+enum InsightMetric: String, CaseIterable {
     case cost = "Cost", tokens = "Tokens", sessions = "Sessions"
     func value(_ bucket: InsightBucket) -> Double {
         switch self { case .cost: return bucket.cost; case .tokens: return Double(bucket.tokens.total); case .sessions: return Double(bucket.sessions.count) }
@@ -35,9 +35,9 @@ struct InsightsPanel: View {
     var compact = false
     var active = true
     var onPopoverChange: (Bool) -> Void
-    @State private var account = "all"
-    @State private var period = InsightsPeriod.week
-    @State private var metric = InsightMetric.cost
+    var account: String { model.insightsAccount }
+    var period: InsightsPeriod { model.insightsPeriod }
+    var metric: InsightMetric { model.insightsMetric }
     @State private var selectedDate: Date?
     @State private var report = InsightReport.make(samples: [], profileID: nil, period: .week, now: Date())
     @State private var explanation = false
@@ -46,7 +46,7 @@ struct InsightsPanel: View {
     init(model: DockModel, store: InsightsStore, compact: Bool = false, active: Bool = true, onPopoverChange: @escaping (Bool) -> Void = { _ in }) {
         self.model = model; self.store = store; self.compact = compact; self.active = active
         self.onPopoverChange = onPopoverChange
-        let initial = InsightReport.make(samples: store.snapshot.samples, profileID: nil, period: .week, now: Date())
+        let initial = InsightReport.make(samples: store.snapshot.samples, profileID: model.insightsAccount == "all" ? nil : model.insightsAccount, period: model.insightsPeriod, now: Date())
         _report = State(initialValue: initial)
         _slices = State(initialValue: initial.buckets.flatMap { bucket in model.preferences.profiles.compactMap { bucket.accounts[$0.id] } })
     }
@@ -62,13 +62,13 @@ struct InsightsPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 12 : 20) {
             HStack(spacing: 12) {
-                Picker("Account", selection: $account) {
+                Picker("Account", selection: $model.insightsAccount) {
                     Text("All accounts").tag("all")
                     ForEach(model.preferences.profiles) { Text($0.name).tag($0.id) }
                 }.labelsHidden().pickerStyle(.menu).frame(maxWidth: compact ? 170 : 230, alignment: .leading)
                     .accessibilityLabel("Usage insights account")
                 Spacer(minLength: 0)
-                Picker("Period", selection: $period) {
+                Picker("Period", selection: $model.insightsPeriod) {
                     ForEach(InsightsPeriod.allCases, id: \.self) { Text($0.label).tag($0) }
                 }.labelsHidden().pickerStyle(.segmented).frame(width: 192).accessibilityLabel("Usage insights period")
                 if !compact {
@@ -102,7 +102,7 @@ struct InsightsPanel: View {
                         Text(selected.map { bucketDescription($0) } ?? (period == .today ? "Hourly activity" : "Daily activity"))
                             .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         Spacer(minLength: 6)
-                        Picker("Chart metric", selection: $metric) {
+                        Picker("Chart metric", selection: $model.insightsMetric) {
                             ForEach(InsightMetric.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                         }.labelsHidden().pickerStyle(.menu).fixedSize()
                     }
@@ -155,13 +155,12 @@ struct InsightsPanel: View {
         .controlSize(.small)
         .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 18))
         .overlay(RoundedRectangle(cornerRadius: 18).stroke(.primary.opacity(0.08), lineWidth: 1))
-        .onChange(of: account) { _, _ in rebuild() }
+        .onChange(of: account) { _, _ in selectedDate = nil; rebuild() }
         .onChange(of: explanation) { _, presented in onPopoverChange(presented) }
         .onDisappear { onPopoverChange(false) }
         .onChange(of: period) { _, _ in selectedDate = nil; rebuild() }
         .onChange(of: store.lastUpdated) { _, _ in rebuild() }
-        .onChange(of: model.preferences.profiles.map(\.id)) { _, ids in
-            if account != "all" && !ids.contains(account) { account = "all" }
+        .onChange(of: model.preferences.profiles.map(\.id)) { _, _ in
             store.configure(model.preferences.profiles); rebuild()
         }
         .task(id: active) {

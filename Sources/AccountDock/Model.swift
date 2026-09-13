@@ -19,6 +19,9 @@ struct Preferences: Codable {
     var showDockIcon: Bool?
     var appIconAppearance: AppIconAppearance?
     var insightsExpansion: InsightsExpansion?
+    var insightsAccount: String?
+    var insightsPeriod: Int?
+    var insightsMetric: String?
     var compactWidth: Double?
     var expandedWidth: Double?
 }
