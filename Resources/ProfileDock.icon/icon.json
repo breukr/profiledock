@@ -1,0 +1,61 @@
+{
+  "fill-specializations": [
+    {
+      "value": {
+        "solid": "srgb:0.95,0.95,0.96,1"
+      }
+    },
+    {
+      "appearance": "dark",
+      "value": {
+        "solid": "srgb:0.075,0.08,0.095,1"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "name": "ProfileDock mark",
+      "layers": [
+        {
+          "name": "Four profile tiles",
+          "image-name": "Mark.svg",
+          "fill-specializations": [
+            {
+              "value": {
+                "solid": "srgb:0.12,0.13,0.15,1"
+              }
+            },
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "srgb:0.94,0.95,0.97,1"
+              }
+            },
+            {
+              "appearance": "tinted",
+              "value": {
+                "solid": "extended-gray:1.00000,1.00000"
+              }
+            }
+          ],
+          "glass": true
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.18
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.15
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared",
+    "circles": []
+  },
+  "fill": {
+    "solid": "srgb:0.95000,0.95000,0.96000,1.00000"
+  }
+}

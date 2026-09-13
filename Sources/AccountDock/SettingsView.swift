@@ -8,10 +8,10 @@ enum AppBrand {
 }
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
-    case profiles = "Profiles", insights = "Usage insights", updates = "ChatGPT updates", appearance = "Appearance", support = "Support"
+    case profiles = "Profiles", insights = "Usage insights", updates = "ChatGPT updates", appearance = "Appearance", dock = "Dock", support = "Support"
     var id: String { rawValue }
     var symbol: String {
-        switch self { case .profiles: return "person.crop.rectangle.stack"; case .insights: return "chart.bar.xaxis"; case .updates: return "arrow.down.circle"; case .appearance: return "macwindow"; case .support: return "heart" }
+        switch self { case .profiles: return "person.crop.rectangle.stack"; case .insights: return "chart.bar.xaxis"; case .updates: return "arrow.down.circle"; case .appearance: return "macwindow"; case .dock: return "dock.rectangle"; case .support: return "heart" }
     }
 }
 
@@ -64,6 +64,7 @@ struct SettingsView: View {
                         case .insights: insightsSettings
                         case .updates: updateSettings
                         case .appearance: appearance
+                        case .dock: desktopDockSettings
                         case .support: support
                         }
                         if let message = model.message { Text(message).font(.callout).foregroundStyle(.orange).textSelection(.enabled) }
@@ -90,6 +91,32 @@ struct SettingsView: View {
             Button("Download & update") { updates.install(groups: selectedGroups, model: model, activity: activity) }
         } message: {
             Text("\(selectedGroups.flatMap(\.profiles).map(\.name).joined(separator: ", ")) will close after the download and reopen when the update finishes. Profiles sharing an app update together. Active tasks must finish first.")
+        }
+    }
+
+    private var desktopDockSettings: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("Your apps and ChatGPT profiles in one Dock, alongside the existing profile strip.").foregroundStyle(.secondary)
+            GroupBox("Desktop Dock") {
+                VStack(alignment: .leading, spacing: 14) {
+                    Toggle("Show the ProfileDock Dock", isOn: Binding(get: { model.preferences.desktopDockEnabled == true }, set: { model.preferences.desktopDockEnabled = $0; model.save() }))
+                    Text("Shows your macOS pinned apps, running apps, profiles and Trash on each display. Your existing macOS Dock pins stay unchanged.").font(.caption).foregroundStyle(.secondary)
+                    Divider()
+                    Toggle("Group ChatGPT apps", isOn: Binding(get: { model.preferences.groupChatGPTApps != false }, set: { model.preferences.groupChatGPTApps = $0; model.save() }))
+                    Text("Enabled by default. One ChatGPT tile opens a menu of your profiles and other ChatGPT or Codex instances. Turn it off to show separate tiles.").font(.caption).foregroundStyle(.secondary)
+                    Divider()
+                    Toggle("Automatically hide the macOS Dock", isOn: Binding(get: { model.preferences.desktopDockAutoHideSystem == true }, set: { model.preferences.desktopDockAutoHideSystem = $0; model.save() }))
+                        .disabled(model.preferences.desktopDockEnabled != true)
+                    Text("Uses macOS automatic hiding while this Dock is enabled. Your previous setting is restored when you disable it or quit ProfileDock.").font(.caption).foregroundStyle(.secondary)
+                    Button("Open macOS Dock settings") { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Desktop-Settings.extension")!) }
+                }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            GroupBox("Window selection") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Opening profiles works immediately. To select individual windows from an app's menu, allow Accessibility for ProfileDock in System Settings.").font(.callout).foregroundStyle(.secondary)
+                    Button("Open Accessibility settings") { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!) }
+                }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 
@@ -242,6 +269,8 @@ struct SettingsView: View {
                     if model.placement == .free {
                         Button("Reset strip positions") { model.preferences.floatingPositions = nil; model.preferences.placement = .free; model.save() }
                     }
+                    AppIconAppearancePicker(model: model)
+                    Divider()
                     Toggle("Show ProfileDock in the macOS Dock", isOn: Binding(get: { model.preferences.showDockIcon == true }, set: { model.preferences.showDockIcon = $0; model.save() }))
                     Text("Click the Dock icon to open settings. Hover expansion works on ProfileDock's floating launchers.").font(.caption).foregroundStyle(.secondary)
                     Divider()
