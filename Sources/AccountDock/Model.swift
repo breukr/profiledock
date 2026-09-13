@@ -219,6 +219,11 @@ final class DockModel: ObservableObject {
             app.unhide()
             let accepted = app.activate(options: [.activateAllWindows])
             message = accepted ? nil : "macOS could not bring \(profile.name) to the front. Try again."
+            do {
+                try ApplicationReopen.send(processIdentifier: app.processIdentifier)
+            } catch {
+                message = "macOS could not reopen \(profile.name)'s window. Try again."
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in self?.refresh() }
             return
         }
