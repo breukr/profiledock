@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     let selfUpdates = ProfileDockUpdates()
     let cues = ActivityCues()
     var islands: [IslandController] = []
+    let iconAppearance = AppIconController()
     var status: NSStatusItem!
     var settingsWindow: NSWindow?
     var hotKeys: [EventHotKeyRef] = []
@@ -53,6 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         status.button?.action = #selector(statusClick)
         status.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         configureMenu()
+        iconAppearance.update(model.preferences.appIconAppearance ?? .auto)
         selfUpdates.mayUpdate = { [weak self] in self?.appUpdates.busy == false }
         if !previewMode { selfUpdates.start() }
         activity.$event.compactMap { $0 }.sink { [weak self] event in
@@ -70,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             else { self.islands.forEach { $0.updateLayout() } }
             let policy: NSApplication.ActivationPolicy = self.model.preferences.showDockIcon == true ? .regular : .accessory
             if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
+            self.iconAppearance.update(self.model.preferences.appIconAppearance ?? .auto)
             self.configureMenu(); if !self.previewMode { self.registerHotKeys() }
         }
         DistributedNotificationCenter.default().addObserver(self, selector: #selector(showPanel), name: Notification.Name("nl.breukr.account-dock.show"), object: nil)
@@ -103,6 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        iconAppearance.shutdown()
         cues.shutdown()
         if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
         if let localMouseMonitor { NSEvent.removeMonitor(localMouseMonitor) }
@@ -130,7 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc func writeDiagnostics(_ notification: Notification) {
         let destination = model.settingsURL.deletingLastPathComponent().appendingPathComponent("live-diagnostics.json")
         loginItem.refresh()
-        let output: [String: Any] = ["requestID": notification.object as? String ?? "", "islands": islands.map(\.diagnostics), "usage": usage.diagnostics, "activity": activity.diagnostics, "mouseEvents": mouseEvents, "globalMouseMonitor": globalMouseMonitor != nil, "localMouseMonitor": localMouseMonitor != nil, "profileRefreshes": model.refreshCount, "loginItem": loginItem.statusName, "menuBarItem": status.isVisible, "pid": ProcessInfo.processInfo.processIdentifier]
+        let output: [String: Any] = ["requestID": notification.object as? String ?? "", "islands": islands.map(\.diagnostics), "usage": usage.diagnostics, "activity": activity.diagnostics, "mouseEvents": mouseEvents, "globalMouseMonitor": globalMouseMonitor != nil, "localMouseMonitor": localMouseMonitor != nil, "profileRefreshes": model.refreshCount, "loginItem": loginItem.statusName, "menuBarItem": status.isVisible, "pid": ProcessInfo.processInfo.processIdentifier, "iconAppearance": (model.preferences.appIconAppearance ?? .auto).rawValue]
         if let data = try? JSONSerialization.data(withJSONObject: output, options: [.prettyPrinted, .sortedKeys]) {
             try? FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? data.write(to: destination, options: .atomic)

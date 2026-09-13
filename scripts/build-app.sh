@@ -26,9 +26,10 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <key>CFBundleDisplayName</key><string>ProfileDock</string>
 <key>CFBundleExecutable</key><string>AccountDock</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleVersion</key><string>122</string>
-<key>CFBundleShortVersionString</key><string>1.2.2</string>
-<key>CFBundleIconFile</key><string>AppIcon</string>
+<key>CFBundleVersion</key><string>132</string>
+<key>CFBundleShortVersionString</key><string>1.3.2</string>
+<key>CFBundleIconFile</key><string>ProfileDock</string>
+<key>CFBundleIconName</key><string>ProfileDock</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSArchitecturePriority</key><array><string>arm64</string></array>
 <key>SUFeedURL</key><string>https://raw.githubusercontent.com/breukr/profiledock/main/docs/appcast.xml</string>
@@ -45,8 +46,9 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <key>NSPrincipalClass</key><string>NSApplication</string>
 </dict></plist>
 PLIST
-swift scripts/make-icon.swift "$project_dir/.build/AppIcon.iconset"
-iconutil -c icns "$project_dir/.build/AppIcon.iconset" -o "$bundle/Contents/Resources/AppIcon.icns"
+# Compile the layered monochrome icon; macOS selects light/dark/tinted/clear.
+xcrun actool "$project_dir/Resources/ProfileDock.icon" --compile "$bundle/Contents/Resources" --output-format human-readable-text --output-partial-info-plist "$stage_dir/icon-info.plist" --app-icon ProfileDock --enable-on-demand-resources NO --target-device mac --minimum-deployment-target 14.0 --platform macosx --bundle-identifier nl.breukr.account-dock
+ditto Resources/IconPreviews "$bundle/Contents/Resources/IconPreviews"
 xattr -cr "$bundle"
 python3 scripts/sign-bundle.py "$bundle"
 mkdir -p "$project_dir/dist"

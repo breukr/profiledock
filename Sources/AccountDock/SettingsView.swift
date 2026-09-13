@@ -242,6 +242,8 @@ struct SettingsView: View {
                     if model.placement == .free {
                         Button("Reset strip positions") { model.preferences.floatingPositions = nil; model.preferences.placement = .free; model.save() }
                     }
+                    AppIconAppearancePicker(model: model)
+                    Divider()
                     Toggle("Show ProfileDock in the macOS Dock", isOn: Binding(get: { model.preferences.showDockIcon == true }, set: { model.preferences.showDockIcon = $0; model.save() }))
                     Text("Click the Dock icon to open settings. Hover expansion works on ProfileDock's floating launchers.").font(.caption).foregroundStyle(.secondary)
                     Divider()
