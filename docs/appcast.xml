@@ -4,17 +4,17 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>ProfileDock</title>
         <item>
-            <title>1.2.2</title>
-            <pubDate>Sat, 12 Sep 2026 15:31:00 +0200</pubDate>
+            <title>1.3.3</title>
+            <pubDate>Sun, 13 Sep 2026 11:58:38 +0200</pubDate>
             <link>https://github.com/breukr/profiledock</link>
-            <sparkle:version>122</sparkle:version>
-            <sparkle:shortVersionString>1.2.2</sparkle:shortVersionString>
+            <sparkle:version>133</sparkle:version>
+            <sparkle:shortVersionString>1.3.3</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/breukr/profiledock/releases/download/v1.2.2/ProfileDock.zip" length="2054991" type="application/octet-stream" sparkle:edSignature="xiiqj6f2UMwpJU8KO1Hv07tNabUG0BweMrdpU+BG0hMfELwCd0pKdmL6XwFHwYoQCp0ktS9G5UHP3H9te/xzDw=="></enclosure>
+            <enclosure url="https://github.com/breukr/profiledock/releases/download/v1.3.3/ProfileDock.zip" length="5412346" type="application/octet-stream" sparkle:edSignature="3gfOe9zEy7dNg36PAnLWe5cJs0uD1dPahZWIu+r6wDiXOb5nGQSR/aGkFolt1AfH/kTlOiIei3NGSLaqEK5BAQ=="></enclosure>
         </item>
     </channel>
 </rss><!-- sparkle-signatures:
-edSignature: /aQxwwIE3ihQUdaOPZytpdycsvKFcuc8vjwPogXmixtNyUUfSX9QBGAFTuHaCAK3b/a+lFPd5SfpT3GeNrogDw==
+edSignature: YUxjRMjbI4xSibb/9Mfe2oQ/2LjPImq0Yq5c4vncDtqudyms+lTYC3Q30A+gMDbYPbAXJYCeSgMLuo7vD5cVBw==
 length: 1186
 -->
