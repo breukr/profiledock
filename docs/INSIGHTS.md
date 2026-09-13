@@ -2,6 +2,8 @@
 
 Open **Usage insights** beneath your profiles, or use its larger page in Settings.
 
+Your last account selection, time period and chart metric are remembered across closing the view and restarting ProfileDock. The drawer and Settings page share these choices. If a selected account is no longer available, the overview shows **All accounts**.
+
 - Choose one account or **All accounts**.
 - Switch between **Today**, **7 days**, and **30 days**.
 - Plot **Cost**, **Tokens**, or **Sessions**. Select the chart to inspect a period.
