@@ -180,6 +180,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",").target = self
         menu.addItem(withTitle: "Check ProfileDock for Updates…", action: #selector(checkProfileDockUpdates), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Open at Login", action: #selector(toggleLoginItem), keyEquivalent: "").target = self
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Support ProfileDock…", action: #selector(supportProfileDock), keyEquivalent: "").target = self
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Quit ProfileDock", action: #selector(quit), keyEquivalent: "q").target = self
         statusMenu = menu
         let main = NSMenu()
@@ -199,6 +202,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         NSApp.mainMenu = main
     }
     @objc func checkProfileDockUpdates() { selfUpdates.check() }
+    @objc func supportProfileDock() { NSWorkspace.shared.open(AppBrand.donation) }
 
     @objc func menuSelect(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String, let profile = model.preferences.profiles.first(where: { $0.id == id }) else { return }

@@ -4,7 +4,8 @@
   <a href="https://github.com/breukr/profiledock/releases/latest">Download for Mac</a> ·
   <a href="#install-with-an-agent">Install with an agent</a> ·
   <a href="#how-it-works">Quick guide</a> ·
-  <a href="https://github.com/breukr/profiledock/issues">Feedback</a>
+  <a href="https://github.com/breukr/profiledock/issues">Feedback</a> ·
+  <a href="https://github.com/sponsors/breukr">Sponsor</a>
 </p>
 
 ProfileDock puts your ChatGPT and Codex profiles within reach on every screen. Hover to switch accounts, check usage, see unread Work results, and find out when saved resets expire.
@@ -76,7 +77,11 @@ Activity covers local Work/Codex tasks. Profiles are not a security boundary, an
 
 ## Support
 
-If ProfileDock helps, **[give it a star](https://github.com/breukr/profiledock)**, share it, or [contribute](CONTRIBUTING.md). Everything stays free.
+If ProfileDock helps, [make a one-time donation](https://github.com/sponsors/breukr?frequency=one-time) or [sponsor development monthly](https://github.com/sponsors/breukr). Choose any amount on GitHub Sponsors. Contributions help fund maintenance, bug fixes, and improvements. Every feature stays free and open source.
+
+In the app, choose **Support ProfileDock…** from the ProfileDock menu or right-click its menu-bar icon. **Settings → Support** also offers one-time and monthly contributions.
+
+You can also **[give it a star](https://github.com/breukr/profiledock)**, share it, or [contribute](CONTRIBUTING.md).
 
 ## Development
 
