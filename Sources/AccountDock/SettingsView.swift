@@ -4,7 +4,8 @@ import DockCore
 
 enum AppBrand {
     static let repository = URL(string: "https://github.com/breukr/profiledock")!
-    static let donation: URL? = URL(string: "https://github.com/breukr/profiledock#support")
+    static let sponsors = URL(string: "https://github.com/sponsors/breukr")!
+    static let donation = URL(string: "https://github.com/sponsors/breukr?frequency=one-time")!
 }
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
@@ -303,10 +304,12 @@ struct SettingsView: View {
             Text("A little less switching.\nA little more flow.").font(.system(size: 26, weight: .semibold))
             Text("Free, open source, and made by Breukr.").foregroundStyle(.secondary)
             HStack {
-                Link("Star on GitHub", destination: AppBrand.repository).buttonStyle(.borderedProminent)
-                if let donation = AppBrand.donation { Link("Support development", destination: donation).buttonStyle(.bordered) }
+                Link("Donate once", destination: AppBrand.donation).buttonStyle(.borderedProminent)
+                Link("Sponsor monthly", destination: AppBrand.sponsors).buttonStyle(.bordered)
             }
+            Text("Choose your amount on GitHub Sponsors. Contributions are optional; every feature stays free.").font(.caption).foregroundStyle(.secondary)
             Divider()
+            Link("Star on GitHub", destination: AppBrand.repository)
             Link("Installation & guide", destination: AppBrand.repository)
             Link("Report an issue", destination: AppBrand.repository.appendingPathComponent("issues/new/choose"))
             Link("Privacy & security", destination: AppBrand.repository.appendingPathComponent("blob/main/PRIVACY.md"))
