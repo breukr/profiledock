@@ -49,7 +49,7 @@ public final class ContextMCP {
         guard Set(arguments.keys).isSubset(of: allowed) else { throw ContextError.message("Unknown argument. The caller and file paths cannot be supplied by a tool call.") }
         switch name {
         case "list_profiles":
-            return ["profiles": try object(service.availableProfiles()), "caller": service.caller, "note": "Only profiles enabled for this caller are listed. Enable sources in ProfileDock → Context. Profile aliases are plain text, not a custom Codex mention picker."]
+            return ["profiles": try object(service.availableProfiles()), "caller": service.caller, "note": "Only profiles enabled for this caller are listed. Connect in ProfileDock → Context installs source skills for the desktop @ suggestions. Plain-text aliases also work. Selected source skills use stable IDs; always verify current access."]
         case "search_sessions":
             guard let query = arguments["query"] as? String, let profiles = arguments["profiles"] as? [String] else { throw ContextError.message("query and profiles are required.") }
             let limit = try integer(arguments, key: "limit", default: 12, range: 1...30)

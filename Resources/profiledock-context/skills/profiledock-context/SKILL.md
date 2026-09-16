@@ -36,7 +36,11 @@ text, not ordinary ChatGPT/cloud-only history, attachments, or voice-only record
 
 If no sources are enabled, explain that the user can select them in
 **ProfileDock → Context**. If the tools are missing, use **Connect** there and
-start a new task in that profile. `@profile` aliases are plain text understood by
-this workflow; they are not custom entries in Codex's native mention picker.
+start a new task in that profile. Connect also installs a small local skill for
+each enabled source, which the desktop chat can show in its native `@` skills
+suggestions. A selected source skill fixes the source by stable ID; honor that ID
+after checking current access. Profile names and plain-text `@profile` aliases
+remain supported. If newly installed mentions do not appear, start a new task or
+restart the receiving profile when its current work has finished.
 The search stays local; retrieved excerpts used in a response become context
 in the currently active account.

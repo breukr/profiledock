@@ -50,6 +50,7 @@ import ContextCore
             try registry.save(latest); access = latest
             if allowed { sources.insert(source.id) } else { sources.remove(source.id) }
             invalidate(); error = nil
+            if connected, let caller { try ContextMentions(registry: registry).synchronize(caller) }
         } catch { self.error = error.localizedDescription }
     }
     func invalidate() {
@@ -69,7 +70,11 @@ import ContextCore
             let callerID = self.callerID
             Task {
                 do {
-                    let connected = try await Task.detached(priority: .utility) { try connection.isConnected(caller) }.value
+                    let connected = try await Task.detached(priority: .utility) {
+                        let connected = try connection.isConnected(caller)
+                        if connected { try ContextMentions(registry: connection.registry).synchronize(caller) }
+                        return connected
+                    }.value
                     guard self.callerID == callerID else { return }
                     self.connected = connected; self.connectionChecked = true
                 } catch {
@@ -92,7 +97,7 @@ import ContextCore
                 do {
                     try await Task.detached(priority: .utility) { try connection.connect(caller, helper: helper, skill: skill) }.value
                     connected = true; connectionChecked = true
-                    status = "Connected. Start a new task in \(caller.name) to use context."
+                    status = "Connected. In a new task in \(caller.name), type @ and choose a profile mention."
                 } catch { self.error = error.localizedDescription }
             }
         } catch { self.error = error.localizedDescription }
@@ -190,7 +195,7 @@ struct ContextSettingsView: View {
                             Text(store.example).font(.callout).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                             Button("Copy example") { store.copy(store.example) }.buttonStyle(.link)
                         }
-                        Text("Type the shown @alias as plain text. Profile aliases do not appear as custom suggestions in Codex's @ menu.").font(.caption).foregroundStyle(.secondary)
+                        Text("Type @ in your chat and select a profile from the skills suggestions. You can also write its name in your message. If new mentions do not appear, start a new task or restart that profile when its work is finished.").font(.caption).foregroundStyle(.secondary)
                         if let status = store.status { Text(status).font(.callout).foregroundStyle(.secondary).accessibilityIdentifier("context-connection-status") }
                     }.padding(10)
                 }
@@ -202,7 +207,7 @@ struct ContextSettingsView: View {
         .frame(maxWidth: 820, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
         .task { store.refresh(); if model.home == FileManager.default.homeDirectoryForCurrentUser { store.checkConnection() } }
-        .onChange(of: model.preferences.profiles) { _, _ in store.invalidate(); store.refresh() }
+        .onChange(of: model.preferences.profiles) { _, _ in store.invalidate(); store.refresh(); store.checkConnection() }
         .onChange(of: store.query) { _, _ in store.invalidate() }
         .onChange(of: store.days) { _, _ in store.invalidate() }
         .onChange(of: store.includeArchived) { _, _ in store.invalidate() }
