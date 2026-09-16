@@ -20,7 +20,7 @@ picker and skill chips. They are not a new kind of account attachment. The sourc
 skill pins the receiving and source profile IDs; the MCP helper still checks access
 on every request. OpenAI documents [explicit skill mentions and display metadata](https://learn.chatgpt.com/docs/build-skills).
 Codex CLI and the IDE use `$skill-name` instead of `@`; their skills picker shows
-the underlying stable `profiledock-source-…` name.
+the underlying `<alias>-pd-…` name.
 If a running client does not pick up new skills or the server in a new task,
 restart that receiving profile when its active work is finished. No source profile
 needs to be started. ProfileDock does not modify the host app or intercept typing.
@@ -77,11 +77,15 @@ skill is left untouched. Source histories are never changed by Connect.
 profile's own skills folder. Native discovery reads each skill's name, description
 and `agents/openai.yaml`. Refreshing the connection or checking a connected
 profile synchronizes its mentions. Changing grants or profile names in Context
-also synchronizes them. Renaming updates the display name while retaining a stable
-skill path and source ID. Disabled and removed sources lose their generated files;
+also synchronizes them. The searchable skill name contains the alias, because the
+current desktop menu does not search nested `interface.displayName` metadata even
+though it uses that metadata to render labels. Renaming replaces the skill path;
+its source-specific suffix prevents another source from reusing an old path.
+An already inserted chip for a renamed profile must be selected again.
+Disabled and removed sources lose their generated files;
 already inserted mentions remain subject to live source-ID and grant checks.
 Duplicate display names include the source ID for disambiguation. Skill folders
-have stable `profiledock-source-…` names, preserving custom skills that happen to
+have source-specific `<alias>-pd-…` names, preserving custom skills that happen to
 share a profile's display name. A conflict at a generated path is reported.
 SHA-256 receipts record generated files so refresh/removal preserves external edits
 and extra files. If cleanup is blocked by such an edit, access revocation still
