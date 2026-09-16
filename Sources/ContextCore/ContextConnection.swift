@@ -73,10 +73,12 @@ public struct ContextConnection: Sendable {
         try Data(skill.utf8).write(to: target, options: [.atomic])
         let response = try run(codex, ["mcp", "add", Self.serverName, "--", registry.helperURL.path] + launchArguments(profile), environment(profile))
         guard response.status == 0, try isConnected(profile) else { throw ContextError.message("The helper was prepared, but the profile connection could not be verified. Try Connect again.") }
+        try ContextMentions(registry: registry).synchronize(profile)
     }
     public func disconnect(_ profile: ContextProfile) throws {
         // Revoke first: existing sessions cannot retain access through a still-running helper.
         var policy = try registry.access(); policy.grants[profile.id] = []; try registry.save(policy)
+        try ContextMentions(registry: registry).remove(profile)
         if let entry = try entry(profile) {
             guard owns(entry, profile) else { throw ContextError.message("Sharing was disabled. An unrelated connection with the same name was left unchanged.") }
             let response = try run(codex, ["mcp", "remove", Self.serverName], environment(profile))

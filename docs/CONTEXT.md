@@ -11,14 +11,19 @@ profile you are working in. It does not copy accounts or resume source tasks.
    directional: allowing Studio to read Research does not allow Research to read Studio.
 4. Use **Try a search** to preview local passages, or select **Connect** and
    start a new task in the receiving profile.
-5. Ask: “Check our earlier conversations about the workshop in @research.”
-   Use the exact alias displayed beside the profile, or its ordinary name.
+5. Type `@research`, select the source skill from the desktop chat's suggestions,
+   and ask: “Check our earlier conversations about the workshop in @research.”
+   Plain-text aliases and ordinary profile names also work.
 
-The native `@` suggestion menu does not gain custom profile entries. Aliases are
-plain text resolved by the tools. The installed `profiledock-context` skill can
-also be selected explicitly in clients supporting skill mentions. If a running
-client does not pick up the new server in a new task, restart that receiving
-profile when its active work is finished. No source profile needs to be started.
+Profile mentions are local skills, using the desktop chat's existing native `@`
+picker and skill chips. They are not a new kind of account attachment. The source
+skill pins the receiving and source profile IDs; the MCP helper still checks access
+on every request. OpenAI documents [explicit skill mentions and display metadata](https://learn.chatgpt.com/docs/build-skills).
+Codex CLI and the IDE use `$skill-name` instead of `@`; their skills picker shows
+the underlying stable `profiledock-source-…` name.
+If a running client does not pick up new skills or the server in a new task,
+restart that receiving profile when its active work is finished. No source profile
+needs to be started. ProfileDock does not modify the host app or intercept typing.
 
 Connection and sharing are separate: **Connect** installs the helper and skill;
 source toggles control access. Changes to grants are checked on every request,
@@ -67,6 +72,20 @@ application-support path, so moving ProfileDock does not break the connection.
 Use **Connected → Refresh connection** after a context-helper update to install
 the current bundled helper and skill. A conflicting custom server or unmarked
 skill is left untouched. Source histories are never changed by Connect.
+
+`ContextMentions` generates source skills only for enabled sources, in the receiving
+profile's own skills folder. Native discovery reads each skill's name, description
+and `agents/openai.yaml`. Refreshing the connection or checking a connected
+profile synchronizes its mentions. Changing grants or profile names in Context
+also synchronizes them. Renaming updates the display name while retaining a stable
+skill path and source ID. Disabled and removed sources lose their generated files;
+already inserted mentions remain subject to live source-ID and grant checks.
+Duplicate display names include the source ID for disambiguation. Skill folders
+have stable `profiledock-source-…` names, preserving custom skills that happen to
+share a profile's display name. A conflict at a generated path is reported.
+SHA-256 receipts record generated files so refresh/removal preserves external edits
+and extra files. If cleanup is blocked by such an edit, access revocation still
+applies immediately. Skills cached by the host may remain visible until it refreshes.
 
 The reusable skill is also packaged as `Resources/profiledock-context`, a local
 skills-only plugin. Its manifest intentionally does not duplicate the per-profile

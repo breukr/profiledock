@@ -11,9 +11,11 @@ final class ContextConnectionTests: XCTestCase {
         let runner = ConnectionRecorder()
         let connection = ContextConnection(registry: f.registry, codex: URL(fileURLWithPath: "/fixture/codex"), run: { try runner.run($0, $1, $2) })
         XCTAssertFalse(try connection.isConnected(profile))
+        try f.allow("default", "two")
         let skill = ContextConnection.skillMarker + "\nfixture skill"
         try connection.connect(profile, helper: helper, skill: skill)
         XCTAssertTrue(try connection.isConnected(profile))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: profile.root(in: f.home).appendingPathComponent("skills/\(ContextMentions.skillName(for: "two"))/SKILL.md").path))
         try connection.connect(profile, helper: helper, skill: skill)
         try Data("changed externally".utf8).write(to: f.registry.helperURL)
         XCTAssertThrowsError(try connection.connect(profile, helper: helper, skill: skill))
@@ -23,6 +25,7 @@ final class ContextConnectionTests: XCTestCase {
         try connection.disconnect(profile)
         XCTAssertFalse(try connection.isConnected(profile)); XCTAssertFalse(try f.registry.access().allows(caller: "default", source: "two"))
         XCTAssertFalse(FileManager.default.fileExists(atPath: profile.root(in: f.home).appendingPathComponent("skills/profiledock-context/SKILL.md").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: profile.root(in: f.home).appendingPathComponent("skills/\(ContextMentions.skillName(for: "two"))/SKILL.md").path))
     }
 
     func testUnrelatedServerAndCustomSkillAreNeverOverwritten() throws {
