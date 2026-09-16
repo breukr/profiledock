@@ -13,7 +13,10 @@ jobs:
         run: swift test
       - name: Build Apple Silicon app
         run: ./scripts/build-app.sh
+      - name: Verify packaged context transport with fictional profiles
+        run: python3 scripts/context-smoke.py dist/ProfileDock.app/Contents/MacOS/ProfileDockContext
       - name: Verify architectures and signature
         run: |
           test "$(lipo -archs dist/ProfileDock.app/Contents/MacOS/AccountDock)" = arm64
+          test "$(lipo -archs dist/ProfileDock.app/Contents/MacOS/ProfileDockContext)" = arm64
           codesign --verify --deep --strict dist/ProfileDock.app
