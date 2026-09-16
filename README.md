@@ -73,6 +73,8 @@ Choose your app icon under **Settings → Appearance**. [Icon appearance details
 
 **Usage insights** opens with a click, on hover, or by default when the strip expands. Choose its behavior from the drawer's menu or **Settings → Usage insights**. Switch the chart between cost, tokens, and sessions. Estimates use local session history and published Standard API rates, not your subscription bill. [How it is calculated](docs/INSIGHTS.md).
 
+**Context** lets one profile find earlier local Work/Codex conversations in source profiles you enable. Open **Settings → Context**, choose the profile you work in, enable its sources, and select **Connect**. Start a new task and ask for earlier discussions using the profile names or plain-text `@aliases`. A local search preview shows passages with their original profile, conversation, and date. Sharing is directional and off by default. [Setup, scope, and privacy](docs/CONTEXT.md).
+
 Activity covers local Work/Codex tasks. Profiles are not a security boundary, and OpenAI's desktop interfaces may change. ProfileDock never redeems reset credits. It is independent of OpenAI.
 
 ## Support
