@@ -16,11 +16,12 @@ public struct ContextMentions: Sendable {
     private func validName(_ value: String) -> Bool {
         !value.isEmpty && value.count <= 64 && value.range(of: "^[a-z0-9]+(?:-[a-z0-9]+)*$", options: .regularExpression) != nil
     }
-    static func skillName(for sourceID: String) -> String {
-        let fragment = sourceID.lowercased().split { !$0.isASCII || !$0.isLetter && !$0.isNumber }.joined(separator: "-")
-        let short = String(fragment.prefix(24)).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+    static func skillName(for sourceID: String, alias: String) -> String {
+        let fragment = alias.lowercased().split { !$0.isASCII || !$0.isLetter && !$0.isNumber }.joined(separator: "-")
+        let fallback = sourceID.lowercased().split { !$0.isASCII || !$0.isLetter && !$0.isNumber }.joined(separator: "-")
+        let short = String((fragment.isEmpty ? fallback : fragment).prefix(48)).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
         let hash = SHA256.hash(data: Data(sourceID.utf8)).map { String(format: "%02x", $0) }.joined().prefix(8)
-        return "profiledock-source-" + short + "-" + hash
+        return short + "-pd-" + hash
     }
     private func receiptURL(_ caller: ContextProfile) -> URL { registry.directory.appendingPathComponent("mentions-\(caller.id).json") }
     private func checkedURL(_ relative: String, root: URL) throws -> URL {
@@ -61,9 +62,11 @@ public struct ContextMentions: Sendable {
         let fm = FileManager.default
         var files: [String: Data] = [:], names: [String] = []
         for source in sources {
-            // Stable skill paths keep an already-inserted chip bound to the same
-            // source even if another profile later takes over its old display name.
-            let name = Self.skillName(for: source.id)
+            // The desktop matcher reads top-level `name`, but renders nested
+            // interface.displayName. Keep the alias searchable in both fields.
+            // A source-specific suffix prevents a renamed path ever being reused
+            // by another source. Old chips may become unavailable, never rebound.
+            let name = Self.skillName(for: source.id, alias: source.alias)
             var displayName = String(source.alias.dropFirst().prefix(64))
             if all.filter({ $0.alias == source.alias }).count > 1 { displayName += " · " + source.id }
             guard validName(name) else { throw ContextError.message("This profile needs a simpler name for a chat mention.") }

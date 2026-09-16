@@ -7,7 +7,8 @@ final class ContextMentionsTests: XCTestCase {
     private func url(_ f: ContextFixture, _ path: String) -> URL {
         let parts = path.split(separator: "/").map(String.init)
         guard let first = parts.first else { return f.home.appendingPathComponent(".codex/skills") }
-        return f.home.appendingPathComponent(".codex/skills/" + ContextMentions.skillName(for: first) + "/" + parts.dropFirst().joined(separator: "/"))
+        let alias = (try? f.registry.profiles())?.first { $0.id == first }?.alias ?? "@" + first
+        return f.home.appendingPathComponent(".codex/skills/" + ContextMentions.skillName(for: first, alias: alias) + "/" + parts.dropFirst().joined(separator: "/"))
     }
     private func rename(_ f: ContextFixture, two: String, other: String = "Private") throws {
         let profiles = [Profile(id: "default", name: "Work One", color: "000000"), Profile(id: "two", name: two, color: "000000"), Profile(id: "private", name: other, color: "000000")]
@@ -22,7 +23,7 @@ final class ContextMentionsTests: XCTestCase {
         try f.allow("default", "two")
         XCTAssertEqual(try mentions.synchronize(c), ["worktwo"])
         let skill = try String(contentsOf: url(f, "two/SKILL.md"), encoding: .utf8)
-        XCTAssertTrue(skill.contains("name: \(ContextMentions.skillName(for: "two"))\n"))
+        XCTAssertTrue(skill.contains("name: \(ContextMentions.skillName(for: "two", alias: "@worktwo"))\n"))
         XCTAssertTrue(skill.contains("source profile ID `two` for receiving profile ID `default`"))
         let metadata = try String(contentsOf: url(f, "two/agents/openai.yaml"), encoding: .utf8)
         XCTAssertTrue(metadata.contains("value: \"profiledock-context\""))
@@ -36,11 +37,13 @@ final class ContextMentionsTests: XCTestCase {
         let f = try ContextFixture(); defer { f.remove() }; try f.allow("default", "two")
         let c = try caller(f), mentions = ContextMentions(registry: f.registry)
         try mentions.synchronize(c)
-        try Data("personal notes".utf8).write(to: url(f, "two/notes.txt"))
+        let oldNotes = url(f, "two/notes.txt"), oldSkill = url(f, "two/SKILL.md")
+        try Data("personal notes".utf8).write(to: oldNotes)
         try rename(f, two: "Research")
         XCTAssertEqual(try mentions.synchronize(c), ["research"])
         XCTAssertTrue(try String(contentsOf: url(f, "two/agents/openai.yaml"), encoding: .utf8).contains("display_name: \"research\""))
-        XCTAssertEqual(try String(contentsOf: url(f, "two/notes.txt"), encoding: .utf8), "personal notes")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: oldSkill.path))
+        XCTAssertEqual(try String(contentsOf: oldNotes, encoding: .utf8), "personal notes")
         var access = try f.registry.access(); access.set(caller: "default", source: "two", allowed: false); try f.registry.save(access)
         XCTAssertEqual(try mentions.synchronize(c), [])
         XCTAssertFalse(FileManager.default.fileExists(atPath: url(f, "two/SKILL.md").path))
@@ -101,10 +104,29 @@ final class ContextMentionsTests: XCTestCase {
         let selectedPath = url(f, "two/SKILL.md")
         try rename(f, two: "Research", other: "Work Two")
         try mentions.synchronize(c)
-        let selected = try String(contentsOf: selectedPath, encoding: .utf8)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: selectedPath.path))
+        XCTAssertNotEqual(selectedPath, url(f, "private/SKILL.md"))
+        let selected = try String(contentsOf: url(f, "two/SKILL.md"), encoding: .utf8)
         XCTAssertTrue(selected.contains("source profile ID `two`"))
         XCTAssertFalse(selected.contains("source profile ID `private`"))
         XCTAssertTrue(try String(contentsOf: url(f, "private/SKILL.md"), encoding: .utf8).contains("source profile ID `private`"))
         XCTAssertTrue(try String(contentsOf: url(f, "private/agents/openai.yaml"), encoding: .utf8).contains("display_name: \"worktwo\""))
+    }
+
+    func testNativeMenuCanFindProfileWhenItDoesNotSearchNestedDisplayMetadata() throws {
+        let f = try ContextFixture(); defer { f.remove() }; try f.allow("default", "two")
+        try rename(f, two: "Research Two")
+        try ContextMentions(registry: f.registry).synchronize(caller(f))
+        let skill = try String(contentsOf: url(f, "two/SKILL.md"), encoding: .utf8)
+        let name = try XCTUnwrap(skill.split(separator: "\n").first { $0.hasPrefix("name: ") }).dropFirst(6)
+        // Current desktop search filters name and top-level displayName, whereas
+        // the official parser supplies displayName inside interface. Reproduce
+        // that contract with no top-level displayName to guard the integration.
+        let searchable = [String(name), "", "@" + String(name)].map { $0.lowercased() }
+        for query in ["research", "researchtwo", "@researchtwo", "RESEARCHTWO"] {
+            XCTAssertTrue(searchable.contains { $0.contains(query.lowercased()) }, query)
+        }
+        XCTAssertFalse(searchable.contains { $0.contains("worktwo") })
+        XCTAssertEqual(name, url(f, "two/SKILL.md").deletingLastPathComponent().lastPathComponent[...])
     }
 }
