@@ -156,7 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             status.menu = menu
             status.button?.performClick(nil)
             status.menu = nil
-        } else { showSettings() }
+        } else { showGeneralSettings() }
     }
 
     var statusMenu: NSMenu?
@@ -186,7 +186,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             menu.addItem(item)
         }
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",").target = self
+        menu.addItem(withTitle: "Settings…", action: #selector(showGeneralSettings), keyEquivalent: ",").target = self
         menu.addItem(withTitle: "Check ProfileDock for Updates…", action: #selector(checkProfileDockUpdates), keyEquivalent: "").target = self
         menu.addItem(withTitle: "ChatGPT / Codex Updates…", action: #selector(showUpdateSettings), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Open at Login", action: #selector(toggleLoginItem), keyEquivalent: "").target = self
@@ -199,7 +199,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let application = NSMenu(title: "ProfileDock")
         application.addItem(withTitle: "About ProfileDock", action: #selector(about), keyEquivalent: "").target = self
         application.addItem(.separator())
-        application.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",").target = self
+        application.addItem(withTitle: "Settings…", action: #selector(showGeneralSettings), keyEquivalent: ",").target = self
         application.addItem(withTitle: "Check ProfileDock for Updates…", action: #selector(checkProfileDockUpdates), keyEquivalent: "").target = self
         application.addItem(withTitle: "ChatGPT / Codex Updates…", action: #selector(showUpdateSettings), keyEquivalent: "").target = self
         application.addItem(withTitle: "Open at Login", action: #selector(toggleLoginItem), keyEquivalent: "").target = self
@@ -240,6 +240,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         return true
     }
     @objc func about() { NSApp.orderFrontStandardAboutPanel(nil) }
+    @objc func showGeneralSettings() {
+        showSettings()
+        DispatchQueue.main.async { NotificationCenter.default.post(name: .profileDockShowGeneralSettings, object: nil) }
+    }
     @objc func showUpdateSettings() {
         showSettings()
         DispatchQueue.main.async { NotificationCenter.default.post(name: .profileDockShowUpdates, object: nil) }

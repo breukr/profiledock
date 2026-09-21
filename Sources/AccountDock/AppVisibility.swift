@@ -9,5 +9,6 @@ enum AppVisibility {
 }
 
 extension Notification.Name {
+    static let profileDockShowGeneralSettings = Notification.Name("nl.breukr.profiledock.show-settings")
     static let profileDockShowUpdates = Notification.Name("nl.breukr.profiledock.show-updates")
 }
