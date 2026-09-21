@@ -31,6 +31,7 @@ struct SettingsView: View {
     @State private var trashData = false
     @State private var copying = false
     @State private var confirmingUpdate = false
+    @State private var enablingNativeDock: Profile?
 
     private var groups: [AppUpdateGroup] { AppUpdateGroup.make(profiles: model.preferences.profiles, defaultApplication: model.defaultApplication) }
     private var selectedGroups: [AppUpdateGroup] { groups.filter { updates.selected.contains($0.id) && updates.needsUpdate($0) } }
@@ -92,6 +93,12 @@ struct SettingsView: View {
         } message: {
             Text("\(selectedGroups.flatMap(\.profiles).map(\.name).joined(separator: ", ")) will close after the download and reopen when the update finishes. Profiles sharing an app update together. Active tasks must finish first.")
         }
+        .alert("Enable experimental native Dock icon?", isPresented: Binding(get: { enablingNativeDock != nil }, set: { if !$0 { enablingNativeDock = nil } }), presenting: enablingNativeDock) { profile in
+            Button("Cancel", role: .cancel) {}
+            Button("Create local Dock app") { changeNativeDock(profile, enabled: true) }
+        } message: { _ in
+            Text("Creates a local ChatGPT copy with this profile's name and color. It replaces OpenAI's signature, removes vendor-only permissions and disables library validation, so some macOS protections and integrations differ. You may need to sign in again. ProfileDock automatically rebuilds the copy after app updates. Your original app and profile data are kept, and you can disable this setting at any time.")
+        }
     }
 
     private var profiles: some View {
@@ -110,6 +117,10 @@ struct SettingsView: View {
                                 .font(.headline).textFieldStyle(.plain).accessibilityLabel("Name for \(profile.name)")
                             Text("\(model.state(profile)) · \(profile.applicationPath == nil ? "Shared app" : "Separate app")" + (index < 9 ? " · ⌥⌘\(index + 1)" : ""))
                                 .font(.caption).foregroundStyle(.secondary)
+                            if profile.dockApplicationPath != nil {
+                                Text(model.nativeDockNeedsRebuild(profile) ? "Native Dock icon · updates on next launch" : "Native Dock icon · experimental")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
                         }
                         Spacer(minLength: 0)
                         Button("Open") { model.select(profile) }
@@ -124,6 +135,19 @@ struct SettingsView: View {
                             Divider()
                             Button("Move up") { model.move(profile.id, by: -1) }.disabled(index == 0)
                             Button("Move down") { model.move(profile.id, by: 1) }.disabled(index + 1 == model.preferences.profiles.count)
+                            Divider()
+                            if profile.dockApplicationPath == nil {
+                                Button("Enable native Dock icon…") { enablingNativeDock = profile }
+                                    .disabled(model.running[profile.id]?.isEmpty == false || model.opening.contains(profile.id))
+                            } else {
+                                Button("Repair native Dock app") { changeNativeDock(profile, enabled: true) }
+                                    .disabled(model.running[profile.id]?.isEmpty == false || model.opening.contains(profile.id))
+                                Button("Disable native Dock icon") { changeNativeDock(profile, enabled: false) }
+                                    .disabled(model.running[profile.id]?.isEmpty == false || model.opening.contains(profile.id))
+                                if let app = model.nativeDockURL(for: profile) {
+                                    Button("Show native Dock app in Finder") { NSWorkspace.shared.activateFileViewerSelecting([app]) }
+                                }
+                            }
                             Divider()
                             Button("Create separate app copy…") {
                                 copying = true
@@ -151,10 +175,19 @@ struct SettingsView: View {
                     }.padding(10)
                 }
             }
-            if copying { ProgressView("Creating and verifying the app copy…").controlSize(.small) }
+            if copying || !model.nativeDockOperations.isEmpty { ProgressView("Preparing and verifying the app copy…").controlSize(.small) }
             Button("Import or restore profiles") { model.restoreImportedProfiles() }.buttonStyle(.link)
             Text("New profiles start empty. A separate app copy can update independently; a shared app uses less disk space.").font(.caption).foregroundStyle(.secondary)
-        }.disabled(updates.busy || copying)
+        }.disabled(updates.busy || copying || !model.nativeDockOperations.isEmpty)
+    }
+
+    private func changeNativeDock(_ profile: Profile, enabled: Bool) {
+        copying = true
+        Task {
+            defer { copying = false }
+            do { try await model.setNativeDockIcon(for: profile, enabled: enabled) }
+            catch { model.message = error.localizedDescription }
+        }
     }
 
     private var insightsSettings: some View {
@@ -173,6 +206,10 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Update your ChatGPT app copies together, or choose the ones you can restart.").foregroundStyle(.secondary)
             Text("Checks when you open this panel. Updates install only after you confirm.").font(.caption).foregroundStyle(.secondary)
+            if model.preferences.profiles.contains(where: { $0.dockApplicationPath != nil }) {
+                Text("Enabled native Dock copies are rebuilt automatically with each update, keeping their profile names, colors and data. Updates made outside ProfileDock are applied to the Dock copy on its next launch.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
             HStack {
                 Button(updates.checking ? "Checking ChatGPT…" : "Check ChatGPT updates") { Task { await updates.check() } }.disabled(updates.checking || updates.busy)
                 Spacer()

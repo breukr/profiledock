@@ -55,6 +55,34 @@ enum VendorDownload {
 }
 
 enum AppReplacement {
+    struct Entry {
+        let prepared: URL
+        let destination: URL
+        let native: Bool
+    }
+
+    /// A group includes its signed source and every enabled Dock copy. If any
+    /// verification fails, restore all exchanged apps in reverse order.
+    static func install(_ entries: [Entry], verify: (Entry) throws -> Void) throws {
+        var exchanged: [Entry] = []
+        do {
+            for entry in entries {
+                try swap(prepared: entry.prepared, destination: entry.destination)
+                exchanged.append(entry)
+                try verify(entry)
+            }
+        } catch {
+            var recoveryFailed = false
+            for entry in exchanged.reversed() {
+                do { try swap(prepared: entry.prepared, destination: entry.destination) }
+                catch { recoveryFailed = true }
+            }
+            if recoveryFailed {
+                throw AppOperationError.message("The update could not be fully restored. Keep the hidden .profiledock-backup files beside the apps for recovery.")
+            }
+            throw error
+        }
+    }
     /// Exchange two directories atomically on the same filesystem. Keep the old app for recovery.
     static func swap(prepared: URL, destination: URL) throws {
         let result = prepared.path.withCString { source in
@@ -115,7 +143,7 @@ final class AppUpdates: ObservableObject {
     }
 
     func install(groups: [AppUpdateGroup], model: DockModel, activity: ActivityMonitor) {
-        guard !busy, let release = latest, !groups.isEmpty else { return }
+        guard !busy, model.nativeDockOperations.isEmpty, let release = latest, !groups.isEmpty else { return }
         busy = true; error = nil; canCancel = true; cancelling = false; verifying = false
         progress = DownloadProgress(received: 0, expected: Int64(release.length))
         task = Task {
@@ -157,7 +185,15 @@ final class AppUpdates: ObservableObject {
                         throw AppOperationError.message("A selected profile has an active task. Let it finish before updating this app group.")
                     }
                     guard !model.unreadableProcesses else { throw AppOperationError.message("A running profile cannot be identified yet. Try again once it has started.") }
-                    let apps = NSWorkspace.shared.runningApplications.filter { $0.bundleURL?.resolvingSymlinksInPath().standardizedFileURL == group.application }
+                    let nativeProfiles = group.profiles.filter { $0.dockApplicationPath != nil }
+                    let nativeApps = try nativeProfiles.map { profile -> URL in
+                        guard let app = model.nativeDockURL(for: profile) else { throw AppOperationError.message("Repair or disable the native Dock icon for \(profile.name) before updating.") }
+                        return app
+                    }
+                    let locks = try nativeApps.map { try NativeDockLock(directory: $0.deletingLastPathComponent()) }
+                    defer { locks.forEach { $0.release() } }
+                    let paths = Set(([group.application] + nativeApps).map { $0.resolvingSymlinksInPath().path })
+                    var apps = NSWorkspace.shared.runningApplications.filter { app in app.bundleURL.map { paths.contains($0.resolvingSymlinksInPath().path) } ?? false }
                     let known = Set(group.profiles.flatMap { model.running[$0.id] ?? [] }.map(\.processIdentifier))
                     guard apps.allSatisfy({ known.contains($0.processIdentifier) }) else {
                         throw AppOperationError.message("This app also has an unlisted window. Close it yourself before updating this group.")
@@ -166,9 +202,18 @@ final class AppUpdates: ObservableObject {
                     let staged = group.application.deletingLastPathComponent().appendingPathComponent(".profiledock-backup-" + UUID().uuidString + ".app")
                     status = "Preparing \(group.profiles.map(\.name).joined(separator: ", "))…"
                     try await Task.detached { try AppFiles.copyVendorApp(from: prepared, to: staged) }.value
-                    var exchanged = false
+                    var replacements = [AppReplacement.Entry(prepared: staged, destination: group.application, native: false)]
                     do {
+                        for (profile, app) in zip(nativeProfiles, nativeApps) {
+                            status = "Preparing the updated Dock app for \(profile.name)…"
+                            let rebuilt = app.deletingLastPathComponent().appendingPathComponent(".profiledock-backup-native-\(UUID().uuidString).app")
+                            try await model.prepareNativeDockCopy(profile: profile, source: prepared, sourceIdentity: group.application, destination: rebuilt)
+                            replacements.append(AppReplacement.Entry(prepared: rebuilt, destination: app, native: true))
+                        }
                         model.refresh()
+                        apps = NSWorkspace.shared.runningApplications.filter { app in app.bundleURL.map { paths.contains($0.resolvingSymlinksInPath().path) } ?? false }
+                        let currentKnown = Set(group.profiles.flatMap { model.running[$0.id] ?? [] }.map(\.processIdentifier))
+                        guard apps.allSatisfy({ currentKnown.contains($0.processIdentifier) }), !model.unreadableProcesses else { throw AppOperationError.message("An unlisted profile opened while preparing the update. Close it and try again.") }
                         guard group.profiles.allSatisfy({ profile in
                             guard model.running[profile.id]?.isEmpty == false else { return true }
                             guard let state = activity.entries[profile.id], state.liveAvailable else { return false }
@@ -181,17 +226,21 @@ final class AppUpdates: ObservableObject {
                         for app in apps { guard app.terminate() else { throw AppOperationError.message("ChatGPT declined to close. The update has been cancelled.") } }
                         let deadline = Date().addingTimeInterval(60)
                         while apps.contains(where: { !$0.isTerminated }), Date() < deadline { try await Task.sleep(nanoseconds: 250_000_000) }
-                        guard apps.allSatisfy(\.isTerminated), !NSWorkspace.shared.runningApplications.contains(where: { $0.bundleURL?.resolvingSymlinksInPath().standardizedFileURL == group.application }) else {
+                        guard apps.allSatisfy(\.isTerminated), !NSWorkspace.shared.runningApplications.contains(where: { app in app.bundleURL.map { paths.contains($0.resolvingSymlinksInPath().path) } ?? false }) else {
                             throw AppOperationError.message("This app is still running. Nothing was replaced; close it and try again.")
                         }
                         status = "Installing \(release.version)…"
-                        try AppReplacement.swap(prepared: staged, destination: group.application)
-                        exchanged = true
-                        do { try await Task.detached { try AppFiles.verifyVendorApp(group.application) }.value }
-                        catch { try AppReplacement.swap(prepared: staged, destination: group.application); exchanged = false; throw error }
-                        // The old signed app remains in the hidden backup beside the new app.
+                        let transaction = replacements
+                        try await Task.detached {
+                            try AppReplacement.install(transaction) { entry in
+                                if entry.native { _ = try AppFiles.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", entry.destination.path]) }
+                                else { try AppFiles.verifyVendorApp(entry.destination) }
+                            }
+                        }.value
+                        for app in nativeApps { NSWorkspace.shared.noteFileSystemChanged(app.path) }
+                        // Old apps remain in hidden backups beside the new apps.
                     } catch {
-                        if !exchanged { try? FileManager.default.removeItem(at: staged) }
+                        // Keep all prepared/backup paths, including after a failed rollback.
                         throw error
                     }
                 }

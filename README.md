@@ -13,6 +13,7 @@ ProfileDock puts your ChatGPT and Codex profiles within reach on every screen. H
 **Free. Open source. Mac-native. Made by [Breukr](https://github.com/breukr).**
 
 - **One home for your accounts.** Create profiles and Finder launchers; switch with a click or ⌥⌘1–9.
+- **Experimental native Dock icons.** Opt in per profile to a local ChatGPT copy with its own name and colored icon. See [tradeoffs and setup](docs/NATIVE-DOCK.md).
 - **ChatGPT updates on your terms.** Select all app groups or just the ones you can restart. Separate copies update independently.
 - **At a glance.** Colored activity dots, brief completion/input cues beside the notch, and optional quiet chimes.
 - **Monochrome app icon.** Choose Auto, Dark, Light, Tinted or Clear; Auto follows the native macOS icon appearance.
