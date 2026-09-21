@@ -154,6 +154,69 @@ final class NativeDockAppTests: XCTestCase {
         _ = try AppFiles.run("/usr/bin/codesign", ["--verify", "--strict", source.path])
     }
 
+    @MainActor func testPrepareBesideRunningSourceWithoutReplacingItsLiveBundle() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("native-live-source-" + UUID().uuidString)
+        defer { try? fm.removeItem(at: root) }
+        let source = root.appendingPathComponent("Fixture.app")
+        let executable = source.appendingPathComponent("Contents/MacOS/Fixture")
+        try fm.createDirectory(at: executable.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fm.createDirectory(at: source.appendingPathComponent("Contents/Resources"), withIntermediateDirectories: true)
+        let code = root.appendingPathComponent("Fixture.swift")
+        try Data("import AppKit\nlet app = NSApplication.shared\napp.setActivationPolicy(.accessory)\napp.run()\n".utf8).write(to: code)
+        #if arch(arm64)
+        let target = "arm64-apple-macos14.0"
+        #else
+        let target = "x86_64-apple-macos14.0"
+        #endif
+        _ = try AppFiles.run("/usr/bin/xcrun", ["swiftc", "-target", target, code.path, "-o", executable.path])
+        let identifier = "com.openai.codex" // Required by the source-installation resolver; match only our exact temporary path below.
+        let info: [String: Any] = ["CFBundleIdentifier": identifier, "CFBundleExecutable": "Fixture", "CFBundleName": "Fixture", "CFBundleVersion": "1", "CFBundlePackageType": "APPL", "LSUIElement": true]
+        try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0).write(to: source.appendingPathComponent("Contents/Info.plist"))
+        _ = try AppFiles.run("/usr/bin/codesign", ["--force", "--sign", "-", source.path])
+        let process = Process(); process.executableURL = executable
+        process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
+        try process.run()
+        defer { if process.isRunning { process.terminate() } }
+        var fixture: NSRunningApplication?
+        for _ in 0..<40 {
+            fixture = NSRunningApplication(processIdentifier: process.processIdentifier)
+            if fixture?.bundleURL?.resolvingSymlinksInPath() != source.resolvingSymlinksInPath() { fixture = nil }
+            if fixture != nil { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        let app = try XCTUnwrap(fixture)
+        defer { if !app.isTerminated { app.terminate() } }
+        let model = DockModel(home: root)
+        var profile = Profile(id: "work", name: "Work", color: "377CF6", applicationPath: source.path)
+        model.running[profile.id] = [app]
+        XCTAssertNil(model.nativeDockChangeBlocker(for: profile), "An open source must not block preparing a separate Dock bundle")
+        let copy = model.nativeDockDirectory.appendingPathComponent("work/ChatGPT.app")
+        profile.dockApplicationPath = copy.path
+        XCTAssertTrue(model.nativeDockAwaitsRelaunch(profile))
+        try fm.createDirectory(at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let checkout = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let shim = URL(fileURLWithPath: ProcessInfo.processInfo.environment["PROFILEDOCK_SHIM_PATH"] ?? checkout.appendingPathComponent(".build/debug/ProfileDockShim").path)
+        let original = try Data(contentsOf: executable)
+        try NativeDockApp.build(source: source, profile: profile, home: root, data: profile.home(in: root).appendingPathComponent("electron-user-data"), destination: copy, shim: shim, icon: Data("fixture".utf8), verifySource: { _ in })
+        XCTAssertEqual(try Data(contentsOf: executable), original)
+        XCTAssertFalse(app.isTerminated, "Preparing the new copy must not stop the running source")
+        XCTAssertEqual(try NativeDockApp.info(copy)["CFBundleIdentifier"] as? String, NativeDock.identifier(profile))
+        profile.dockApplicationPath = source.path
+        XCTAssertNotNil(model.nativeDockChangeBlocker(for: profile), "Never replace or remove the running bundle")
+        profile.dockApplicationPath = copy.path
+        model.opening.insert(profile.id); XCTAssertNotNil(model.nativeDockChangeBlocker(for: profile)); model.opening = []
+        model.unreadableProcesses = true; XCTAssertNotNil(model.nativeDockChangeBlocker(for: profile)); model.unreadableProcesses = false
+        model.updatingApplications.insert(source.path); XCTAssertNotNil(model.nativeDockChangeBlocker(for: profile)); model.updatingApplications = []
+        model.nativeDockOperations.insert(profile.id); XCTAssertNotNil(model.nativeDockChangeBlocker(for: profile)); model.nativeDockOperations = []
+        profile.applicationPath = root.appendingPathComponent("Other.app").path
+        XCTAssertNotNil(model.nativeDockChangeBlocker(for: profile), "Unknown running locations must block changes")
+        XCTAssertFalse(app.isTerminated, "Checking activation must leave the running source alone")
+        XCTAssertTrue(app.terminate())
+        for _ in 0..<40 { if app.isTerminated { break }; try await Task.sleep(nanoseconds: 100_000_000) }
+        XCTAssertTrue(app.isTerminated)
+    }
+
     @MainActor func testNativePathMustBeOwnedAndBoundToTheExpectedProfile() throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)

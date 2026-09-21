@@ -289,7 +289,7 @@ struct SettingsView: View {
                         Image(nsImage: NativeProfileArtwork.preview(profile: profile, image: model.image(for: profile), vendor: model.applicationURL(for: profile).map { NSWorkspace.shared.icon(forFile: $0.path) })).resizable().frame(width: 56, height: 56)
                         VStack(alignment: .leading, spacing: 5) {
                             Text(profile.name).font(.headline)
-                            Text(profile.dockApplicationPath == nil ? "Native Dock icon is off" : "Native Dock icon is on · experimental").font(.caption).foregroundStyle(.secondary)
+                            Text(profile.dockApplicationPath == nil ? "Native Dock icon is off" : model.nativeDockAwaitsRelaunch(profile) ? "Ready for next launch · experimental" : "Native Dock icon is on · experimental").font(.caption).foregroundStyle(.secondary)
                             Text((profile.dockIconStyle ?? .initials).label + " · #" + profile.color).font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer(minLength: 8)
@@ -297,7 +297,7 @@ struct SettingsView: View {
                     }.padding(10)
                 }
             }
-            Text("Close a profile before enabling or disabling native Dock mode. Customizing its look does not change its account or conversations.").font(.caption).foregroundStyle(.secondary)
+            Text("Enable native Dock mode while your profile is open; its icon changes after you quit and reopen it. Quit a running Dock copy before disabling or repairing it.").font(.caption).foregroundStyle(.secondary)
         }
     }
 
