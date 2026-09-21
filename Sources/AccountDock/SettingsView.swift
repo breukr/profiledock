@@ -9,10 +9,10 @@ enum AppBrand {
 }
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
-    case profiles = "Profiles", insights = "Usage insights", updates = "ChatGPT updates", appearance = "Appearance", support = "Support"
+    case profiles = "Profiles", context = "Context", insights = "Usage insights", updates = "ChatGPT updates", appearance = "Appearance", support = "Support"
     var id: String { rawValue }
     var symbol: String {
-        switch self { case .profiles: return "person.crop.rectangle.stack"; case .insights: return "chart.bar.xaxis"; case .updates: return "arrow.down.circle"; case .appearance: return "macwindow"; case .support: return "heart" }
+        switch self { case .profiles: return "person.crop.rectangle.stack"; case .context: return "text.bubble"; case .insights: return "chart.bar.xaxis"; case .updates: return "arrow.down.circle"; case .appearance: return "macwindow"; case .support: return "heart" }
     }
 }
 
@@ -25,7 +25,7 @@ struct SettingsView: View {
     @ObservedObject var insights: InsightsStore
     let cues: ActivityCues
     let chooseImage: (Profile) -> Void
-    @State private var section: SettingsSection? = .profiles
+    @State private var section: SettingsSection? = (CommandLine.arguments.contains("--context-settings") || Bundle.main.object(forInfoDictionaryKey: "ProfileDockContextPreview") as? Bool == true) ? .context : .profiles
     @State private var adding = false
     @State private var removing: Profile?
     @State private var trashData = false
@@ -63,6 +63,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 20) {
                         switch section ?? .profiles {
                         case .profiles: profiles
+                        case .context: ContextSettingsView(model: model)
                         case .insights: insightsSettings
                         case .updates: updateSettings
                         case .appearance: appearance

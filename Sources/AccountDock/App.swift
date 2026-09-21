@@ -6,7 +6,7 @@ import DockCore
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
     let model: DockModel
-    let previewMode = CommandLine.arguments.contains("--preview")
+    let previewMode = CommandLine.arguments.contains("--preview") || Bundle.main.object(forInfoDictionaryKey: "ProfileDockContextPreview") as? Bool == true
     let usage = UsageStore()
     let insights = InsightsStore()
     let activity = ActivityMonitor()
@@ -25,8 +25,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private var mouseEvents = 0
 
     override init() {
-        if CommandLine.arguments.contains("--preview") {
-            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("profiledock-preview-" + UUID().uuidString)
+        let contextPreview = Bundle.main.object(forInfoDictionaryKey: "ProfileDockContextPreview") as? Bool == true
+        if CommandLine.arguments.contains("--preview") || contextPreview {
+            let arguments = CommandLine.arguments
+            let supplied = arguments.firstIndex(of: "--preview-home").flatMap { $0 + 1 < arguments.count ? URL(fileURLWithPath: arguments[$0 + 1]) : nil }
+            let directory = supplied ?? (contextPreview ? FileManager.default.homeDirectoryForCurrentUser : FileManager.default.temporaryDirectory.appendingPathComponent("profiledock-preview-" + UUID().uuidString))
             try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             model = DockModel(home: directory)
         } else { model = DockModel() }
@@ -42,10 +45,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             return
         }
         NSApp.setActivationPolicy(model.preferences.showDockIcon == true ? .regular : .accessory)
-        usage.configure(model.preferences.profiles)
+        usage.configure(previewMode ? [] : model.preferences.profiles)
         insights.prepare(profiles: model.preferences.profiles, home: model.home)
-        usage.refreshAll()
-        activity.configure(model.preferences.profiles, running: Set(model.running.keys))
+        if !previewMode { usage.refreshAll() }
+        activity.configure(previewMode ? [] : model.preferences.profiles, running: Set(model.running.keys))
         if !previewMode { rebuildIslands(); startMouseMonitoring() }
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         status.button?.image = BrandArtwork.template(size: 16)
@@ -62,12 +65,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             self.cues.receive(event, model: self.model)
         }.store(in: &subscriptions)
         if !previewMode { registerHotKeys() }
-        if model.preferences.profiles.isEmpty || CommandLine.arguments.contains("--settings") { showSettings() }
+        if model.preferences.profiles.isEmpty || previewMode || CommandLine.arguments.contains("--settings") || CommandLine.arguments.contains("--context-settings") { showSettings() }
         model.onPreferencesChanged = { [weak self] in
             guard let self else { return }
-            self.usage.configure(self.model.preferences.profiles)
+            self.usage.configure(self.previewMode ? [] : self.model.preferences.profiles)
             self.insights.prepare(profiles: self.model.preferences.profiles, home: self.model.home)
-            self.activity.configure(self.model.preferences.profiles, running: Set(self.model.running.keys))
+            self.activity.configure(self.previewMode ? [] : self.model.preferences.profiles, running: Set(self.model.running.keys))
             if !self.previewMode, self.islands.first?.layout.placement != self.model.placement { self.cues.dismiss(); self.rebuildIslands() }
             else { self.islands.forEach { $0.updateLayout() } }
             let policy: NSApplication.ActivationPolicy = self.model.preferences.showDockIcon == true ? .regular : .accessory
@@ -82,7 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         model.$message.dropFirst().sink { [weak self] _ in DispatchQueue.main.async { self?.islands.forEach { $0.updateLayout() } } }.store(in: &subscriptions)
         model.$running.dropFirst().sink { [weak self] running in
             guard let self else { return }
-            self.activity.configure(self.model.preferences.profiles, running: Set(running.keys))
+            self.activity.configure(self.previewMode ? [] : self.model.preferences.profiles, running: Set(running.keys))
         }.store(in: &subscriptions)
     }
 
@@ -223,9 +226,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc func showSettings() {
         loginItem.refresh()
         if settingsWindow == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 840, height: 620), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+            let compact = previewMode && CommandLine.arguments.contains("--compact-preview")
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: compact ? 760 : 840, height: compact ? 560 : 620), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
             window.title = "ProfileDock"
-            if previewMode { window.subtitle = "New installation preview" }
+            if previewMode { window.subtitle = Bundle.main.object(forInfoDictionaryKey: "ProfileDockContextPreview") as? Bool == true ? "Context preview" : "New installation preview" }
             window.contentView = NSHostingView(rootView: SettingsView(model: model, loginItem: loginItem, activity: activity, updates: appUpdates, selfUpdates: selfUpdates, insights: insights, cues: cues, chooseImage: { [weak self, weak window] profile in self?.model.chooseImage(for: profile, window: window) }))
             window.minSize = NSSize(width: 760, height: 560)
             window.isReleasedWhenClosed = false

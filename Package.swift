@@ -4,12 +4,15 @@ import PackageDescription
 let package = Package(
     name: "AccountDock",
     platforms: [.macOS(.v14)],
-    products: [.executable(name: "AccountDock", targets: ["AccountDock"]), .executable(name: "ProfileDockShim", targets: ["ProfileDockShim"])],
+    products: [.executable(name: "AccountDock", targets: ["AccountDock"]), .executable(name: "ProfileDockShim", targets: ["ProfileDockShim"]), .executable(name: "ProfileDockContext", targets: ["ProfileDockContext"])],
     dependencies: [.package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.6")],
     targets: [
         .target(name: "DockCore"),
         .executableTarget(name: "ProfileDockShim", dependencies: ["DockCore"]),
-        .executableTarget(name: "AccountDock", dependencies: ["DockCore", .product(name: "Sparkle", package: "Sparkle")], linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]),
+        .target(name: "ContextCore", dependencies: ["DockCore"], linkerSettings: [.linkedLibrary("sqlite3")]),
+        .executableTarget(name: "ProfileDockContext", dependencies: ["ContextCore"]),
+        .executableTarget(name: "AccountDock", dependencies: ["DockCore", "ContextCore", .product(name: "Sparkle", package: "Sparkle")], linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]),
+        .testTarget(name: "ContextCoreTests", dependencies: ["ContextCore"]),
         .testTarget(name: "DockCoreTests", dependencies: ["DockCore"]),
         .testTarget(name: "AccountDockTests", dependencies: ["AccountDock"])
     ],
