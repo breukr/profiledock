@@ -9,10 +9,10 @@ enum AppBrand {
 }
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
-    case profiles = "Profiles", context = "Context tagging", insights = "Usage insights", updates = "Updates", appearance = "Appearance", support = "Support"
+    case profiles = "Profiles", context = "Context tagging", insights = "Usage insights", updates = "Updates", settings = "Settings", appearance = "Appearance", support = "Support"
     var id: String { rawValue }
     var symbol: String {
-        switch self { case .profiles: return "person.crop.rectangle.stack"; case .context: return "text.bubble"; case .insights: return "chart.bar.xaxis"; case .updates: return "arrow.down.circle"; case .appearance: return "macwindow"; case .support: return "heart" }
+        switch self { case .profiles: return "person.crop.rectangle.stack"; case .context: return "text.bubble"; case .insights: return "chart.bar.xaxis"; case .updates: return "arrow.down.circle"; case .settings: return "gearshape"; case .appearance: return "macwindow"; case .support: return "heart" }
     }
 }
 
@@ -25,7 +25,7 @@ struct SettingsView: View {
     @ObservedObject var insights: InsightsStore
     let cues: ActivityCues
     let chooseImage: (Profile) -> Void
-    @State private var section: SettingsSection? = (CommandLine.arguments.contains("--context-settings") || Bundle.main.object(forInfoDictionaryKey: "ProfileDockContextPreview") as? Bool == true) ? .context : .profiles
+    @State private var section: SettingsSection? = (CommandLine.arguments.contains("--context-settings") || Bundle.main.object(forInfoDictionaryKey: "ProfileDockContextPreview") as? Bool == true) ? .context : (CommandLine.arguments.contains("--settings") ? .settings : .profiles)
     @State private var adding = false
     @State private var editing: Profile?
     @State private var contextProfileID: String?
@@ -67,6 +67,7 @@ struct SettingsView: View {
                         case .context: ContextSettingsView(model: model, initialCallerID: contextProfileID)
                         case .insights: insightsSettings
                         case .updates: updateSettings
+                        case .settings: generalSettings
                         case .appearance: appearance
                         case .support: support
                         }
@@ -75,6 +76,7 @@ struct SettingsView: View {
                 }.scrollIndicators(.never)
             }.frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .profileDockShowGeneralSettings)) { _ in section = .settings }
         .onReceive(NotificationCenter.default.publisher(for: .profileDockShowUpdates)) { _ in section = .updates }
         .sheet(isPresented: $adding) { AddProfileSheet(model: model) }
         .sheet(item: $editing) { profile in
@@ -244,17 +246,46 @@ struct SettingsView: View {
             }
     }
 
-    private var appearance: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            GroupBox {
-                VStack(alignment: .leading, spacing: 16) {
+    private var generalSettings: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("Choose where ProfileDock appears and how it starts.").foregroundStyle(.secondary)
+            Text("ProfileDock \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development") · build \(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "local")")
+                .font(.caption).foregroundStyle(.secondary)
+            GroupBox("Dock & menu bar") {
+                VStack(alignment: .leading, spacing: 14) {
+                    Toggle("Show ProfileDock in the macOS Dock", isOn: Binding(get: { model.preferences.showDockIcon == true }, set: { model.preferences.showDockIcon = $0; model.save() }))
+                    Toggle("Show ProfileDock in the menu bar", isOn: Binding(get: { model.preferences.showMenuBarIcon != false }, set: { model.preferences.showMenuBarIcon = $0; model.save() }))
+                    Text("When the Dock option is off, its icon appears only while Settings is open so macOS can show the top-left ProfileDock menu. The menu-bar icon is independent. You can always reopen Settings by opening ProfileDock from Finder or Spotlight.").font(.caption).foregroundStyle(.secondary)
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
+            }
+            GroupBox("Startup") {
+                VStack(alignment: .leading, spacing: 14) {
                     Toggle("Open ProfileDock at login", isOn: Binding(get: { loginItem.enabled }, set: { loginItem.setEnabled($0) }))
                     if loginItem.requiresApproval {
                         Text("Allow ProfileDock in System Settings → Login Items.").font(.caption)
                         Button("Open Login Items") { loginItem.openSystemSettings() }
                     }
                     if let error = loginItem.error { Text(error).foregroundStyle(.orange) }
-                    Divider()
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
+            }
+            GroupBox("Profiles & updates") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Profile icons and experimental Dock mode live in each profile's settings. Context tagging controls which profiles may retrieve each other's earlier tasks.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    HStack {
+                        Button("Profiles") { section = .profiles }
+                        Button("Context tagging") { section = .context }
+                        Button("Updates") { section = .updates }
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
+            }
+        }
+    }
+
+    private var appearance: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 16) {
                     Picker("Placement", selection: Binding(get: { model.placement }, set: { model.preferences.placement = $0; model.save() })) {
                         ForEach(DockPlacement.allCases, id: \.self) { Text($0.label).tag($0) }
                     }.pickerStyle(.segmented)
@@ -263,10 +294,6 @@ struct SettingsView: View {
                         Button("Reset strip positions") { model.preferences.floatingPositions = nil; model.preferences.placement = .free; model.save() }
                     }
                     AppIconAppearancePicker(model: model)
-                    Divider()
-                    Toggle("Show ProfileDock in the macOS Dock", isOn: Binding(get: { model.preferences.showDockIcon == true }, set: { model.preferences.showDockIcon = $0; model.save() }))
-                    Toggle("Show ProfileDock in the menu bar", isOn: Binding(get: { model.preferences.showMenuBarIcon != false }, set: { model.preferences.showMenuBarIcon = $0; model.save() }))
-                    Text("When the Dock option is off, its icon appears only while Settings is open so macOS can show the top-left ProfileDock menu. The menu-bar icon is independent. You can always reopen Settings by opening ProfileDock from Finder or Spotlight.").font(.caption).foregroundStyle(.secondary)
                     Divider()
                     Picker("Tile size", selection: Binding(get: { model.preferences.scale }, set: { model.preferences.scale = $0; model.save() })) {
                         Text("Small").tag(0.85); Text("Default").tag(1.0); Text("Large").tag(1.3)
