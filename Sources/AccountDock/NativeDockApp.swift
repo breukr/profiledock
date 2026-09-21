@@ -1,0 +1,203 @@
+import AppKit
+import DockCore
+
+/// Local wrapper construction adapted from ai-profiles 1.2.0 (MIT).
+/// Vendor files are only read. Re-sign only the moved executable and outer
+/// bundle; keep nested vendor frameworks and their signatures intact.
+enum NativeDockApp {
+    static func info(_ app: URL) throws -> [String: Any] {
+        guard let result = try PropertyListSerialization.propertyList(from: Data(contentsOf: app.appendingPathComponent("Contents/Info.plist")), format: nil) as? [String: Any] else { throw CocoaError(.fileReadCorruptFile) }
+        return result
+    }
+
+    static func build(source: URL, profile: Profile, home: URL, data: URL, destination: URL, shim: URL, icon: Data,
+                      sourceIdentity: URL? = nil, manager: URL? = nil,
+                      verifySource: (URL) throws -> Void = AppFiles.verifyVendorApp) throws {
+        try verifySource(source)
+        let vendor = try info(source)
+        var patched = try NativeDock.patchedInfo(vendor, profile: profile, home: home, data: data)
+        patched[NativeDock.sourceKey] = (sourceIdentity ?? source).path
+        patched[NativeDock.managerKey] = manager?.path
+        guard let executable = vendor["CFBundleExecutable"] as? String,
+              FileManager.default.isExecutableFile(atPath: shim.path),
+              !FileManager.default.fileExists(atPath: destination.path) else { throw CocoaError(.fileWriteFileExists) }
+        let fm = FileManager.default
+        let staging = destination.deletingLastPathComponent().appendingPathComponent(".profiledock-native-\(UUID().uuidString).app")
+        let entitlementFile = staging.appendingPathExtension("entitlements.plist")
+        defer { try? fm.removeItem(at: staging); try? fm.removeItem(at: entitlementFile) }
+        // APFS clone: independent files without a full additional copy of every resource.
+        _ = try AppFiles.run("/bin/cp", ["-cR", source.path, staging.path])
+        let contents = staging.appendingPathComponent("Contents")
+        let main = contents.appendingPathComponent("MacOS/\(executable)")
+        let binary = main.appendingPathExtension("bin")
+        guard !fm.fileExists(atPath: binary.path),
+              main.resolvingSymlinksInPath() == main.standardizedFileURL,
+              contents.resolvingSymlinksInPath() == contents.standardizedFileURL else { throw CocoaError(.fileWriteNoPermission) }
+        let entitlementsOutput = try AppFiles.run("/usr/bin/codesign", ["-d", "--entitlements", ":-", source.path])
+        let text = String(decoding: entitlementsOutput, as: UTF8.self)
+        var entitlements: [String: Any] = [:]
+        if let start = text.range(of: "<?xml"), let end = text.range(of: "</plist>") {
+            let xml = Data(text[start.lowerBound..<end.upperBound].utf8)
+            guard let parsed = try PropertyListSerialization.propertyList(from: xml, format: nil) as? [String: Any] else { throw CocoaError(.fileReadCorruptFile) }
+            entitlements = parsed
+        }
+        let stripped = NativeDock.entitlements(entitlements, team: "2DC432GLL2")
+        try writePlist(stripped, to: entitlementFile)
+        try writePlist(patched, to: contents.appendingPathComponent("Info.plist"))
+        try icon.write(to: contents.appendingPathComponent("Resources/ProfileDockProfile.icns"))
+        try fm.moveItem(at: main, to: binary)
+        try fm.copyItem(at: shim, to: main)
+        for target in [binary, staging] {
+            _ = try AppFiles.run("/usr/bin/codesign", ["--force", "--sign", "-", "--options", "runtime", "--entitlements", entitlementFile.path, target.path])
+        }
+        _ = try AppFiles.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", staging.path])
+        try fm.moveItem(at: staging, to: destination)
+    }
+
+    private static func writePlist(_ value: [String: Any], to url: URL) throws {
+        try PropertyListSerialization.data(fromPropertyList: value, format: .xml, options: 0).write(to: url, options: .atomic)
+    }
+
+    @MainActor static func icon(profile: Profile, image: NSImage?) throws -> Data {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("profiledock-icon-\(UUID().uuidString)")
+        let iconset = root.appendingPathComponent("Profile.iconset")
+        try FileManager.default.createDirectory(at: iconset, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for size in [16, 32, 128, 256, 512] {
+            for scale in [1, 2] {
+                let pixels = size * scale
+                guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+                      let context = NSGraphicsContext(bitmapImageRep: bitmap) else { throw CocoaError(.fileWriteUnknown) }
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current = context
+                let dimension = CGFloat(pixels)
+                let tile = NSRect(x: dimension * 0.1, y: dimension * 0.1, width: dimension * 0.8, height: dimension * 0.8)
+                NSColor(hex: profile.color).setFill()
+                NSBezierPath(roundedRect: tile, xRadius: dimension * 0.2, yRadius: dimension * 0.2).fill()
+                if let image {
+                    let inset = tile.insetBy(dx: dimension * 0.13, dy: dimension * 0.13)
+                    NSColor.white.setFill()
+                    NSBezierPath(roundedRect: inset, xRadius: dimension * 0.08, yRadius: dimension * 0.08).fill()
+                    let imageSize = image.size
+                    let fit = min(inset.width / max(1, imageSize.width), inset.height / max(1, imageSize.height))
+                    image.draw(in: NSRect(x: inset.midX - imageSize.width * fit / 2, y: inset.midY - imageSize.height * fit / 2, width: imageSize.width * fit, height: imageSize.height * fit))
+                } else {
+                    let text = NSAttributedString(string: profile.initials, attributes: [.font: NSFont.systemFont(ofSize: dimension * 0.34, weight: .semibold), .foregroundColor: NSColor.white])
+                    let bounds = text.size()
+                    text.draw(at: NSPoint(x: (dimension - bounds.width) / 2, y: (dimension - bounds.height) / 2))
+                }
+                NSGraphicsContext.restoreGraphicsState()
+                guard let png = bitmap.representation(using: .png, properties: [:]) else { throw CocoaError(.fileWriteUnknown) }
+                try png.write(to: iconset.appendingPathComponent("icon_\(size)x\(size)\(scale == 2 ? "@2x" : "").png"))
+            }
+        }
+        let output = root.appendingPathComponent("Profile.icns")
+        _ = try AppFiles.run("/usr/bin/iconutil", ["--convert", "icns", "--output", output.path, iconset.path])
+        return try Data(contentsOf: output)
+    }
+}
+
+@MainActor extension DockModel {
+    var nativeDockDirectory: URL { home.appendingPathComponent("Applications/ProfileDock Dock Apps") }
+
+    func nativeDockURL(for profile: Profile) -> URL? {
+        guard let path = profile.dockApplicationPath else { return nil }
+        let app = URL(fileURLWithPath: path).standardizedFileURL
+        let expected = nativeDockDirectory.appendingPathComponent(profile.id).appendingPathComponent("ChatGPT.app").standardizedFileURL
+        guard app.path == expected.path, app.resolvingSymlinksInPath().path == expected.path,
+              let info = try? NativeDockApp.info(app),
+              info[NativeDock.profileKey] as? String == profile.id,
+              info[NativeDock.homeKey] as? String == profile.home(in: home).path,
+              info["CFBundleIdentifier"] as? String == NativeDock.identifier(profile) else { return nil }
+        return app
+    }
+
+    func nativeDockNeedsRebuild(_ profile: Profile) -> Bool {
+        guard let app = nativeDockURL(for: profile), let info = try? NativeDockApp.info(app),
+              let source = applicationURL(for: profile), let vendor = try? NativeDockApp.info(source) else { return true }
+        return info[NativeDock.versionKey] as? String != vendor["CFBundleVersion"] as? String
+            || info["CFBundleDisplayName"] as? String != "ChatGPT \(profile.name)"
+            || info["ProfileDockNativeColor"] as? String != profile.color
+            || info["ProfileDockNativeImage"] as? String != (profile.iconFilename ?? "")
+    }
+
+    func setNativeDockIcon(for requested: Profile, enabled: Bool, launchingPID: pid_t? = nil) async throws {
+        refresh()
+        guard let profile = preferences.profiles.first(where: { $0.id == requested.id }),
+              (running[profile.id] ?? []).allSatisfy({ $0.processIdentifier == launchingPID }), !opening.contains(profile.id), !nativeDockOperations.contains(profile.id),
+              !unreadableProcesses, updatingApplications.isEmpty else {
+            throw AppOperationError.message("Close this profile and wait for other app operations to finish first.")
+        }
+        nativeDockOperations.insert(profile.id)
+        defer { nativeDockOperations.remove(profile.id) }
+        let parent = nativeDockDirectory.appendingPathComponent(profile.id)
+        guard parent.resolvingSymlinksInPath().path == parent.standardizedFileURL.path else { throw CocoaError(.fileWriteNoPermission) }
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        let lock = try NativeDockLock(directory: parent)
+        defer { lock.release() }
+        if !enabled {
+            // Remove the executable wrapper as well: a pinned stale icon must not reopen it.
+            guard let app = nativeDockURL(for: profile) else {
+                if let path = profile.dockApplicationPath, FileManager.default.fileExists(atPath: path) {
+                    throw AppOperationError.message("This Dock app could not be verified. It was left in place.")
+                }
+                var updated = profile; updated.dockApplicationPath = nil; update(updated); return
+            }
+            try FileManager.default.trashItem(at: app, resultingItemURL: nil)
+            var updated = profile; updated.dockApplicationPath = nil; update(updated)
+            return
+        }
+        guard let source = applicationURL(for: profile) else { throw AppOperationError.message("Install the signed ChatGPT app first.") }
+        let destination = nativeDockDirectory.appendingPathComponent(profile.id).appendingPathComponent("ChatGPT.app")
+        let exists = FileManager.default.fileExists(atPath: destination.path)
+        guard !exists || nativeDockURL(for: profile)?.path == destination.path else { throw CocoaError(.fileWriteFileExists) }
+        let prepared = parent.appendingPathComponent(".prepared-\(UUID().uuidString).app")
+        defer { try? FileManager.default.removeItem(at: prepared) }
+        try await prepareNativeDockCopy(profile: profile, source: source, sourceIdentity: source, destination: prepared)
+        // A Finder/Dock click may have launched a profile while the copy was building.
+        refresh()
+        guard (running[profile.id] ?? []).allSatisfy({ $0.processIdentifier == launchingPID }), !unreadableProcesses,
+              preferences.profiles.first(where: { $0.id == profile.id }) == profile else {
+            throw AppOperationError.message("This profile changed or opened while building. Close it and try again.")
+        }
+        if exists { try AppReplacement.swap(prepared: prepared, destination: destination) }
+        else { try FileManager.default.moveItem(at: prepared, to: destination) }
+        if profile.dockApplicationPath != destination.path {
+            var updated = profile; updated.dockApplicationPath = destination.path; update(updated)
+        }
+        NSWorkspace.shared.noteFileSystemChanged(destination.path)
+    }
+
+    func prepareNativeDockCopy(profile: Profile, source: URL, sourceIdentity: URL, destination: URL) async throws {
+        let candidates = [Bundle.main.resourceURL?.appendingPathComponent("ProfileDockShim"), Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("ProfileDockShim")]
+        guard let shim = candidates.compactMap({ $0 }).first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) else {
+            throw AppOperationError.message("The profile helper is missing. Rebuild or reinstall ProfileDock.")
+        }
+        let icon = try NativeDockApp.icon(profile: profile, image: image(for: profile))
+        let data: URL
+        if let existing = nativeDockURL(for: profile), let info = try? NativeDockApp.info(existing), let path = info[NativeDock.dataKey] as? String { data = URL(fileURLWithPath: path) }
+        else if profile.id == "default" {
+            let candidates = ["Library/Application Support/Codex", "Library/Application Support/ChatGPT"].map { home.appendingPathComponent($0) }
+            data = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) ?? candidates[0]
+        } else { data = profile.home(in: home).appendingPathComponent("electron-user-data") }
+        let userHome = home, manager = Bundle.main.executableURL
+        try await Task.detached {
+            try NativeDockApp.build(source: source, profile: profile, home: userHome, data: data, destination: destination, shim: shim, icon: icon, sourceIdentity: sourceIdentity, manager: manager)
+        }.value
+    }
+}
+
+/// Shared by the updater and launch-time repair, including other ProfileDock processes.
+final class NativeDockLock {
+    private var descriptor: Int32
+    init(directory: URL) throws {
+        descriptor = Darwin.open(directory.appendingPathComponent(".build.lock").path, O_CREAT | O_RDWR | O_NOFOLLOW, 0o600)
+        guard descriptor >= 0 else { throw CocoaError(.fileWriteNoPermission) }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            Darwin.close(descriptor); descriptor = -1
+            throw AppOperationError.message("Another process is updating this Dock app. Try again shortly.")
+        }
+    }
+    func release() { if descriptor >= 0 { flock(descriptor, LOCK_UN); Darwin.close(descriptor); descriptor = -1 } }
+    deinit { release() }
+}

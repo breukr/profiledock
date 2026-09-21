@@ -44,6 +44,7 @@ final class DockModel: ObservableObject {
     @Published var message: String?
     @Published var unreadableProcesses = false
     @Published var updatingApplications: Set<String> = []
+    @Published var nativeDockOperations: Set<String> = []
     let home: URL
     private let tracksApplications: Bool
     private var readinessTimer: Timer?
@@ -134,7 +135,7 @@ final class DockModel: ObservableObject {
             return
         }
         guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-              app.bundleIdentifier == "com.openai.codex" else { return }
+              app.bundleIdentifier == "com.openai.codex" || app.bundleIdentifier?.hasPrefix(NativeDock.prefix) == true else { return }
         readinessAttempts = 0
         refresh()
     }
@@ -160,12 +161,22 @@ final class DockModel: ObservableObject {
         guard tracksApplications else { return }
         var result: [String: [NSRunningApplication]] = [:]
         var unreadable = false
-        for app in NSWorkspace.shared.runningApplications where app.bundleIdentifier == "com.openai.codex" {
+        for app in NSWorkspace.shared.runningApplications where app.bundleIdentifier == "com.openai.codex" || app.bundleIdentifier?.hasPrefix(NativeDock.prefix) == true {
             guard let args = Self.arguments(pid: app.processIdentifier) else {
                 if !app.isTerminated { unreadable = true }
                 continue
             }
-            guard let id = ProcessIdentity.profileID(arguments: args, profiles: preferences.profiles, home: home) else { continue }
+            let id: String?
+            if app.bundleIdentifier?.hasPrefix(NativeDock.prefix) == true {
+                guard let profile = preferences.profiles.first(where: { NativeDock.identifier($0) == app.bundleIdentifier }),
+                      let expected = nativeDockURL(for: profile),
+                      app.bundleURL?.resolvingSymlinksInPath().path == expected.path,
+                      let info = try? NativeDockApp.info(expected),
+                      let data = info[NativeDock.dataKey] as? String,
+                      args.contains("--user-data-dir=\(data)") else { unreadable = true; continue }
+                id = profile.id
+            } else { id = ProcessIdentity.profileID(arguments: args, profiles: preferences.profiles, home: home) }
+            guard let id else { continue }
             result[id, default: []].append(app)
         }
         // Avoid invalidating every SwiftUI view when only an unrelated application activates.
@@ -212,6 +223,10 @@ final class DockModel: ObservableObject {
     }
 
     func select(_ profile: Profile) {
+        guard !nativeDockOperations.contains(profile.id) else {
+            message = "This profile's Dock app is being built. Try again when it finishes."
+            return
+        }
         if let app = applicationURL(for: profile), updatingApplications.contains(app.resolvingSymlinksInPath().standardizedFileURL.path) {
             message = "This app is being updated. It will reopen when the update finishes."
             return
@@ -232,6 +247,15 @@ final class DockModel: ObservableObject {
             return
         }
         guard !opening.contains(profile.id) else { return }
+        if profile.dockApplicationPath != nil, nativeDockNeedsRebuild(profile) {
+            Task {
+                do {
+                    try await setNativeDockIcon(for: profile, enabled: true)
+                    if let updated = preferences.profiles.first(where: { $0.id == profile.id }) { select(updated) }
+                } catch { message = "Could not update this profile's Dock app: \(error.localizedDescription)" }
+            }
+            return
+        }
         guard !unreadableProcesses else {
             message = "A running ChatGPT profile is not yet identifiable. Try again once it finishes starting."
             return
@@ -241,11 +265,19 @@ final class DockModel: ObservableObject {
             message = "Install the current ChatGPT desktop app first."
             return
         }
+        let launchURL: URL
+        if profile.dockApplicationPath != nil {
+            guard let wrapper = nativeDockURL(for: profile) else {
+                message = "This profile's Dock app is missing or invalid. Rebuild it from the profile options."
+                return
+            }
+            launchURL = wrapper
+        } else { launchURL = appURL }
         message = nil
         opening.insert(profile.id)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        process.arguments = ProfileLaunch.arguments(profile: profile, home: home, application: appURL)
+        process.arguments = ProfileLaunch.arguments(profile: profile, home: home, application: launchURL)
         process.currentDirectoryURL = home
         // A GUI launcher must not inherit another account's CLI authentication or profile overrides.
         process.environment = ["HOME": home.path, "USER": NSUserName(), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin", "LANG": "en_US.UTF-8", "TMPDIR": NSTemporaryDirectory()]

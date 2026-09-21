@@ -55,7 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         status.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         configureMenu()
         iconAppearance.update(model.preferences.appIconAppearance ?? .auto)
-        selfUpdates.mayUpdate = { [weak self] in self?.appUpdates.busy == false }
+        selfUpdates.mayUpdate = { [weak self] in self?.appUpdates.busy == false && self?.model.nativeDockOperations.isEmpty == true }
         if !previewMode { selfUpdates.start() }
         activity.$event.compactMap { $0 }.sink { [weak self] event in
             guard let self, !self.previewMode else { return }
@@ -117,6 +117,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if !model.nativeDockOperations.isEmpty {
+            model.message = "Keep ProfileDock open until the native Dock app finishes building."
+            showSettings()
+            return .terminateCancel
+        }
         guard appUpdates.busy else { return .terminateNow }
         model.message = appUpdates.canCancel ? "Cancel the ChatGPT download before quitting ProfileDock." : "Keep ProfileDock open until the ChatGPT installation finishes."
         showSettings()
@@ -264,6 +269,21 @@ import Combine
 struct AccountDock {
     static func main() {
         let application = NSApplication.shared
+        if CommandLine.arguments.dropFirst().first == "--prepare-native-dock" {
+            guard CommandLine.arguments.count == 4, let pid = Int32(CommandLine.arguments[3]), pid == getppid() else { exit(1) }
+            let model = DockModel(), id = CommandLine.arguments[2]
+            guard let profile = model.preferences.profiles.first(where: { $0.id == id }),
+                  let expected = model.nativeDockURL(for: profile),
+                  NSRunningApplication(processIdentifier: pid)?.bundleURL?.resolvingSymlinksInPath().path == expected.path else { exit(1) }
+            var done = false, succeeded = false
+            Task { @MainActor in
+                do { try await model.setNativeDockIcon(for: profile, enabled: true, launchingPID: pid); succeeded = true }
+                catch { FileHandle.standardError.write(Data(error.localizedDescription.utf8)) }
+                done = true
+            }
+            while !done { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
+            exit(succeeded ? 0 : 1)
+        }
         if CommandLine.arguments.contains("--validate-launcher") {
             guard let id = Bundle.main.object(forInfoDictionaryKey: "ProfileDockProfileID") as? String, Profile.validID(id) else { exit(1) }
             print(id); return

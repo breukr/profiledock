@@ -8,6 +8,8 @@ public struct Profile: Identifiable, Codable, Equatable, Sendable {
     public var iconIsTile: Bool?
     public var applicationPath: String?
     public var launcherPath: String?
+    /// Opt-in, locally re-signed app. applicationPath continues to identify the signed source.
+    public var dockApplicationPath: String?
 
     public init(id: String, name: String, color: String, iconFilename: String? = nil, iconIsTile: Bool? = nil, applicationPath: String? = nil) {
         self.id = id
