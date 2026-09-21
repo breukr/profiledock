@@ -9,11 +9,15 @@ enum AppBrand {
 }
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
-    case profiles = "Profiles", context = "Context tagging", insights = "Usage insights", updates = "Updates", settings = "Settings", appearance = "Appearance", support = "Support"
+    case profiles = "Profiles", context = "Search chats", insights = "Usage insights", updates = "Updates", settings = "Settings", support = "Support"
     var id: String { rawValue }
     var symbol: String {
-        switch self { case .profiles: return "person.crop.rectangle.stack"; case .context: return "text.bubble"; case .insights: return "chart.bar.xaxis"; case .updates: return "arrow.down.circle"; case .settings: return "gearshape"; case .appearance: return "macwindow"; case .support: return "heart" }
+        switch self { case .profiles: return "person.crop.rectangle.stack"; case .context: return "magnifyingglass"; case .insights: return "chart.bar.xaxis"; case .updates: return "arrow.down.circle"; case .settings: return "gearshape"; case .support: return "heart" }
     }
+}
+
+private enum SettingsCategory: String, CaseIterable {
+    case icons = "Profile icons", context = "Context access", appearance = "Appearance", general = "General"
 }
 
 struct SettingsView: View {
@@ -25,10 +29,10 @@ struct SettingsView: View {
     @ObservedObject var insights: InsightsStore
     let cues: ActivityCues
     let chooseImage: (Profile) -> Void
-    @State private var section: SettingsSection? = (CommandLine.arguments.contains("--context-settings") || Bundle.main.object(forInfoDictionaryKey: "ProfileDockContextPreview") as? Bool == true) ? .context : (CommandLine.arguments.contains("--settings") ? .settings : .profiles)
+    @State private var section: SettingsSection? = CommandLine.arguments.contains("--search-chats") ? .context : (CommandLine.arguments.contains("--settings") || CommandLine.arguments.contains("--context-settings") ? .settings : .profiles)
+    @State private var settingsCategory: SettingsCategory = CommandLine.arguments.contains("--context-settings") ? .context : .icons
     @State private var adding = false
     @State private var editing: Profile?
-    @State private var contextProfileID: String?
     @State private var removing: Profile?
     @State private var trashData = false
     @State private var copying = false
@@ -64,11 +68,10 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 20) {
                         switch section ?? .profiles {
                         case .profiles: profiles
-                        case .context: ContextSettingsView(model: model, initialCallerID: contextProfileID)
+                        case .context: ContextSettingsView(model: model, mode: .search) { manageContext() }
                         case .insights: insightsSettings
                         case .updates: updateSettings
-                        case .settings: generalSettings
-                        case .appearance: appearance
+                        case .settings: settingsHub
                         case .support: support
                         }
                         if let message = model.message { Text(message).font(.callout).foregroundStyle(.orange).textSelection(.enabled) }
@@ -80,7 +83,7 @@ struct SettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .profileDockShowUpdates)) { _ in section = .updates }
         .sheet(isPresented: $adding) { AddProfileSheet(model: model) }
         .sheet(item: $editing) { profile in
-            ProfileSettingsSheet(model: model, profileID: profile.id) { editing = nil; contextProfileID = profile.id; section = .context }
+            ProfileSettingsSheet(model: model, profileID: profile.id) { editing = nil; manageContext(for: profile.id) }
         }
         .sheet(item: $removing) { profile in
             VStack(alignment: .leading, spacing: 18) {
@@ -125,11 +128,12 @@ struct SettingsView: View {
                             }
                         }
                         Spacer(minLength: 0)
+                        Button("Customize…") { editing = profile }
                         Button("Open") { model.select(profile) }
                         Menu {
                             Section {
                                 Button("Profile settings…", systemImage: "slider.horizontal.3") { editing = profile }
-                                Button("Context tagging…", systemImage: "at") { contextProfileID = profile.id; section = .context }
+                                Button("Context tagging…", systemImage: "at") { manageContext(for: profile.id) }
                             }
                             Section("Window") {
                                 Button("Open profile", systemImage: "arrow.up.forward.app") { model.select(profile) }
@@ -246,6 +250,57 @@ struct SettingsView: View {
             }
     }
 
+    private func manageContext(for profileID: String? = nil) {
+        if let profileID { model.contextSettings.selectCaller(profileID) }
+        settingsCategory = .context; section = .settings
+    }
+
+    private var settingsHub: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            Text("Profile icons, context permissions, appearance and app controls.").foregroundStyle(.secondary)
+            Picker("Settings category", selection: $settingsCategory) {
+                ForEach(SettingsCategory.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }.pickerStyle(.segmented)
+            switch settingsCategory {
+            case .icons: profileIconSettings
+            case .context: ContextSettingsView(model: model, mode: .access)
+            case .appearance: appearance
+            case .general: generalSettings
+            }
+        }
+    }
+
+    private var profileIconSettings: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Different profiles. Recognizable Dock icons.").font(.headline)
+                    Text("Choose a colored dot, letters, an image, or the ChatGPT logo with a custom color. Native Dock mode is optional and experimental.").font(.callout).foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            if model.preferences.profiles.isEmpty {
+                ContentUnavailableView("Add your first profile", systemImage: "person.crop.circle.badge.plus", description: Text("Then customize its Dock icon here."))
+                Button("Add profile") { adding = true }.buttonStyle(.borderedProminent)
+            }
+            ForEach(model.preferences.profiles) { profile in
+                GroupBox {
+                    HStack(spacing: 14) {
+                        Image(nsImage: NativeProfileArtwork.preview(profile: profile, image: model.image(for: profile), vendor: model.applicationURL(for: profile).map { NSWorkspace.shared.icon(forFile: $0.path) })).resizable().frame(width: 56, height: 56)
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(profile.name).font(.headline)
+                            Text(profile.dockApplicationPath == nil ? "Native Dock icon is off" : "Native Dock icon is on · experimental").font(.caption).foregroundStyle(.secondary)
+                            Text((profile.dockIconStyle ?? .initials).label + " · #" + profile.color).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 8)
+                        Button("Customize icon…") { editing = profile }.accessibilityLabel("Customize Dock icon for \(profile.name)")
+                    }.padding(10)
+                }
+            }
+            Text("Close a profile before enabling or disabling native Dock mode. Customizing its look does not change its account or conversations.").font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
     private var generalSettings: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Choose where ProfileDock appears and how it starts.").foregroundStyle(.secondary)
@@ -270,11 +325,11 @@ struct SettingsView: View {
             }
             GroupBox("Profiles & updates") {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Profile icons and experimental Dock mode live in each profile's settings. Context tagging controls which profiles may retrieve each other's earlier tasks.")
+                    Text("Choose Profile icons above for custom icons and experimental Dock mode. Context access controls which profiles may retrieve each other's earlier tasks.")
                         .font(.callout).foregroundStyle(.secondary)
                     HStack {
-                        Button("Profiles") { section = .profiles }
-                        Button("Context tagging") { section = .context }
+                        Button("Profile icons") { settingsCategory = .icons }
+                        Button("Context access") { settingsCategory = .context }
                         Button("Updates") { section = .updates }
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(12)

@@ -66,13 +66,17 @@ def smoke(binary, root, policy):
         assert result["isError"] is False, result
         hit = result["structuredContent"]["hits"][0]
         assert hit["message"]["id"] == "sample-3"
+        for mode, query, expected in [("allWords", "workshop nonexistent", False), ("anyWord", "workshop nonexistent", True), ("exactPhrase", "fifteen-minute demonstration", True)]:
+            matches = rpc("tools/call", {"name": "search_sessions", "arguments": {"query": query, "profiles": ["research"], "match_mode": mode}})
+            assert not matches["isError"] and bool(matches["structuredContent"]["hits"]) == expected, matches
+        assert rpc("tools/call", {"name": "search_sessions", "arguments": {"query": "workshop", "profiles": ["research"], "match_mode": "unsupported"}})["isError"]
         page = rpc("tools/call", {"name": "read_session", "arguments": {"profile": "research", "session_id": hit["thread"]["id"], "message_id": hit["message"]["id"]}})
         assert len(page["structuredContent"]["messages"]) == 4
         assert rpc("tools/call", {"name": "search_sessions", "arguments": {"query": "workshop", "profiles": ["private"]}})["isError"]
         policy.write_text(json.dumps({"version": 1, "grants": {}}))
         assert rpc("tools/call", {"name": "read_session", "arguments": {"profile": "research", "session_id": "sample-session"}})["isError"]
         policy.write_text(json.dumps({"version": 1, "grants": {"default": ["research"]}}))
-        print("PASS: live MCP initialization, discovery, aliases, ranked search, focused reading, denied source, immediate revocation")
+        print("PASS: live MCP initialization, discovery, aliases, ranked search and match modes, focused reading, denied source, immediate revocation")
     finally:
         process.stdin.close()
         try:

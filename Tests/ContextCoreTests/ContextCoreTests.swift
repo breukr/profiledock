@@ -4,6 +4,38 @@ import DockCore
 @testable import ContextCore
 
 final class ContextCoreTests: XCTestCase {
+    func testKeywordModesUseTitleAndBodyAndQuotedPhrasesStayTogether() throws {
+        let f = try ContextFixture(); defer { f.remove() }; try f.allow("default", "two")
+        try f.thread("full", title: "Workshop planning")
+        try f.item("full", ordinal: 1, type: "userMessage", text: "The budget was approved at Café Noord.")
+        try f.thread("partial", title: "Different topic")
+        try f.item("partial", ordinal: 1, type: "userMessage", text: "Workshop ideas for next year.")
+        XCTAssertEqual(try f.service.search(query: "please find our earlier conversation about workshop budget", sources: ["two"]).hits.map(\.thread.id), ["full"])
+        XCTAssertEqual(try f.service.search(query: "workshop budget", sources: ["two"], mode: .anyWord).hits.count, 2)
+        XCTAssertEqual(try f.service.search(query: "\"CAFE NOORD\"", sources: ["two"]).hits.map(\.thread.id), ["full"])
+        XCTAssertTrue(try f.service.search(query: "\"budget approved\"", sources: ["two"]).hits.isEmpty)
+        XCTAssertEqual(try f.service.search(query: "budget was approved", sources: ["two"], mode: .exactPhrase).hits.count, 1)
+    }
+
+    func testOwnHistorySearchDoesNotGrantAccessToAnotherProfile() throws {
+        let f = try ContextFixture(); defer { f.remove() }
+        try f.thread("own"); try f.item("own", ordinal: 1, type: "userMessage", text: "My workshop budget")
+        let own = ContextService(registry: f.registry, caller: "two")
+        XCTAssertEqual(try own.search(query: "budget", sources: ["two"]).hits.first?.profile.id, "two")
+        XCTAssertEqual(try own.read(source: "two", threadID: "own").messages.count, 1)
+        XCTAssertTrue(try own.availableProfiles().isEmpty)
+        XCTAssertTrue(try f.registry.access().grants.isEmpty)
+        XCTAssertThrowsError(try f.service.search(query: "budget", sources: ["two"]))
+    }
+
+    @MainActor func testCancelledSearchStopsBeforeReadingProfiles() async throws {
+        let f = try ContextFixture(); defer { f.remove() }; try f.allow("default", "two")
+        let service = f.service
+        let work = Task { try service.search(query: "budget", sources: ["two"]) }
+        work.cancel()
+        do { _ = try await work.value; XCTFail("Cancelled search should not return results") }
+        catch is CancellationError {} catch { XCTFail("Expected cancellation, got \(error)") }
+    }
     func testAliasesAndDirectionalAccess() throws {
         let fixture = try ContextFixture(); defer { fixture.remove() }
         XCTAssertEqual(try fixture.registry.resolve("@worktwo", in: fixture.registry.profiles()).id, "two")

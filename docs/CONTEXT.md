@@ -5,7 +5,7 @@ profile you are working in. It does not copy accounts or resume source tasks.
 
 ## Start using it
 
-1. Open ProfileDock **Settings → Context tagging**.
+1. Open ProfileDock **Settings → Context access**.
 2. Choose the profile you are **Working in**.
 3. Enable the profiles it may read under **Allow context from**. Access is
    directional: allowing Studio to read Research does not allow Research to read Studio.
@@ -120,10 +120,11 @@ python3 scripts/context-smoke.py 'dist/ProfileDock Context Preview.app/Contents/
 ```
 
 The preview bundle has a separate app identity, no update checks, no global
-shortcuts or floating strips, and opens Context settings. It can run alongside
-the normal ProfileDock app. It uses real profile preferences unless launched with
-`--preview-home` pointing to a fictional test home. `context-smoke.py --keep-fixture`
-creates such a home and prints its path. Never commit real account data or private
+shortcuts or floating strips. It can run alongside the normal ProfileDock app
+and uses a temporary, empty home by default. Use `--settings`, `--context-settings`,
+or `--search-chats` to open a specific screen. Pass `--preview-home` with a fictional
+test home to reuse its profiles. `context-smoke.py --keep-fixture` creates such a
+home and prints its path. Never commit real account data or private
 screenshots. The helper's optional `--home` flag exists for explicit fixture tests;
 the installed connection does not expose it as a tool argument.
 Use `--compact-preview` with the preview app to check the minimum 760 × 560 pt
@@ -134,3 +135,9 @@ For CLI use, call `ProfileDockContext profiles --profile ID`,
 `ProfileDockContext search --profile ID --sources ID,ID --query 'topic'`, or
 `ProfileDockContext read --profile ID --source ID --session ID`. Add `--cursor`
 to read another page, or `--message` to focus on a search hit.
+
+## Finding a conversation in ProfileDock
+
+Use **Search chats** in the sidebar. Choose the profile you are searching as; its own local history is available without granting another profile access. Additional sources still require directional permission under **Settings → Context access**. Expand the source selector to choose up to eight profiles.
+
+The default **All words** mode matches across conversation titles and messages. **Any word** broadens a search, and **Exact phrase** (or quotation marks) keeps words together. Matching is case- and accent-insensitive. Results show one card per conversation, highlighted matches, a source and date, best-match/newest-match sorting, and a coverage summary that distinguishes missing history from no matches. Date and archive filters, cancellation, and Show more matches refine the search. Reading opens around the selected match and can load more messages. Search state stays in memory while switching sections; queries are not saved to disk.

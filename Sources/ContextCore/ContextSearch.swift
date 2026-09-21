@@ -45,34 +45,31 @@ public struct ContextService: Sendable {
         return profiles.filter { access.allows(caller: caller, source: $0.id) }
     }
 
-    public func search(query: String, sources: [String], since: Double? = nil, includeArchived: Bool = true, limit: Int = 12) throws -> ContextSearchResult {
+    public func search(query: String, sources: [String], since: Double? = nil, includeArchived: Bool = true, limit: Int = 12, mode: ContextSearchMode = .allWords) throws -> ContextSearchResult {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty, query.count <= 500, (1...30).contains(limit), since?.isFinite ?? true else { throw ContextError.message("Enter a topic of 1–500 characters and a result limit of 1–30.") }
         let profiles = try registry.authorized(caller: caller, sources: sources)
-        let terms = Self.terms(query)
+        let matcher = ContextQuery(query, mode: mode)
+        let terms = matcher.terms
         guard !terms.isEmpty else { throw ContextError.message("Use a specific topic or a distinctive word from the conversation.") }
         var hits: [ContextHit] = [], coverage: [ContextCoverage] = []
         let deadline = Date().addingTimeInterval(24)
         for profile in profiles {
+            try Task.checkCancellation()
             let history = ContextHistory(root: profile.root(in: registry.home), deadline: min(deadline, Date().addingTimeInterval(8)))
             var status = ContextCoverage(profile: profile, status: "available", conversationsRead: 0, detail: "Local Work/Codex conversations only.")
             do {
                 let (threads, more) = try history.threads(since: since, includeArchived: includeArchived)
                 if more { status.status = "partial"; status.detail = "Only the 500 most recently updated conversations were searched. Narrow the date range." }
                 for thread in threads {
+                    try Task.checkCancellation()
                     do {
                         let read = try history.messages(thread: thread)
                         status.conversationsRead += 1
                         if read.limited || read.messages.contains(where: \.truncated) { status.status = "partial"; status.detail = "Some conversations exceed the reading limit. Open a result to read further." }
-                        let titleTerms = Self.normalized(thread.title)
                         var threadHits: [ContextHit] = []
                         for message in read.messages where since == nil || message.timestamp >= since! {
-                            let body = Self.normalized(message.text)
-                            let bodyMatches = terms.filter { body.contains($0) }.count
-                            let titleMatches = terms.filter { titleTerms.contains($0) }.count
-                            guard bodyMatches > 0 || titleMatches == terms.count else { continue }
-                            let phrase = body.contains(Self.normalized(query)) ? 20 : 0
-                            let score = bodyMatches * 6 + titleMatches * 3 + (bodyMatches == terms.count ? 12 : 0) + phrase
+                            guard let score = matcher.score(title: thread.title, body: message.text) else { continue }
                             let excerpt = Self.excerpt(message.text, terms: terms)
                             // Search responses carry only the matching excerpt, not a second full copy.
                             let compact = ContextMessage(id: message.id, role: message.role, text: excerpt, timestamp: message.timestamp, ordinal: message.ordinal, truncated: message.truncated || excerpt != message.text)
@@ -80,13 +77,17 @@ public struct ContextService: Sendable {
                         }
                         hits += threadHits.sorted(by: Self.ranked).prefix(3)
                     } catch {
+                        if error is CancellationError { throw error }
                         status.status = "partial"; status.detail = error.localizedDescription
                         if Date() >= history.deadline { break }
                     }
                 }
                 if status.conversationsRead == 0, !threads.isEmpty { status.status = "unavailable" }
                 if threads.isEmpty { status.detail = "No local conversations match this date and archive scope." }
-            } catch { status.status = "unavailable"; status.detail = error.localizedDescription }
+            } catch {
+                if error is CancellationError { throw error }
+                status.status = "unavailable"; status.detail = error.localizedDescription
+            }
             coverage.append(status)
         }
         // Recheck revocation and profile removal after reading, before exposing any text.
@@ -128,10 +129,6 @@ public struct ContextService: Sendable {
         return a.id < b.id
     }
     static func normalized(_ value: String) -> String { value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX")) }
-    static func terms(_ query: String) -> [String] {
-        let stop: Set<String> = ["de", "het", "een", "en", "van", "voor", "over", "met", "in", "op", "ons", "onze", "the", "a", "an", "and", "of", "for", "about", "with", "is", "this", "that"]
-        return Array(Set(normalized(query).components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty && !stop.contains($0) })).sorted()
-    }
     static func excerpt(_ text: String, terms: [String]) -> String {
         guard text.count > 900 else { return text }
         let normalized = normalized(text)

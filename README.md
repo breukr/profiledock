@@ -62,11 +62,11 @@ The build creates an Apple Silicon app. Local builds use a local signature; publ
 3. **Expand Resets** for expiry countdowns. Blue means working, orange means waiting for you, red means unread results.
 4. **Choose ChatGPT updates** in Settings. Shared profiles update together; separate app copies can update independently.
 
-A profile's options menu lets you change its picture, create a Finder launcher or app copy, and remove it. Data stays on your Mac by default. **Appearance** includes startup at login and display sizing.
+A profile's options menu lets you change its picture, create a Finder launcher or app copy, and remove it. Data stays on your Mac by default. **Settings → General** includes startup and Dock/menu-bar visibility; **Settings → Appearance** controls strip sizing and placement.
 
 **ChatGPT updates** show download progress and can be cancelled before installation. **ProfileDock updates** check daily while running, with a prompt before downloading or installing. Only ProfileDock restarts. Version 1.0.x users need to install this release manually once.
 
-In **Appearance**, choose **Top center** or **Free position**. Drag the grip to move a floating strip; each display remembers its position. Hover over the rest to open your profiles. You can preview activity cues and enable optional chimes. Blue means working, orange needs input, green is idle, red is unread, and gray is closed or unknown. Old activity detected at startup stays quiet. An optional macOS Dock icon opens settings on click.
+In **Settings → Appearance**, choose **Top center** or **Free position**. Drag the grip to move a floating strip; each display remembers its position. Hover over the rest to open your profiles. You can preview activity cues and enable optional chimes. Blue means working, orange needs input, green is idle, red is unread, and gray is closed or unknown. Old activity detected at startup stays quiet. An optional macOS Dock icon opens settings on click.
 
 Choose your app icon under **Settings → Appearance**. [Icon appearance details](docs/ICON-APPEARANCES.md).
 
@@ -76,7 +76,7 @@ Choose your app icon under **Settings → Appearance**. [Icon appearance details
 
 ProfileDock’s own Dock and menu-bar icons have independent visibility settings under the **Settings** tab. Opening Settings shows a native top-left **ProfileDock** menu with separate companion and ChatGPT/Codex update commands. When persistent Dock visibility is off, its icon appears only while Settings is open.
 
-**Context tagging** lets one profile find earlier local Work/Codex conversations in source profiles you enable. Open **Settings → Context tagging**, choose the profile you work in, enable its sources, and select **Connect**. Start a new task, type `@`, and select a profile from the desktop chat's skill suggestions. Profile names and plain-text `@aliases` also work. A local search preview shows passages with their original profile, conversation, and date. Sharing is directional and off by default. [Setup, scope, and privacy](docs/CONTEXT.md).
+**Context tagging** lets one profile find earlier local Work/Codex conversations in source profiles you enable. Open **Settings → Context access**, choose the profile you work in, enable its sources, and select **Connect**. Start a new task, type `@`, and select a profile from the desktop chat's skill suggestions. Profile names and plain-text `@aliases` also work. The **Search chats** screen shows passages with their original profile, conversation, and date. Sharing is directional and off by default. [Setup, scope, and privacy](docs/CONTEXT.md).
 
 Activity covers local Work/Codex tasks. Profiles are not a security boundary, and OpenAI's desktop interfaces may change. ProfileDock never redeems reset credits. It is independent of OpenAI.
 
