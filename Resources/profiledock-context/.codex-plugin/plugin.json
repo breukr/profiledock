@@ -1,0 +1,18 @@
+{
+  "name": "profiledock-context",
+  "version": "0.1.0",
+  "description": "Use earlier local Work/Codex conversations from explicitly enabled ProfileDock profiles.",
+  "author": {
+    "name": "Breukr"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "ProfileDock Context",
+    "shortDescription": "Bring context across your profiles.",
+    "longDescription": "Search earlier local Work/Codex conversations with source references. Connect the local helper and choose one-way sharing permissions in ProfileDock → Context before using this workflow.",
+    "developerName": "Breukr",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": "Check earlier conversations about this topic in the ProfileDock profiles I specify."
+  }
+}
