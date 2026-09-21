@@ -77,7 +77,7 @@ struct ProfileSettingsSheet: View {
                                         if profile.iconFilename != nil { Button("Remove image") { model.removeImage(for: profile) } }
                                     }
                                 }
-                                Text("Appearance changes apply when this profile next opens from ProfileDock.").font(.caption).foregroundStyle(.secondary)
+                                Text(profile.dockApplicationPath == nil ? "Preview only. Enable Native macOS Dock icon below to apply this look to the running app." : "Appearance changes apply when this profile next opens from ProfileDock.").font(.caption).foregroundStyle(.secondary)
                             }.padding(10)
                         }
                         GroupBox {
@@ -101,7 +101,7 @@ struct ProfileSettingsSheet: View {
                             VStack(alignment: .leading, spacing: 12) {
                                 Label("ChatGPT installation", systemImage: "shippingbox").font(.headline)
                                 Text(profile.applicationPath == nil ? "Shared installation" : "Separate installation").font(.subheadline.weight(.medium))
-                                Text(profile.applicationPath == nil ? "This profile uses the same installed ChatGPT app as your other shared profiles. Each profile still has its own sign-in, chats and settings. The app updates once for the group." : "This profile has its own ChatGPT installation, so you can update or restart it separately. Its account data is still separate. A copy uses more disk space; it does not add another account or subscription.").font(.callout).foregroundStyle(.secondary)
+                                Text(profile.applicationPath == nil ? (profile.dockApplicationPath == nil ? "This profile uses the same installed ChatGPT app as your other shared profiles. Each profile still has its own sign-in, chats and settings. The app updates once for the group." : "This profile’s Dock app is rebuilt from the shared, signed ChatGPT installation. Profiles using that source update together. Sign-ins, chats and settings stay separate.") : "This profile has its own ChatGPT installation, so you can update or restart it separately. Its account data is still separate. A copy uses more disk space; it does not add another account or subscription.").font(.callout).foregroundStyle(.secondary)
                                 Button(profile.applicationPath == nil ? "Create a separate installation…" : "Use shared installation & trash managed copy") {
                                     perform {
                                         if profile.applicationPath == nil { try await model.makeSeparateCopy(for: profile) }

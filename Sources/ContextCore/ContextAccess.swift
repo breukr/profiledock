@@ -90,7 +90,7 @@ public struct ContextRegistry: Sendable {
         let policy = try access()
         var seen = Set<String>()
         return try sources.map { try resolve($0, in: all) }.filter { seen.insert($0.id).inserted }.map { profile in
-            guard policy.allows(caller: caller, source: profile.id) else { throw ContextError.message("Context from \(profile.name) is not enabled for this profile. Enable it in ProfileDock → Context.") }
+            guard profile.id == caller || policy.allows(caller: caller, source: profile.id) else { throw ContextError.message("Context from \(profile.name) is not enabled for this profile. Enable it in ProfileDock → Settings → Context access.") }
             let root = profile.root(in: home)
             guard root.resolvingSymlinksInPath().path == root.path else { throw ContextError.message("Linked profile folders are not supported for context sharing.") }
             return profile

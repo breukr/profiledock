@@ -54,6 +54,7 @@ final class DockModel: ObservableObject {
     private var launches: [String: Process] = [:]
     var settingsURL: URL { home.appendingPathComponent("Library/Application Support/Account Dock/preferences.json") }
     var onPreferencesChanged: (() -> Void)?
+    lazy var contextSettings = ContextSettingsStore(home: home)
     private var imageCache: [String: NSImage] = [:]
 
     var iconsDirectory: URL { settingsURL.deletingLastPathComponent().appendingPathComponent("Icons") }

@@ -2,8 +2,8 @@
 
 ProfileDock can create a local ChatGPT app for each profile, with its own name and colored icon in the macOS Dock. This is off by default. Existing profiles keep their current launch behavior until you enable it.
 
-1. Close the profile, then open ProfileDock Settings → Profiles → its options menu.
-2. Choose **Profile settings…**, select **Native macOS Dock icon**, and read the explanation before enabling it.
+1. Close the profile, then open **Settings → Profile icons → Customize icon…**.
+2. Select **Native macOS Dock icon**, and read the explanation before enabling it.
 3. Open the profile. To pin its app, use **Show Dock app** and drag that app to the Dock, or choose **Options → Keep in Dock** on its running icon.
 4. Changes to a profile's name, color or picture are applied when you next open it from ProfileDock. Rebuilds keep the same app path so existing Dock pins remain valid. macOS may cache the old icon until the next launch.
 5. To return to the usual launch mode, close the profile and turn off **Native macOS Dock icon** in Profile settings. This moves the generated app to the Trash and keeps its profile data. Remove its old Dock pin yourself if necessary.
