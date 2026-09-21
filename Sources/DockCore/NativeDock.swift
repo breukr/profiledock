@@ -43,6 +43,8 @@ public enum NativeDock {
         info[versionKey] = version
         info["ProfileDockNativeColor"] = profile.color
         info["ProfileDockNativeImage"] = profile.iconFilename ?? ""
+        info["ProfileDockNativeIconStyle"] = (profile.dockIconStyle ?? .initials).rawValue
+        info["ProfileDockNativeIconText"] = profile.dockLetters
         return info
     }
 

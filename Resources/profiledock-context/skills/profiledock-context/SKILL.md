@@ -35,7 +35,7 @@ not mean no conversations exist. This version covers locally stored Work/Codex
 text, not ordinary ChatGPT/cloud-only history, attachments, or voice-only records.
 
 If no sources are enabled, explain that the user can select them in
-**ProfileDock → Context**. If the tools are missing, use **Connect** there and
+**ProfileDock → Context tagging**. If the tools are missing, use **Connect** there and
 start a new task in that profile. Connect also installs a small local skill for
 each enabled source, which the desktop chat can show in its native `@` skills
 suggestions. A selected source skill fixes the source by stable ID; honor that ID

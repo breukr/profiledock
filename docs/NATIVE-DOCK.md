@@ -3,10 +3,12 @@
 ProfileDock can create a local ChatGPT app for each profile, with its own name and colored icon in the macOS Dock. This is off by default. Existing profiles keep their current launch behavior until you enable it.
 
 1. Close the profile, then open ProfileDock Settings → Profiles → its options menu.
-2. Choose **Enable native Dock icon…** and read the explanation before enabling it.
-3. Open the profile. To pin its app, use **Show native Dock app in Finder** and drag that app to the Dock, or choose **Options → Keep in Dock** on its running icon.
+2. Choose **Profile settings…**, select **Native macOS Dock icon**, and read the explanation before enabling it.
+3. Open the profile. To pin its app, use **Show Dock app** and drag that app to the Dock, or choose **Options → Keep in Dock** on its running icon.
 4. Changes to a profile's name, color or picture are applied when you next open it from ProfileDock. Rebuilds keep the same app path so existing Dock pins remain valid. macOS may cache the old icon until the next launch.
-5. To return to the usual launch mode, close the profile and choose **Disable native Dock icon**. This moves the generated app to the Trash and keeps its profile data. Remove its old Dock pin yourself if necessary.
+5. To return to the usual launch mode, close the profile and turn off **Native macOS Dock icon** in Profile settings. This moves the generated app to the Trash and keeps its profile data. Remove its old Dock pin yourself if necessary.
+
+Choose a colored dot on the installed app icon, initials or up to three custom letters, a custom image, or the ChatGPT logo on a colored background. Use the color picker or enter a six-digit hex code. Icon changes are independent of the shared/separate installation choice.
 
 ## Tradeoffs
 
@@ -18,11 +20,11 @@ Generated apps stay on the Mac that created them. They are not bundled in Profil
 
 ## Updates
 
-The **ChatGPT updates** panel updates the signed source app and rebuilds every enabled native Dock copy in that app group automatically. It prepares and verifies all copies before closing profiles, preserves their data paths and Dock identities, and restores the group if replacement verification fails. Hidden backups beside each app retain the previous versions for recovery.
+The **Updates → ChatGPT / Codex** section updates the signed source app and rebuilds every enabled native Dock copy in that app group automatically. It prepares and verifies all copies before closing profiles, preserves their data paths and Dock identities, and restores the group if replacement verification fails. Hidden backups beside each app retain the previous versions for recovery.
 
 If the original ChatGPT app updates outside ProfileDock, the next profile launch rebuilds the Dock copy automatically. This also works when opening a pinned Dock app: its helper asks ProfileDock to prepare the new copy before launching ChatGPT. A running profile keeps its current app until it restarts. No active task is interrupted just because a newer source app is available.
 
-**Repair native Dock app** is a recovery action if a copy is missing or damaged. A failed build retains the previous copy. If automatic repair fails, an error explains how to retry or disable the experimental option; the launcher never silently switches accounts. Keep ProfileDock installed at its usual path so pinned Dock apps can find its updater helper.
+**Repair copy** is a recovery action if a copy is missing or damaged. A failed build retains the previous copy. If automatic repair fails, an error explains how to retry or disable the experimental option; the launcher never silently switches accounts. Keep ProfileDock installed at its usual path so pinned Dock apps can find its updater helper.
 
 ## Implementation and attribution
 

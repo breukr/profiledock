@@ -5,7 +5,7 @@ profile you are working in. It does not copy accounts or resume source tasks.
 
 ## Start using it
 
-1. Open ProfileDock **Settings → Context**.
+1. Open ProfileDock **Settings → Context tagging**.
 2. Choose the profile you are **Working in**.
 3. Enable the profiles it may read under **Allow context from**. Access is
    directional: allowing Studio to read Research does not allow Research to read Studio.

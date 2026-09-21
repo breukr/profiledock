@@ -119,6 +119,10 @@ final class AppUpdates: ObservableObject {
         return (plist["CFBundleVersion"] as? String).flatMap(Int.init)
     }
 
+    nonisolated static func installedVersion(at url: URL) -> String {
+        (try? NativeDockApp.info(url)["CFBundleShortVersionString"] as? String) ?? "Unknown version"
+    }
+
     func needsUpdate(_ group: AppUpdateGroup) -> Bool {
         guard let latest, let installed = Self.installedBuild(at: group.application) else { return false }
         return installed < latest.build
