@@ -9,7 +9,7 @@ enum AppBrand {
 }
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
-    case profiles = "Profiles", context = "Context", insights = "Usage insights", updates = "ChatGPT updates", appearance = "Appearance", support = "Support"
+    case profiles = "Profiles", context = "Context tagging", insights = "Usage insights", updates = "Updates", appearance = "Appearance", support = "Support"
     var id: String { rawValue }
     var symbol: String {
         switch self { case .profiles: return "person.crop.rectangle.stack"; case .context: return "text.bubble"; case .insights: return "chart.bar.xaxis"; case .updates: return "arrow.down.circle"; case .appearance: return "macwindow"; case .support: return "heart" }
@@ -27,11 +27,12 @@ struct SettingsView: View {
     let chooseImage: (Profile) -> Void
     @State private var section: SettingsSection? = (CommandLine.arguments.contains("--context-settings") || Bundle.main.object(forInfoDictionaryKey: "ProfileDockContextPreview") as? Bool == true) ? .context : .profiles
     @State private var adding = false
+    @State private var editing: Profile?
+    @State private var contextProfileID: String?
     @State private var removing: Profile?
     @State private var trashData = false
     @State private var copying = false
     @State private var confirmingUpdate = false
-    @State private var enablingNativeDock: Profile?
 
     private var groups: [AppUpdateGroup] { AppUpdateGroup.make(profiles: model.preferences.profiles, defaultApplication: model.defaultApplication) }
     private var selectedGroups: [AppUpdateGroup] { groups.filter { updates.selected.contains($0.id) && updates.needsUpdate($0) } }
@@ -63,7 +64,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 20) {
                         switch section ?? .profiles {
                         case .profiles: profiles
-                        case .context: ContextSettingsView(model: model)
+                        case .context: ContextSettingsView(model: model, initialCallerID: contextProfileID)
                         case .insights: insightsSettings
                         case .updates: updateSettings
                         case .appearance: appearance
@@ -74,7 +75,11 @@ struct SettingsView: View {
                 }.scrollIndicators(.never)
             }.frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .profileDockShowUpdates)) { _ in section = .updates }
         .sheet(isPresented: $adding) { AddProfileSheet(model: model) }
+        .sheet(item: $editing) { profile in
+            ProfileSettingsSheet(model: model, profileID: profile.id) { editing = nil; contextProfileID = profile.id; section = .context }
+        }
         .sheet(item: $removing) { profile in
             VStack(alignment: .leading, spacing: 18) {
                 Text("Remove \(profile.name)?").font(.title2.weight(.semibold))
@@ -94,12 +99,7 @@ struct SettingsView: View {
         } message: {
             Text("\(selectedGroups.flatMap(\.profiles).map(\.name).joined(separator: ", ")) will close after the download and reopen when the update finishes. Profiles sharing an app update together. Active tasks must finish first.")
         }
-        .alert("Enable experimental native Dock icon?", isPresented: Binding(get: { enablingNativeDock != nil }, set: { if !$0 { enablingNativeDock = nil } }), presenting: enablingNativeDock) { profile in
-            Button("Cancel", role: .cancel) {}
-            Button("Create local Dock app") { changeNativeDock(profile, enabled: true) }
-        } message: { _ in
-            Text("Creates a local ChatGPT copy with this profile's name and color. It replaces OpenAI's signature, removes vendor-only permissions and disables library validation, so some macOS protections and integrations differ. You may need to sign in again. ProfileDock automatically rebuilds the copy after app updates. Your original app and profile data are kept, and you can disable this setting at any time.")
-        }
+
     }
 
     private var profiles: some View {
@@ -111,12 +111,11 @@ struct SettingsView: View {
             ForEach(Array(model.preferences.profiles.enumerated()), id: \.element.id) { index, profile in
                 GroupBox {
                     HStack(spacing: 14) {
-                        Button { chooseImage(profile) } label: { ProfileBadge(model: model, profile: profile, size: 40) }
-                            .buttonStyle(.plain).help("Change picture").accessibilityLabel("Change picture for \(profile.name)")
+                        Button { editing = profile } label: { ProfileBadge(model: model, profile: profile, size: 44) }
+                            .buttonStyle(.plain).help("Profile settings").accessibilityLabel("Settings for \(profile.name)")
                         VStack(alignment: .leading, spacing: 5) {
-                            TextField("Profile name", text: Binding(get: { profile.name }, set: { var edited = profile; edited.name = $0; model.update(edited) }))
-                                .font(.headline).textFieldStyle(.plain).accessibilityLabel("Name for \(profile.name)")
-                            Text("\(model.state(profile)) · \(profile.applicationPath == nil ? "Shared app" : "Separate app")" + (index < 9 ? " · ⌥⌘\(index + 1)" : ""))
+                            Text(profile.name).font(.headline)
+                            Text("\(model.state(profile)) · \(profile.applicationPath == nil ? "Shared installation" : "Separate installation")" + (index < 9 ? " · ⌥⌘\(index + 1)" : ""))
                                 .font(.caption).foregroundStyle(.secondary)
                             if profile.dockApplicationPath != nil {
                                 Text(model.nativeDockNeedsRebuild(profile) ? "Native Dock icon · updates on next launch" : "Native Dock icon · experimental")
@@ -126,51 +125,33 @@ struct SettingsView: View {
                         Spacer(minLength: 0)
                         Button("Open") { model.select(profile) }
                         Menu {
-                            Button("Choose picture…") { chooseImage(profile) }
-                            if profile.iconFilename != nil { Button("Remove picture") { model.removeImage(for: profile) } }
-                            Menu("Color") {
-                                ForEach(["377CF6", "009B87", "955CE5", "D77620", "CA528B", "D85252"], id: \.self) { hex in
-                                    Button { var changed = profile; changed.color = hex; model.update(changed) } label: { Label(colorName(hex), systemImage: profile.color == hex ? "checkmark.circle.fill" : "circle") }
+                            Section {
+                                Button("Profile settings…", systemImage: "slider.horizontal.3") { editing = profile }
+                                Button("Context tagging…", systemImage: "at") { contextProfileID = profile.id; section = .context }
+                            }
+                            Section("Window") {
+                                Button("Open profile", systemImage: "arrow.up.forward.app") { model.select(profile) }
+                                Button("Close profile", systemImage: "xmark.circle") { model.requestQuit(profile) }.disabled(model.running[profile.id]?.isEmpty != false)
+                                if let url = model.nativeDockURL(for: profile) ?? model.applicationURL(for: profile) {
+                                    Button("Show app in Finder", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                                }
+                                if let path = profile.launcherPath {
+                                    Button("Show profile shortcut", systemImage: "arrow.turn.up.right") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
+                                } else {
+                                    Button("Create profile shortcut", systemImage: "plus.app") {
+                                        copying = true
+                                        Task { defer { copying = false }; do { try await model.createFinderLauncher(for: profile) } catch { model.message = error.localizedDescription } }
+                                    }
                                 }
                             }
-                            Divider()
-                            Button("Move up") { model.move(profile.id, by: -1) }.disabled(index == 0)
-                            Button("Move down") { model.move(profile.id, by: 1) }.disabled(index + 1 == model.preferences.profiles.count)
-                            Divider()
-                            if profile.dockApplicationPath == nil {
-                                Button("Enable native Dock icon…") { enablingNativeDock = profile }
-                                    .disabled(model.running[profile.id]?.isEmpty == false || model.opening.contains(profile.id))
-                            } else {
-                                Button("Repair native Dock app") { changeNativeDock(profile, enabled: true) }
-                                    .disabled(model.running[profile.id]?.isEmpty == false || model.opening.contains(profile.id))
-                                Button("Disable native Dock icon") { changeNativeDock(profile, enabled: false) }
-                                    .disabled(model.running[profile.id]?.isEmpty == false || model.opening.contains(profile.id))
-                                if let app = model.nativeDockURL(for: profile) {
-                                    Button("Show native Dock app in Finder") { NSWorkspace.shared.activateFileViewerSelecting([app]) }
-                                }
+                            Section("Organize") {
+                                Button("Move up", systemImage: "arrow.up") { model.move(profile.id, by: -1) }.disabled(index == 0)
+                                Button("Move down", systemImage: "arrow.down") { model.move(profile.id, by: 1) }.disabled(index + 1 == model.preferences.profiles.count)
                             }
-                            Divider()
-                            Button("Create separate app copy…") {
-                                copying = true
-                                Task { defer { copying = false }; do { try await model.makeSeparateCopy(for: profile) } catch { model.message = error.localizedDescription } }
-                            }.disabled(profile.applicationPath != nil || model.running[profile.id]?.isEmpty == false)
-                            if profile.applicationPath != nil {
-                                Button("Use shared app & move copy to Trash") {
-                                    do { try model.useSharedAppAndTrashCopy(profile) } catch { model.message = error.localizedDescription }
-                                }.disabled(model.running[profile.id]?.isEmpty == false)
+                            Section {
+                                Button("Remove profile…", systemImage: "trash", role: .destructive) { trashData = false; removing = profile }
+                                    .disabled(model.running[profile.id]?.isEmpty == false)
                             }
-                            if let url = model.applicationURL(for: profile) { Button("Show app in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) } }
-                            if let path = profile.launcherPath { Button("Show profile launcher in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) } }
-                            else {
-                                Button("Create Finder launcher") {
-                                    copying = true
-                                    Task { defer { copying = false }; do { try await model.createFinderLauncher(for: profile) } catch { model.message = error.localizedDescription } }
-                                }
-                            }
-                            Button("Close profile") { model.requestQuit(profile) }.disabled(model.running[profile.id]?.isEmpty != false)
-                            Divider()
-                            Button("Remove profile…", role: .destructive) { trashData = false; removing = profile }
-                                .disabled(model.running[profile.id]?.isEmpty == false)
                         } label: { Image(systemName: "ellipsis.circle").font(.title3) }
                         .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("Options for \(profile.name)")
                     }.padding(10)
@@ -180,15 +161,6 @@ struct SettingsView: View {
             Button("Import or restore profiles") { model.restoreImportedProfiles() }.buttonStyle(.link)
             Text("New profiles start empty. A separate app copy can update independently; a shared app uses less disk space.").font(.caption).foregroundStyle(.secondary)
         }.disabled(updates.busy || copying || !model.nativeDockOperations.isEmpty)
-    }
-
-    private func changeNativeDock(_ profile: Profile, enabled: Bool) {
-        copying = true
-        Task {
-            defer { copying = false }
-            do { try await model.setNativeDockIcon(for: profile, enabled: enabled) }
-            catch { model.message = error.localizedDescription }
-        }
     }
 
     private var insightsSettings: some View {
@@ -205,7 +177,12 @@ struct SettingsView: View {
 
     private var updateSettings: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Update your ChatGPT app copies together, or choose the ones you can restart.").foregroundStyle(.secondary)
+            Text("Two apps, two update controls.").font(.headline)
+            Text("ProfileDock updates add features to this companion. ChatGPT / Codex updates install OpenAI's desktop app and may restart selected profiles.").foregroundStyle(.secondary)
+            profiledockUpdateCard
+            Divider()
+            Label("ChatGPT / Codex", systemImage: "sparkles").font(.title3.weight(.semibold))
+            Text("Update the OpenAI app used by your profiles. Choose the groups you can restart.").foregroundStyle(.secondary)
             Text("Checks when you open this panel. Updates install only after you confirm.").font(.caption).foregroundStyle(.secondary)
             if model.preferences.profiles.contains(where: { $0.dockApplicationPath != nil }) {
                 Text("Enabled native Dock copies are rebuilt automatically with each update, keeping their profile names, colors and data. Updates made outside ProfileDock are applied to the Dock copy on its next launch.")
@@ -221,7 +198,7 @@ struct SettingsView: View {
                     Toggle(isOn: Binding(get: { updates.selected.contains(group.id) }, set: { if $0 { updates.selected.insert(group.id) } else { updates.selected.remove(group.id) } })) {
                         VStack(alignment: .leading, spacing: 5) {
                             Text(group.profiles.map(\.name).joined(separator: ", ")).font(.headline)
-                            Text(group.application.lastPathComponent + " · " + (updates.needsUpdate(group) ? "Update available" : "Build \(AppUpdates.installedBuild(at: group.application).map(String.init) ?? "unknown")"))
+                            Text(group.application.lastPathComponent + " · " + AppUpdates.installedVersion(at: group.application) + (updates.needsUpdate(group) ? " · Update available" : ""))
                                 .font(.caption).foregroundStyle(.secondary)
                             if group.profiles.count > 1 { Text("These profiles share one app and restart together.").font(.caption).foregroundStyle(.secondary) }
                         }
@@ -249,10 +226,15 @@ struct SettingsView: View {
             if let error = updates.error { Text(error).font(.callout).foregroundStyle(.orange).textSelection(.enabled) }
             Button("Update selected ChatGPT apps") { confirmingUpdate = true }.buttonStyle(.borderedProminent).disabled(selectedGroups.isEmpty || updates.busy || selfUpdates.sessionInProgress)
             Text("Only selected app groups close. Your profiles, sign-ins, and chats stay in place. ChatGPT's own updater remains available.").font(.caption).foregroundStyle(.secondary)
-            Divider()
+        }.task { await updates.check() }
+    }
+
+    private var profiledockUpdateCard: some View {
             GroupBox {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("ProfileDock · Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development")").font(.headline)
+                    Label("ProfileDock", systemImage: "square.grid.2x2.fill").font(.title3.weight(.semibold))
+                    Text("Running version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development") · build \(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "local")").font(.callout)
+                    Text("Includes profile tagging and optional native Dock icons.").font(.caption).foregroundStyle(.secondary)
                     Text("ProfileDock checks daily while it is running. You choose when to download and install; only ProfileDock restarts.").font(.callout).foregroundStyle(.secondary)
                     Toggle("Automatically check for ProfileDock updates", isOn: Binding(get: { selfUpdates.automatic }, set: { selfUpdates.setAutomatic($0) })).disabled(!selfUpdates.enabled)
                     Button("Check ProfileDock for updates…") { selfUpdates.check() }.disabled(!selfUpdates.canCheck || updates.busy)
@@ -260,7 +242,6 @@ struct SettingsView: View {
                     Link("View ProfileDock releases", destination: AppBrand.repository.appendingPathComponent("releases/latest"))
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(10)
             }
-        }.task { await updates.check() }
     }
 
     private var appearance: some View {
@@ -284,7 +265,8 @@ struct SettingsView: View {
                     AppIconAppearancePicker(model: model)
                     Divider()
                     Toggle("Show ProfileDock in the macOS Dock", isOn: Binding(get: { model.preferences.showDockIcon == true }, set: { model.preferences.showDockIcon = $0; model.save() }))
-                    Text("Click the Dock icon to open settings. Hover expansion works on ProfileDock's floating launchers.").font(.caption).foregroundStyle(.secondary)
+                    Toggle("Show ProfileDock in the menu bar", isOn: Binding(get: { model.preferences.showMenuBarIcon != false }, set: { model.preferences.showMenuBarIcon = $0; model.save() }))
+                    Text("When the Dock option is off, its icon appears only while Settings is open so macOS can show the top-left ProfileDock menu. The menu-bar icon is independent. You can always reopen Settings by opening ProfileDock from Finder or Spotlight.").font(.caption).foregroundStyle(.secondary)
                     Divider()
                     Picker("Tile size", selection: Binding(get: { model.preferences.scale }, set: { model.preferences.scale = $0; model.save() })) {
                         Text("Small").tag(0.85); Text("Default").tag(1.0); Text("Large").tag(1.3)
@@ -370,13 +352,13 @@ private struct AddProfileSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Add a profile").font(.title2.weight(.semibold))
-            Text("Give this account a name. You'll sign in when you open it.").foregroundStyle(.secondary)
+            Text("A profile is a separate sign-in, conversation history and settings. Give it a name, then sign in when it opens.").foregroundStyle(.secondary)
             TextField("For example, Personal or Work", text: $name).textFieldStyle(.roundedBorder)
             Picker("Application", selection: $separate) {
-                Text("Use the shared app").tag(false)
-                Text("Create a separate app copy").tag(true)
+                Text("Shared installation · recommended").tag(false)
+                Text("Separate installation").tag(true)
             }.pickerStyle(.radioGroup)
-            Text(separate ? "Uses more disk space. This profile can update without restarting your other app copies." : "Uses your installed ChatGPT app. Profiles that share it update together.")
+            Text(separate ? "Copies the ChatGPT app so you can update this profile independently. Uses more disk space. It does not create another account or subscription." : "Uses your existing ChatGPT installation. Your sign-in, chats and settings are still separate; only the app files and update schedule are shared.")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Text((source ?? model.defaultApplication)?.lastPathComponent ?? "ChatGPT is not installed").font(.caption).foregroundStyle(.secondary)
@@ -400,6 +382,6 @@ private struct AddProfileSheet: View {
                     }
                 }.buttonStyle(.borderedProminent).disabled(ProfileLaunch.newProfile(name: name) == nil)
             }
-        }.padding(28).frame(width: 470).disabled(creating).interactiveDismissDisabled(creating)
+        }.padding(28).frame(width: 530).disabled(creating).interactiveDismissDisabled(creating)
     }
 }

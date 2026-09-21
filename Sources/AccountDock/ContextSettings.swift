@@ -152,26 +152,32 @@ import ContextCore
 struct ContextSettingsView: View {
     @ObservedObject var model: DockModel
     @StateObject private var store: ContextSettingsStore
-    init(model: DockModel) { self.model = model; _store = StateObject(wrappedValue: ContextSettingsStore(home: model.home)) }
+    init(model: DockModel, initialCallerID: String? = nil) {
+        self.model = model
+        let store = ContextSettingsStore(home: model.home)
+        if let initialCallerID, store.profiles.contains(where: { $0.id == initialCallerID }) { store.callerID = initialCallerID; store.sources = Set(store.allowed.map(\.id)) }
+        _store = StateObject(wrappedValue: store)
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("Bring earlier conversations into the profile you are working in.").foregroundStyle(.secondary)
+            Text("Choose which profiles can tag each other.").font(.headline)
+            Text("Select the profile you work in, then allow the profiles whose earlier conversations it may retrieve with @mentions. Covers local Work/Codex tasks; ChatGPT web and mobile history is not included.").foregroundStyle(.secondary)
             if store.profiles.isEmpty {
                 ContentUnavailableView("Add a profile first", systemImage: "person.crop.rectangle.stack", description: Text("Your profiles will appear here when they are available in ProfileDock."))
             } else {
-                Picker("Working in", selection: Binding(get: { store.callerID }, set: { store.selectCaller($0) })) {
+                Picker("Profile that can tag", selection: Binding(get: { store.callerID }, set: { store.selectCaller($0) })) {
                     ForEach(store.profiles) { Text($0.name).tag($0.id) }
                 }.disabled(store.connecting)
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Allow context from").font(.headline)
+                        Text("\(store.caller?.name ?? "This profile") can tag").font(.headline)
                         ForEach(store.profiles.filter { $0.id != store.callerID }) { profile in
                             Toggle(isOn: Binding(get: { store.access.allows(caller: store.callerID, source: profile.id) }, set: { store.setAllowed(profile, $0) })) {
                                 HStack { Text(profile.name); Spacer(); Text(profile.alias).font(.caption.monospaced()).foregroundStyle(.secondary) }
-                            }.toggleStyle(.switch).accessibilityLabel("Allow context from \(profile.name)")
+                            }.toggleStyle(.switch).accessibilityLabel("\(store.caller?.name ?? "This profile") can tag \(profile.name)")
                         }
                         if store.profiles.count == 1 { Text("Add another profile to share conversation context.").foregroundStyle(.secondary) }
-                        Text("One-way access. Searching happens on your Mac. Passages used in a task become context in that task's account.")
+                        Text("Access goes in one direction. Allowing Work to tag Personal does not allow Personal to tag Work. Only enable the directions you want. Search stays local; excerpts used in a task become context in that task's account.")
                             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }.padding(10)
                 }.disabled(store.connecting)

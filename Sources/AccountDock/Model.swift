@@ -17,6 +17,7 @@ struct Preferences: Codable {
     var placement: DockPlacement?
     var floatingPositions: [String: FloatingPosition]?
     var showDockIcon: Bool?
+    var showMenuBarIcon: Bool?
     var appIconAppearance: AppIconAppearance?
     var insightsExpansion: InsightsExpansion?
     var insightsAccount: String?
@@ -85,7 +86,7 @@ final class DockModel: ObservableObject {
     func chooseImage(for profile: Profile, window: NSWindow?) {
         let chooser = NSOpenPanel()
         chooser.title = "Picture for \(profile.name)"
-        chooser.message = "Kies een logo of andere afbeelding. Er wordt een kopie voor de accountbalk saved."
+        chooser.message = "Choose a logo or picture. ProfileDock keeps a local copy for this profile."
         chooser.allowedContentTypes = [.png, .jpeg, .heic, .tiff, .gif, .bmp]
         chooser.canChooseDirectories = false
         chooser.allowsMultipleSelection = false

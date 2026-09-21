@@ -58,7 +58,7 @@ enum NativeDockApp {
         try PropertyListSerialization.data(fromPropertyList: value, format: .xml, options: 0).write(to: url, options: .atomic)
     }
 
-    @MainActor static func icon(profile: Profile, image: NSImage?) throws -> Data {
+    @MainActor static func icon(profile: Profile, image: NSImage?, vendor: NSImage? = nil) throws -> Data {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("profiledock-icon-\(UUID().uuidString)")
         let iconset = root.appendingPathComponent("Profile.iconset")
         try FileManager.default.createDirectory(at: iconset, withIntermediateDirectories: true)
@@ -70,22 +70,7 @@ enum NativeDockApp {
                       let context = NSGraphicsContext(bitmapImageRep: bitmap) else { throw CocoaError(.fileWriteUnknown) }
                 NSGraphicsContext.saveGraphicsState()
                 NSGraphicsContext.current = context
-                let dimension = CGFloat(pixels)
-                let tile = NSRect(x: dimension * 0.1, y: dimension * 0.1, width: dimension * 0.8, height: dimension * 0.8)
-                NSColor(hex: profile.color).setFill()
-                NSBezierPath(roundedRect: tile, xRadius: dimension * 0.2, yRadius: dimension * 0.2).fill()
-                if let image {
-                    let inset = tile.insetBy(dx: dimension * 0.13, dy: dimension * 0.13)
-                    NSColor.white.setFill()
-                    NSBezierPath(roundedRect: inset, xRadius: dimension * 0.08, yRadius: dimension * 0.08).fill()
-                    let imageSize = image.size
-                    let fit = min(inset.width / max(1, imageSize.width), inset.height / max(1, imageSize.height))
-                    image.draw(in: NSRect(x: inset.midX - imageSize.width * fit / 2, y: inset.midY - imageSize.height * fit / 2, width: imageSize.width * fit, height: imageSize.height * fit))
-                } else {
-                    let text = NSAttributedString(string: profile.initials, attributes: [.font: NSFont.systemFont(ofSize: dimension * 0.34, weight: .semibold), .foregroundColor: NSColor.white])
-                    let bounds = text.size()
-                    text.draw(at: NSPoint(x: (dimension - bounds.width) / 2, y: (dimension - bounds.height) / 2))
-                }
+                NativeProfileArtwork.draw(profile: profile, image: image, vendor: vendor, dimension: CGFloat(pixels))
                 NSGraphicsContext.restoreGraphicsState()
                 guard let png = bitmap.representation(using: .png, properties: [:]) else { throw CocoaError(.fileWriteUnknown) }
                 try png.write(to: iconset.appendingPathComponent("icon_\(size)x\(size)\(scale == 2 ? "@2x" : "").png"))
@@ -101,13 +86,15 @@ enum NativeDockApp {
     var nativeDockDirectory: URL { home.appendingPathComponent("Applications/ProfileDock Dock Apps") }
 
     func nativeDockURL(for profile: Profile) -> URL? {
-        guard let path = profile.dockApplicationPath else { return nil }
+        guard Profile.validID(profile.id), let path = profile.dockApplicationPath else { return nil }
         let app = URL(fileURLWithPath: path).standardizedFileURL
         let expected = nativeDockDirectory.appendingPathComponent(profile.id).appendingPathComponent("ChatGPT.app").standardizedFileURL
         guard app.path == expected.path, app.resolvingSymlinksInPath().path == expected.path,
               let info = try? NativeDockApp.info(app),
               info[NativeDock.profileKey] as? String == profile.id,
               info[NativeDock.homeKey] as? String == profile.home(in: home).path,
+              let data = info[NativeDock.dataKey] as? String,
+              (profile.id == "default" ? ["Library/Application Support/Codex", "Library/Application Support/ChatGPT"].map { home.appendingPathComponent($0).path } : [profile.home(in: home).appendingPathComponent("electron-user-data").path]).contains(data),
               info["CFBundleIdentifier"] as? String == NativeDock.identifier(profile) else { return nil }
         return app
     }
@@ -119,6 +106,9 @@ enum NativeDockApp {
             || info["CFBundleDisplayName"] as? String != "ChatGPT \(profile.name)"
             || info["ProfileDockNativeColor"] as? String != profile.color
             || info["ProfileDockNativeImage"] as? String != (profile.iconFilename ?? "")
+            || info["ProfileDockNativeIconText"] as? String != profile.dockLetters
+            || info["ProfileDockNativeIconStyle"] as? String != (profile.dockIconStyle ?? .initials).rawValue
+            || info[NativeDock.sourceKey] as? String != source.path
     }
 
     func setNativeDockIcon(for requested: Profile, enabled: Bool, launchingPID: pid_t? = nil) async throws {
@@ -173,7 +163,7 @@ enum NativeDockApp {
         guard let shim = candidates.compactMap({ $0 }).first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) else {
             throw AppOperationError.message("The profile helper is missing. Rebuild or reinstall ProfileDock.")
         }
-        let icon = try NativeDockApp.icon(profile: profile, image: image(for: profile))
+        let icon = try NativeDockApp.icon(profile: profile, image: image(for: profile), vendor: NSWorkspace.shared.icon(forFile: source.path))
         let data: URL
         if let existing = nativeDockURL(for: profile), let info = try? NativeDockApp.info(existing), let path = info[NativeDock.dataKey] as? String { data = URL(fileURLWithPath: path) }
         else if profile.id == "default" {

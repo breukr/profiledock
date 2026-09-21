@@ -4,7 +4,7 @@ import Carbon
 import DockCore
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate, NSMenuItemValidation {
     let model: DockModel
     let previewMode = CommandLine.arguments.contains("--preview") || Bundle.main.object(forInfoDictionaryKey: "ProfileDockContextPreview") as? Bool == true
     let usage = UsageStore()
@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     let iconAppearance = AppIconController()
     var status: NSStatusItem!
     var settingsWindow: NSWindow?
+    private var settingsOpen = false
     var hotKeys: [EventHotKeyRef] = []
     var eventHandler: EventHandlerRef?
     private var globalMouseMonitor: Any?
@@ -29,7 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if CommandLine.arguments.contains("--preview") || contextPreview {
             let arguments = CommandLine.arguments
             let supplied = arguments.firstIndex(of: "--preview-home").flatMap { $0 + 1 < arguments.count ? URL(fileURLWithPath: arguments[$0 + 1]) : nil }
-            let directory = supplied ?? (contextPreview ? FileManager.default.homeDirectoryForCurrentUser : FileManager.default.temporaryDirectory.appendingPathComponent("profiledock-preview-" + UUID().uuidString))
+            let directory = supplied ?? FileManager.default.temporaryDirectory.appendingPathComponent("profiledock-preview-" + UUID().uuidString)
             try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             model = DockModel(home: directory)
         } else { model = DockModel() }
@@ -44,7 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             NSApp.terminate(nil)
             return
         }
-        NSApp.setActivationPolicy(model.preferences.showDockIcon == true ? .regular : .accessory)
+        applyVisibility()
         usage.configure(previewMode ? [] : model.preferences.profiles)
         insights.prepare(profiles: model.preferences.profiles, home: model.home)
         if !previewMode { usage.refreshAll() }
@@ -56,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         status.button?.target = self
         status.button?.action = #selector(statusClick)
         status.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        applyVisibility()
         configureMenu()
         iconAppearance.update(model.preferences.appIconAppearance ?? .auto)
         selfUpdates.mayUpdate = { [weak self] in self?.appUpdates.busy == false && self?.model.nativeDockOperations.isEmpty == true }
@@ -73,8 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             self.activity.configure(self.previewMode ? [] : self.model.preferences.profiles, running: Set(self.model.running.keys))
             if !self.previewMode, self.islands.first?.layout.placement != self.model.placement { self.cues.dismiss(); self.rebuildIslands() }
             else { self.islands.forEach { $0.updateLayout() } }
-            let policy: NSApplication.ActivationPolicy = self.model.preferences.showDockIcon == true ? .regular : .accessory
-            if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
+            self.applyVisibility()
             self.iconAppearance.update(self.model.preferences.appIconAppearance ?? .auto)
             self.configureMenu(); if !self.previewMode { self.registerHotKeys() }
         }
@@ -187,6 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         menu.addItem(.separator())
         menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",").target = self
         menu.addItem(withTitle: "Check ProfileDock for Updates…", action: #selector(checkProfileDockUpdates), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "ChatGPT / Codex Updates…", action: #selector(showUpdateSettings), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Open at Login", action: #selector(toggleLoginItem), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Support ProfileDock…", action: #selector(supportProfileDock), keyEquivalent: "").target = self
@@ -194,9 +196,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         menu.addItem(withTitle: "Quit ProfileDock", action: #selector(quit), keyEquivalent: "q").target = self
         statusMenu = menu
         let main = NSMenu()
-        let appMenu = NSMenuItem()
-        appMenu.submenu = menu.copy() as? NSMenu
+        let application = NSMenu(title: "ProfileDock")
+        application.addItem(withTitle: "About ProfileDock", action: #selector(about), keyEquivalent: "").target = self
+        application.addItem(.separator())
+        application.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",").target = self
+        application.addItem(withTitle: "Check ProfileDock for Updates…", action: #selector(checkProfileDockUpdates), keyEquivalent: "").target = self
+        application.addItem(withTitle: "ChatGPT / Codex Updates…", action: #selector(showUpdateSettings), keyEquivalent: "").target = self
+        application.addItem(withTitle: "Open at Login", action: #selector(toggleLoginItem), keyEquivalent: "").target = self
+        application.addItem(.separator())
+        application.addItem(withTitle: "Support ProfileDock…", action: #selector(supportProfileDock), keyEquivalent: "").target = self
+        application.addItem(withTitle: "Hide ProfileDock", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        application.addItem(withTitle: "Quit ProfileDock", action: #selector(quit), keyEquivalent: "q").target = self
+        application.delegate = self
+        let appMenu = NSMenuItem(title: "ProfileDock", action: nil, keyEquivalent: "")
+        appMenu.submenu = application
         main.addItem(appMenu)
+        let profilesItem = NSMenuItem(title: "Profiles", action: nil, keyEquivalent: "")
+        let profiles = NSMenu(title: "Profiles")
+        for item in menu.items where item.representedObject is String { if let copy = item.copy() as? NSMenuItem { profiles.addItem(copy) } }
+        profiles.delegate = self
+        profilesItem.submenu = profiles; main.addItem(profilesItem)
         let edit = NSMenu(title: "Edit")
         edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
         edit.addItem(.separator())
@@ -207,7 +226,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let editItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
         editItem.submenu = edit
         main.addItem(editItem)
+        let windowItem = NSMenuItem(title: "Window", action: nil, keyEquivalent: "")
+        let windows = NSMenu(title: "Window")
+        windows.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windows.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        windows.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windowItem.submenu = windows; main.addItem(windowItem)
+        NSApp.windowsMenu = windows
         NSApp.mainMenu = main
+    }
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(checkProfileDockUpdates) { return selfUpdates.canCheck && !appUpdates.busy && model.nativeDockOperations.isEmpty }
+        return true
+    }
+    @objc func about() { NSApp.orderFrontStandardAboutPanel(nil) }
+    @objc func showUpdateSettings() {
+        showSettings()
+        DispatchQueue.main.async { NotificationCenter.default.post(name: .profileDockShowUpdates, object: nil) }
+    }
+    private func applyVisibility() {
+        let policy = AppVisibility.activationPolicy(preferences: model.preferences, settingsOpen: settingsOpen)
+        if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
+        status?.isVisible = model.preferences.showMenuBarIcon != false
+    }
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window === settingsWindow else { return }
+        settingsOpen = false; applyVisibility()
     }
     @objc func checkProfileDockUpdates() { selfUpdates.check() }
     @objc func supportProfileDock() { NSWorkspace.shared.open(AppBrand.donation) }
@@ -233,9 +277,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             window.contentView = NSHostingView(rootView: SettingsView(model: model, loginItem: loginItem, activity: activity, updates: appUpdates, selfUpdates: selfUpdates, insights: insights, cues: cues, chooseImage: { [weak self, weak window] profile in self?.model.chooseImage(for: profile, window: window) }))
             window.minSize = NSSize(width: 760, height: 560)
             window.isReleasedWhenClosed = false
+            window.delegate = self
             window.center()
             settingsWindow = window
         }
+        settingsOpen = true
+        applyVisibility()
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
