@@ -84,17 +84,23 @@ struct ProfileSettingsSheet: View {
                             VStack(alignment: .leading, spacing: 12) {
                                 Toggle(isOn: Binding(get: { profile.dockApplicationPath != nil }, set: { enabled in if enabled { consent = true } else { native(false) } })) {
                                     HStack { Text("Native macOS Dock icon").font(.headline); Text("Experimental").font(.caption.weight(.medium)).padding(.horizontal, 7).padding(.vertical, 3).background(.orange.opacity(0.15), in: Capsule()) }
-                                }.toggleStyle(.switch).accessibilityLabel("Native macOS Dock icon, experimental").disabled(model.running[profileID]?.isEmpty == false || model.opening.contains(profileID))
+                                }.toggleStyle(.switch).accessibilityLabel("Native macOS Dock icon, experimental").disabled(model.nativeDockChangeBlocker(for: profile) != nil)
                                 Text("Give this profile its own running Dock icon and name. ProfileDock keeps the copy up to date automatically.").font(.callout).foregroundStyle(.secondary)
+                                if let reason = model.nativeDockChangeBlocker(for: profile) {
+                                    Label(reason, systemImage: "info.circle").font(.callout).foregroundStyle(.secondary)
+                                } else if model.nativeDockAwaitsRelaunch(profile) {
+                                    Label("Ready for your next launch. Your current window keeps its original icon until you quit and reopen this profile.", systemImage: "checkmark.circle").font(.callout).foregroundStyle(.secondary)
+                                } else if model.running[profileID]?.isEmpty == false {
+                                    Text("You can enable this while working. ProfileDock prepares the copy now; the new icon appears after you quit and reopen this profile.").font(.callout).foregroundStyle(.secondary)
+                                }
                                 DisclosureGroup("Why experimental?") { Text(NativeDockDisclosure.text).font(.caption).foregroundStyle(.secondary).padding(.top, 6) }
                                 if profile.dockApplicationPath != nil {
                                     HStack {
                                         if let app = model.nativeDockURL(for: profile) { Button("Show Dock app") { NSWorkspace.shared.activateFileViewerSelecting([app]) } }
-                                        Button("Repair copy") { native(true) }.disabled(model.running[profileID]?.isEmpty == false)
+                                        Button("Repair copy") { native(true) }.disabled(model.nativeDockChangeBlocker(for: profile) != nil)
                                     }
                                     Text("Drag the app from Finder to the Dock to pin it.").font(.caption).foregroundStyle(.secondary)
                                 }
-                                if model.running[profileID]?.isEmpty == false { Text("Close this profile before changing its app or Dock mode.").font(.caption).foregroundStyle(.secondary) }
                             }.padding(10)
                         }
                         GroupBox {
@@ -131,7 +137,7 @@ struct ProfileSettingsSheet: View {
             .alert("Enable experimental native Dock icon?", isPresented: $consent) {
                 Button("Cancel", role: .cancel) {}
                 Button("Enable") { native(true) }
-            } message: { Text(NativeDockDisclosure.text) }
+            } message: { Text(NativeDockDisclosure.text + "\n\nAny open profile keeps running. Its new Dock icon takes effect after you quit and reopen it.") }
     }
 
     private func edit(_ change: (inout Profile) -> Void) {

@@ -111,13 +111,34 @@ enum NativeDockApp {
             || info[NativeDock.sourceKey] as? String != source.path
     }
 
+    /// Preparing a different bundle is safe while the signed source is running.
+    /// Replacing or removing the bundle that owns a live process is not.
+    func nativeDockChangeBlocker(for profile: Profile, launchingPID: pid_t? = nil, ownPreparation: Bool = false) -> String? {
+        if opening.contains(profile.id) { return "Wait for this profile to finish opening." }
+        if !ownPreparation, nativeDockOperations.contains(profile.id) { return "This profile’s Dock app is being prepared." }
+        if !updatingApplications.isEmpty { return "Wait for the app update to finish." }
+        if unreadableProcesses { return "ProfileDock could not check all running apps. Try again when they finish opening." }
+        let source = applicationURL(for: profile)?.resolvingSymlinksInPath().standardizedFileURL
+        let copy = URL(fileURLWithPath: profile.dockApplicationPath ?? nativeDockDirectory.appendingPathComponent(profile.id).appendingPathComponent("ChatGPT.app").path).resolvingSymlinksInPath().standardizedFileURL
+        let unsafe = (running[profile.id] ?? []).contains { app in
+            if app.processIdentifier == launchingPID { return false }
+            guard let url = app.bundleURL?.resolvingSymlinksInPath().standardizedFileURL else { return true }
+            return url == copy || url != source || app.bundleIdentifier?.hasPrefix(NativeDock.prefix) == true
+        }
+        return unsafe ? "Quit this profile’s Dock app before changing its Dock mode. Finish any active tasks first." : nil
+    }
+
+    func nativeDockAwaitsRelaunch(_ profile: Profile) -> Bool {
+        profile.dockApplicationPath != nil && running[profile.id]?.isEmpty == false
+            && nativeDockChangeBlocker(for: profile) == nil
+    }
+
     func setNativeDockIcon(for requested: Profile, enabled: Bool, launchingPID: pid_t? = nil) async throws {
         refresh()
-        guard let profile = preferences.profiles.first(where: { $0.id == requested.id }),
-              (running[profile.id] ?? []).allSatisfy({ $0.processIdentifier == launchingPID }), !opening.contains(profile.id), !nativeDockOperations.contains(profile.id),
-              !unreadableProcesses, updatingApplications.isEmpty else {
-            throw AppOperationError.message("Close this profile and wait for other app operations to finish first.")
+        guard let profile = preferences.profiles.first(where: { $0.id == requested.id }) else {
+            throw AppOperationError.message("This profile is no longer available.")
         }
+        if let reason = nativeDockChangeBlocker(for: profile, launchingPID: launchingPID) { throw AppOperationError.message(reason) }
         nativeDockOperations.insert(profile.id)
         defer { nativeDockOperations.remove(profile.id) }
         let parent = nativeDockDirectory.appendingPathComponent(profile.id)
@@ -146,9 +167,9 @@ enum NativeDockApp {
         try await prepareNativeDockCopy(profile: profile, source: source, sourceIdentity: source, destination: prepared)
         // A Finder/Dock click may have launched a profile while the copy was building.
         refresh()
-        guard (running[profile.id] ?? []).allSatisfy({ $0.processIdentifier == launchingPID }), !unreadableProcesses,
+        guard nativeDockChangeBlocker(for: profile, launchingPID: launchingPID, ownPreparation: true) == nil,
               preferences.profiles.first(where: { $0.id == profile.id }) == profile else {
-            throw AppOperationError.message("This profile changed or opened while building. Close it and try again.")
+            throw AppOperationError.message("This profile changed or its Dock app opened while building. Close the Dock app and try again.")
         }
         if exists { try AppReplacement.swap(prepared: prepared, destination: destination) }
         else { try FileManager.default.moveItem(at: prepared, to: destination) }
