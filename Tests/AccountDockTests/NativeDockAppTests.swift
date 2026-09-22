@@ -217,6 +217,31 @@ final class NativeDockAppTests: XCTestCase {
         XCTAssertTrue(app.isTerminated)
     }
 
+    @MainActor func testOlderArtworkIsRebuiltEvenWhenSourceAndProfileAreUnchanged() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = DockModel(home: root)
+        let source = root.appendingPathComponent("Source.app")
+        let app = model.nativeDockDirectory.appendingPathComponent("work/ChatGPT.app")
+        for bundle in [source, app] {
+            try FileManager.default.createDirectory(at: bundle.appendingPathComponent("Contents"), withIntermediateDirectories: true)
+        }
+        let vendor = ["CFBundleExecutable": "ChatGPT", "CFBundleVersion": "1", "CFBundleIdentifier": "com.openai.codex"]
+        try PropertyListSerialization.data(fromPropertyList: vendor, format: .xml, options: 0)
+            .write(to: source.appendingPathComponent("Contents/Info.plist"))
+        var profile = Profile(id: "work", name: "Work", color: "377CF6", applicationPath: source.path)
+        profile.dockApplicationPath = app.path
+        var info = try NativeDock.patchedInfo(vendor, profile: profile, home: root,
+                                             data: profile.home(in: root).appendingPathComponent("electron-user-data"))
+        info[NativeDock.sourceKey] = source.path
+        for version in [nil, 1, NativeDock.artworkVersion] as [Int?] {
+            info[NativeDock.artworkVersionKey] = version
+            try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+                .write(to: app.appendingPathComponent("Contents/Info.plist"))
+            XCTAssertEqual(model.nativeDockNeedsRebuild(profile), version != NativeDock.artworkVersion)
+        }
+    }
+
     @MainActor func testNativePathMustBeOwnedAndBoundToTheExpectedProfile() throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)

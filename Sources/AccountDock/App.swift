@@ -185,7 +185,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             item.keyEquivalentModifierMask = [.command, .option]
             item.representedObject = profile.id
             item.target = self
-            let artwork = model.image(for: profile) ?? NativeProfileArtwork.preview(profile: profile, image: nil, vendor: nil)
+            let image = model.image(for: profile)
+            var menuProfile = profile
+            if image != nil { menuProfile.dockIconStyle = .image }
+            let artwork = NativeProfileArtwork.preview(profile: menuProfile, image: image, vendor: nil)
             item.image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
                 artwork.draw(in: rect)
                 return true
@@ -247,7 +250,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         NSApp.windowsMenu = windows
         let help = NSMenu(title: "Help")
         help.addItem(withTitle: "ProfileDock Help", action: #selector(showHelp), keyEquivalent: "?").target = self
-        help.addItem(withTitle: "About & Support…", action: #selector(showSupport), keyEquivalent: "").target = self
+        help.addItem(withTitle: "Support ProfileDock…", action: #selector(showSupport), keyEquivalent: "").target = self
+        help.addItem(withTitle: "About ProfileDock…", action: #selector(about), keyEquivalent: "").target = self
         let helpItem = NSMenuItem(title: "Help", action: nil, keyEquivalent: "")
         helpItem.submenu = help; main.addItem(helpItem)
         NSApp.helpMenu = help
@@ -257,7 +261,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if menuItem.action == #selector(checkProfileDockUpdates) { return selfUpdates.canCheck && !appUpdates.busy && model.nativeDockOperations.isEmpty }
         return true
     }
-    @objc func about() { NSApp.orderFrontStandardAboutPanel(nil) }
+    @objc func about() { showDestination(.profileDockShowAbout) }
     private func showDestination(_ notification: Notification.Name) {
         showSettings()
         DispatchQueue.main.async { NotificationCenter.default.post(name: notification, object: nil) }

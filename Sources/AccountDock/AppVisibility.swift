@@ -14,5 +14,6 @@ extension Notification.Name {
     static let profileDockShowSearch = Notification.Name("nl.breukr.profiledock.show-search")
     static let profileDockAddProfile = Notification.Name("nl.breukr.profiledock.add-profile")
     static let profileDockShowSupport = Notification.Name("nl.breukr.profiledock.show-support")
+    static let profileDockShowAbout = Notification.Name("nl.breukr.profiledock.show-about")
     static let profileDockShowUpdates = Notification.Name("nl.breukr.profiledock.show-updates")
 }

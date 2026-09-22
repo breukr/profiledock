@@ -56,7 +56,7 @@ struct ProfileBadge: View {
             Group {
                 if let image = model.image(for: profile) {
                     RoundedRectangle(cornerRadius: size * 0.26).fill(.white)
-                        .overlay { Image(nsImage: image).resizable().scaledToFit().padding(profile.iconIsTile == true ? 0 : size * 0.09) }
+                        .overlay { Image(nsImage: image).resizable().scaledToFill().frame(width: size, height: size) }
                 } else {
                     RoundedRectangle(cornerRadius: size * 0.26).fill(Color(nsColor: NSColor(hex: profile.color)).gradient)
                         .overlay { Text(profile.initials).font(.system(size: size * 0.41, weight: .semibold, design: .rounded)).foregroundStyle(.white).shadow(color: .black.opacity(0.25), radius: 2, y: 1) }

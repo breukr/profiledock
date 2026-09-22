@@ -86,7 +86,7 @@ Activity covers local Work/Codex tasks. Profiles are not a security boundary, an
 
 If ProfileDock helps, [make a one-time donation](https://github.com/sponsors/breukr?frequency=one-time) or [sponsor development monthly](https://github.com/sponsors/breukr). Choose any amount on GitHub Sponsors. Contributions help fund maintenance, bug fixes, and improvements. Every feature stays free and open source.
 
-Choose **About & Support** in the sidebar, or **Help → About & Support…**, for one-time and monthly contributions.
+Choose **Support** with the pink heart in the sidebar, or **Help → Support ProfileDock…**, for one-time and monthly contributions. **About**, the last sidebar item, contains the version, guide and feedback links.
 
 You can also **[give it a star](https://github.com/breukr/profiledock)**, share it, or [contribute](CONTRIBUTING.md).
 

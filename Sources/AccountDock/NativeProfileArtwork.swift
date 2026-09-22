@@ -27,7 +27,7 @@ import DockCore
             color.setFill(); shape.fill()
             if let image {
                 NSGraphicsContext.saveGraphicsState(); shape.addClip()
-                fit(image, in: tile.insetBy(dx: d * 0.04, dy: d * 0.04))
+                fill(image, in: tile)
                 NSGraphicsContext.restoreGraphicsState()
             } else { initials(profile, dimension: d, color: .white) }
         case .chatgpt:
@@ -41,6 +41,13 @@ import DockCore
 
     private static func fit(_ image: NSImage, in rect: NSRect) {
         let factor = min(rect.width / max(1, image.size.width), rect.height / max(1, image.size.height))
+        let size = NSSize(width: image.size.width * factor, height: image.size.height * factor)
+        image.draw(in: NSRect(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2, width: size.width, height: size.height))
+    }
+
+    /// Crop from the center, preserving the image's proportions and the native outer margin.
+    private static func fill(_ image: NSImage, in rect: NSRect) {
+        let factor = max(rect.width / max(1, image.size.width), rect.height / max(1, image.size.height))
         let size = NSSize(width: image.size.width * factor, height: image.size.height * factor)
         image.draw(in: NSRect(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2, width: size.width, height: size.height))
     }

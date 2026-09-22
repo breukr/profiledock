@@ -16,14 +16,24 @@ final class SettingsRenderingTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: home) }
         let model = DockModel(home: home), activity = ActivityMonitor(home: home)
         defer { activity.shutdown() }
-        let profiles = [Profile(id: "profile-personal", name: "Personal", color: "377CF6"),
+        var profiles = [Profile(id: "profile-personal", name: "Personal", color: "377CF6"),
                         Profile(id: "profile-work", name: "Work", color: "D77620"),
                         Profile(id: "profile-research", name: "Research", color: "009B87"),
                         Profile(id: "profile-writing", name: "Writing & Planning", color: "955CE5"),
                         Profile(id: "profile-long", name: "A longer profile name for layout", color: "CA528B")]
         for profile in profiles { try FileManager.default.createDirectory(at: profile.home(in: home), withIntermediateDirectories: true) }
+        profiles[3].dockIconStyle = .image
         model.preferences.profiles = profiles
         model.save()
+        let source = NSImage(size: NSSize(width: 160, height: 160), flipped: false) { bounds in
+            NSColor.white.setFill(); bounds.fill()
+            NSColor.systemBlue.setFill(); NSBezierPath(ovalIn: bounds.insetBy(dx: 32, dy: 32)).fill()
+            return true
+        }
+        let fixture = home.appendingPathComponent("square-icon.tiff")
+        try XCTUnwrap(source.tiffRepresentation).write(to: fixture)
+        try model.importImage(from: fixture, for: profiles[3])
+        profiles = model.preferences.profiles
         for scheme in [ColorScheme.dark, .light] {
             for size in [CGSize(width: 760, height: 560), CGSize(width: 920, height: 700), CGSize(width: 1280, height: 800)] {
                 for destination in SettingsDestination.allCases {

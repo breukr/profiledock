@@ -10,6 +10,8 @@ ProfileDock can create a local ChatGPT app for each profile, with its own name a
 
 Choose a colored dot on the installed app icon, initials or up to three custom letters, a custom image, or the ChatGPT logo on a colored background. Use the color picker or enter a six-digit hex code. Icon changes are independent of the shared/separate installation choice.
 
+Custom images fill the rounded icon surface without an inset colored border. Wide and tall images are cropped from the center, preserving their proportions. The preview and exported Dock icon use the same artwork. Existing copies using an older artwork format refresh when next opened through ProfileDock, once their running app has been closed.
+
 ## Tradeoffs
 
 The generated copy is signed locally, rather than by OpenAI. Its vendor-only entitlements are removed and library validation is disabled. Some integrations, permissions or sign-in flows may behave differently. It is an experimental option, and it is not equivalent to the original signed and notarized app.

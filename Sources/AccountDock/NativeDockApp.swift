@@ -103,6 +103,7 @@ enum NativeDockApp {
         guard let app = nativeDockURL(for: profile), let info = try? NativeDockApp.info(app),
               let source = applicationURL(for: profile), let vendor = try? NativeDockApp.info(source) else { return true }
         return info[NativeDock.versionKey] as? String != vendor["CFBundleVersion"] as? String
+            || info[NativeDock.artworkVersionKey] as? Int != NativeDock.artworkVersion
             || info["CFBundleDisplayName"] as? String != "ChatGPT \(profile.name)"
             || info["ProfileDockNativeColor"] as? String != profile.color
             || info["ProfileDockNativeImage"] as? String != (profile.iconFilename ?? "")

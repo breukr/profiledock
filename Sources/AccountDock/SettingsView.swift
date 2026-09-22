@@ -56,6 +56,7 @@ struct SettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .profileDockShowProfiles)) { _ in navigate(.profiles) }
         .onReceive(NotificationCenter.default.publisher(for: .profileDockShowSearch)) { _ in navigate(.search) }
         .onReceive(NotificationCenter.default.publisher(for: .profileDockShowSupport)) { _ in navigate(.support) }
+        .onReceive(NotificationCenter.default.publisher(for: .profileDockShowAbout)) { _ in navigate(.about) }
         .onReceive(NotificationCenter.default.publisher(for: .profileDockAddProfile)) { _ in navigate(.profiles); adding = true }
         .sheet(isPresented: $adding) { AddProfileSheet(model: model) }
         .sheet(item: $editing) { profile in
@@ -83,7 +84,7 @@ struct SettingsView: View {
 
     }
 
-    private var pageWidth: CGFloat { destination == .insights || destination == .search ? 1100 : 760 }
+    private let pageWidth: CGFloat = 760
     private var isEmptyPage: Bool {
         model.preferences.profiles.isEmpty && [.profiles, .search, .insights, .icons, .access].contains(destination)
     }
@@ -143,6 +144,7 @@ struct SettingsView: View {
         case .icons: profileIconSettings
         case .access: ContextSettingsView(model: model, mode: .access)
         case .support: support
+        case .about: about
         }
     }
 
@@ -176,7 +178,7 @@ struct SettingsView: View {
             HStack(spacing: 9) {
                 BrandMark(size: 21)
                 Text("ProfileDock").font(.system(size: 15, weight: .semibold))
-            }.padding(.horizontal, 18).padding(.top, 20).padding(.bottom, 16)
+            }.padding(.horizontal, 18).padding(.top, 16).padding(.bottom, 12)
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("Find a setting", text: $navigationQuery).textFieldStyle(.plain)
@@ -192,11 +194,11 @@ struct SettingsView: View {
             List(selection: $section) {
                 sidebarGroup("Workspace", items: SettingsDestination.workspace)
                 sidebarGroup("Settings", items: SettingsDestination.settings)
-                sidebarGroup("Help", items: [.support])
+                sidebarGroup("", items: [.support, .about])
                 if !SettingsDestination.allCases.contains(where: { $0.matches(navigationQuery) }) {
                     Text("No matching settings").font(.caption).foregroundStyle(.secondary)
                 }
-            }.listStyle(.sidebar)
+            }.listStyle(.sidebar).environment(\.defaultMinListRowHeight, 26)
             Divider().padding(.horizontal, 16)
             Text("Version " + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development"))
                 .font(.caption).foregroundStyle(.secondary).padding(16)
@@ -214,7 +216,8 @@ struct SettingsView: View {
                         Text(item.rawValue).font(.system(size: 13)).lineLimit(1)
                     } icon: {
                         Image(systemName: item.symbol).font(.system(size: 14)).frame(width: 22)
-                    }.padding(.vertical, 3).tag(item)
+                            .foregroundStyle(item == .support ? Color.pink : Color.accentColor)
+                    }.padding(.vertical, 1).tag(item)
                 }
             }
         }
@@ -557,6 +560,41 @@ struct SettingsView: View {
     }
 
     private var support: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            SettingsCard {
+                VStack(spacing: 16) {
+                    Image(systemName: "heart.fill").font(.system(size: 34))
+                        .foregroundStyle(.pink).frame(width: 72, height: 72)
+                        .background(.pink.opacity(0.1), in: RoundedRectangle(cornerRadius: 18))
+                        .accessibilityHidden(true)
+                    VStack(spacing: 8) {
+                        Text("Support ProfileDock").font(.title2.weight(.semibold))
+                        Text("If ProfileDock makes your day a little easier, you can help support its development.")
+                            .foregroundStyle(.secondary).multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Every feature stays free. Contributions are always optional.")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                    }.frame(maxWidth: 400)
+                }.padding(28).frame(maxWidth: .infinity)
+            }
+            SettingsCard {
+                VStack(spacing: 0) {
+                    SettingsRow(title: "One-time donation", detail: "A small thank-you, whenever you like.") {
+                        Link("Donate Once", destination: AppBrand.donation).buttonStyle(.bordered)
+                    }
+                    Divider().padding(.leading, 16)
+                    SettingsRow(title: "Monthly sponsorship", detail: "Help fund continued improvements.") {
+                        Link("Sponsor Monthly", destination: AppBrand.sponsors).buttonStyle(.bordered)
+                    }
+                }
+            }
+            Text("Donations and sponsorships open on GitHub Sponsors.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private var about: some View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsCard {
                 HStack(spacing: 18) {
@@ -575,15 +613,6 @@ struct SettingsView: View {
                     Link("Report an Issue", destination: AppBrand.repository.appendingPathComponent("issues/new/choose"))
                     Link("View on GitHub", destination: AppBrand.repository)
                     Link("Privacy & Security", destination: AppBrand.repository.appendingPathComponent("blob/main/PRIVACY.md"))
-                }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
-            }
-            GroupBox("Support Development") {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Contributions help keep ProfileDock moving. Every feature stays free.").foregroundStyle(.secondary)
-                    HStack {
-                        Link("Donate Once", destination: AppBrand.donation).buttonStyle(.bordered)
-                        Link("Sponsor Monthly", destination: AppBrand.sponsors).buttonStyle(.bordered)
-                    }
                 }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
             }
             Text("An independent companion for ChatGPT and Codex. Not affiliated with OpenAI.").font(.caption).foregroundStyle(.secondary)
