@@ -180,12 +180,7 @@ struct IslandView: View {
             }
             if model.preferences.profiles.isEmpty { Button("Add your first profile", action: settings).buttonStyle(.borderedProminent) }
             InsightsDrawer(model: model, store: insights, presentation: presentation)
-            if let message = model.message {
-                HStack(alignment: .top) {
-                    Text(message).font(.system(size: 11)).fixedSize(horizontal: false, vertical: true).lineLimit(3)
-                    Button { model.message = nil } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.plain)
-                }.foregroundStyle(.orange)
-            }
+            ProfileMessageNotice(model: model, compact: true)
         }
         }
         .scrollIndicators(.never)

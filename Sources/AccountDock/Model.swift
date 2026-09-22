@@ -27,6 +27,11 @@ struct Preferences: Codable {
     var expandedWidth: Double?
 }
 
+struct ProfileMessageRecovery: Equatable {
+    let profileID: String
+    let title: String
+}
+
 @MainActor
 final class DockModel: ObservableObject {
     @Published var preferences = Preferences()
@@ -42,7 +47,14 @@ final class DockModel: ObservableObject {
     @Published var activeProfile: String?
     @Published var opening: Set<String> = []
     @Published var closing: Set<String> = []
-    @Published var message: String?
+    @Published var message: String? {
+        didSet {
+            messageRecovery = nil
+            messageID = UUID()
+        }
+    }
+    @Published private(set) var messageRecovery: ProfileMessageRecovery?
+    private(set) var messageID = UUID()
     @Published var unreadableProcesses = false
     @Published var updatingApplications: Set<String> = []
     @Published var nativeDockOperations: Set<String> = []
@@ -204,6 +216,31 @@ final class DockModel: ObservableObject {
         }
     }
 
+    func showProfileMessage(_ text: String, for profile: Profile, actionTitle: String = "Try Again") {
+        message = text
+        messageRecovery = ProfileMessageRecovery(profileID: profile.id, title: actionTitle)
+    }
+
+    func retryMessage(selectProfile: ((Profile) -> Void)? = nil) {
+        let recovery = messageRecovery
+        message = nil
+        // Resolve the current profile by identity: reordering, renaming or removing an
+        // account must never make a recovery button open a different account.
+        guard let recovery, let profile = preferences.profiles.first(where: { $0.id == recovery.profileID }) else { return }
+        if let selectProfile { selectProfile(profile) }
+        else { select(profile) }
+    }
+
+    func completeActivation(of profile: Profile, attemptID: UUID, accepted: Bool, reopened: Bool, isActive: Bool) {
+        // A delayed result must not replace a newer message or another profile action.
+        guard messageID == attemptID else { return }
+        if !reopened {
+            showProfileMessage("Couldn’t reopen the window for \(profile.name).", for: profile)
+        } else if !accepted && !isActive {
+            showProfileMessage("Couldn’t bring \(profile.name) to the front.", for: profile)
+        }
+    }
+
     func requestQuit(_ profile: Profile) {
         refresh()
         guard !closing.contains(profile.id), let apps = running[profile.id], !apps.isEmpty else { return }
@@ -213,20 +250,20 @@ final class DockModel: ObservableObject {
         let accepted = apps.map { $0.terminate() }.allSatisfy { $0 }
         if !accepted {
             closing.remove(profile.id)
-            message = "\(profile.name) could not close. Check the ChatGPT window."
+            showProfileMessage("\(profile.name) could not close. Check its ChatGPT window for a confirmation.", for: profile, actionTitle: "Show Window")
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
             guard let self else { return }
             self.refresh()
             if self.closing.remove(profile.id) != nil {
-                self.message = "\(profile.name) staat nog open. ChatGPT waiting mogelijk op een bevestiging in het venster."
+                self.showProfileMessage("\(profile.name) is still open. ChatGPT may be waiting for a confirmation.", for: profile, actionTitle: "Show Window")
             }
         }
     }
 
     func select(_ profile: Profile) {
         guard !nativeDockOperations.contains(profile.id) else {
-            message = "This profile's Dock app is being built. Try again when it finishes."
+            showProfileMessage("This profile’s Dock app is still being prepared. Wait for it to finish, then try again.", for: profile)
             return
         }
         if let app = applicationURL(for: profile), updatingApplications.contains(app.resolvingSymlinksInPath().standardizedFileURL.path) {
@@ -237,15 +274,22 @@ final class DockModel: ObservableObject {
         refresh()
         if let apps = running[profile.id], !apps.isEmpty {
             let app = apps.first(where: \.isActive) ?? apps.sorted(by: { ($0.launchDate ?? .distantPast) > ($1.launchDate ?? .distantPast) }).first!
+            message = nil
+            let attemptID = messageID
             app.unhide()
             let accepted = app.activate(options: [.activateAllWindows])
-            message = accepted ? nil : "macOS could not bring \(profile.name) to the front. Try again."
+            let reopened: Bool
             do {
                 try ApplicationReopen.send(processIdentifier: app.processIdentifier)
+                reopened = true
             } catch {
-                message = "macOS could not reopen \(profile.name)'s window. Try again."
+                reopened = false
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in self?.refresh() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                guard let self else { return }
+                self.refresh()
+                self.completeActivation(of: profile, attemptID: attemptID, accepted: accepted, reopened: reopened, isActive: app.isActive)
+            }
             return
         }
         guard !opening.contains(profile.id) else { return }
@@ -254,12 +298,12 @@ final class DockModel: ObservableObject {
                 do {
                     try await setNativeDockIcon(for: profile, enabled: true)
                     if let updated = preferences.profiles.first(where: { $0.id == profile.id }) { select(updated) }
-                } catch { message = "Could not update this profile's Dock app: \(error.localizedDescription)" }
+                } catch { showProfileMessage("Could not update this profile’s Dock app: \(error.localizedDescription)", for: profile) }
             }
             return
         }
         guard !unreadableProcesses else {
-            message = "A running ChatGPT profile is not yet identifiable. Try again once it finishes starting."
+            showProfileMessage("A ChatGPT profile is still starting. Wait for its window to appear, then try again.", for: profile)
             return
         }
         guard let appURL = applicationURL(for: profile),
@@ -293,7 +337,8 @@ final class DockModel: ObservableObject {
                 self.launches.removeValue(forKey: profile.id)
                 if process.terminationStatus != 0 {
                     self.opening.remove(profile.id)
-                    self.message = String(data: output, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Could not open the app."
+                    let detail = String(data: output, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    self.showProfileMessage(detail.isEmpty ? "Could not open \(profile.name)." : detail, for: profile)
                 }
                 self.refresh()
             }
@@ -304,12 +349,12 @@ final class DockModel: ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
                 guard let self, self.opening.contains(profile.id) else { return }
                 self.refresh()
-                if self.opening.remove(profile.id) != nil { self.message = "\(profile.name) has not appeared yet. Check the ChatGPT window before trying again." }
+                if self.opening.remove(profile.id) != nil { self.showProfileMessage("\(profile.name) has not appeared yet. Check its ChatGPT window before trying again.", for: profile) }
             }
         } catch {
             launches.removeValue(forKey: profile.id)
             opening.remove(profile.id)
-            message = error.localizedDescription
+            showProfileMessage("Could not open \(profile.name): \(error.localizedDescription)", for: profile)
         }
     }
 

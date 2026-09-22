@@ -180,14 +180,13 @@ struct ContextSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             if mode == .access {
-                Text("Choose which profiles can tag each other.").font(.headline)
                 Text("Permissions go in one direction. Pick the profile doing the asking, then choose whose earlier tasks it can retrieve.").foregroundStyle(.secondary)
             } else {
-                Text("Find a conversation without switching accounts.").font(.headline)
                 Text("Search your own profile and sources it may access. Local Work/Codex history only; web and mobile chats are not included.").foregroundStyle(.secondary)
             }
             if store.profiles.isEmpty {
                 ContentUnavailableView("Add a profile first", systemImage: "person.crop.rectangle.stack", description: Text("Your profiles will appear here when they are available in ProfileDock."))
+                    .frame(maxWidth: .infinity, minHeight: 220)
             } else {
                 HStack {
                     Picker(mode == .access ? "Profile that can tag" : "Search as", selection: Binding(get: { store.callerID }, set: { store.selectCaller($0, check: mode == .access) })) {
@@ -197,10 +196,11 @@ struct ContextSettingsView: View {
                     if mode == .search { Button("Manage access…", action: manageAccess) }
                 }
                 if mode == .access { accessControls } else { search }
-                if let error = store.error { Label(error, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.orange).textSelection(.enabled) }
+                if let error = store.error {
+                    SettingsNotice(text: error, symbol: "exclamationmark.triangle.fill", isWarning: true, dismiss: { store.error = nil })
+                }
             }
         }
-        .frame(maxWidth: 900, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
         .task {
             store.refresh()
@@ -249,7 +249,8 @@ struct ContextSettingsView: View {
                             Text(store.example).font(.callout).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                             Button("Copy example") { store.copy(store.example) }.buttonStyle(.link)
                         }
-                        Text("Type @ in your chat and select a profile from the skills suggestions. You can also write its name in your message. If new mentions do not appear, start a new task or restart that profile when its work is finished.").font(.caption).foregroundStyle(.secondary)
+                        Text("Type @ in your chat and select a profile from the skills suggestions. You can also write its name in your message. If new mentions do not appear, start a new task or restart that profile when its work is finished.")
+                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         if let status = store.status { Text(status).font(.callout).foregroundStyle(.secondary).accessibilityIdentifier("context-connection-status") }
                     }.padding(10)
                 }
@@ -308,6 +309,7 @@ struct ContextSettingsView: View {
                 coverage(result)
                 if result.hits.isEmpty {
                     ContentUnavailableView("No matching conversations", systemImage: "magnifyingglass", description: Text("Try fewer words, Any word, a wider date range, or another allowed profile. Some history may be unavailable; see search coverage above."))
+                        .frame(maxWidth: .infinity, minHeight: 220)
                 }
                 ForEach(conversations) { hit in
                     GroupBox {
@@ -334,8 +336,10 @@ struct ContextSettingsView: View {
                 }
             } else if store.sources.isEmpty {
                 ContentUnavailableView("Choose a profile to search", systemImage: "person.crop.circle", description: Text("Expand Search in profiles above and select your own profile or an allowed source."))
+                    .frame(maxWidth: .infinity, minHeight: 220)
             } else {
                 ContentUnavailableView("What are you looking for?", systemImage: "text.magnifyingglass", description: Text("Try a project name, a decision, or words you remember. Results show the original profile, conversation and date."))
+                    .frame(maxWidth: .infinity, minHeight: 220)
             }
         }
     }
@@ -393,7 +397,10 @@ struct ContextSettingsView: View {
                     }
                     if store.reading { ProgressView("Reading context…").controlSize(.small) }
                     if !store.reading, store.conversation?.nextCursor != nil { Button("Read more") { store.read(hit, next: true) } }
-                    if let error = store.readError { Text(error).foregroundStyle(.orange) }
+                    if let error = store.readError {
+                        SettingsNotice(text: error, symbol: "exclamationmark.triangle.fill", isWarning: true,
+                                       actionTitle: "Try Again", action: { store.read(hit, next: !store.messages.isEmpty) })
+                    }
                 }
             }
             .onChange(of: store.messages.count) { old, _ in

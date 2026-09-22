@@ -15,17 +15,17 @@ struct ProfileSettingsSheet: View {
     @State private var busy = false
     @State private var consent = false
     @State private var error: String?
+    @State private var failedWork: (@MainActor () async throws -> Void)?
     private var profile: Profile? { model.preferences.profiles.first { $0.id == profileID } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Profile settings").font(.title2.weight(.semibold))
-                    Text("Identity, app installation and context access.").foregroundStyle(.secondary)
+                    Text("Edit Profile").font(.system(size: 20, weight: .semibold))
+                    Text(profile?.name ?? "Profile settings").font(.callout).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
             }.padding(24)
             Divider()
             ScrollView {
@@ -39,9 +39,8 @@ struct ProfileSettingsSheet: View {
                                 Text("Your sign-in and conversation history belong to this profile.").font(.caption).foregroundStyle(.secondary)
                             }
                         }
-                        GroupBox {
+                        GroupBox("Icon Style") {
                             VStack(alignment: .leading, spacing: 14) {
-                                Label("Dock icon", systemImage: "app.badge").font(.headline)
                                 HStack(spacing: 8) {
                                     ForEach(DockIconStyle.allCases, id: \.self) { style in
                                         Button { edit { $0.dockIconStyle = style } } label: {
@@ -83,8 +82,9 @@ struct ProfileSettingsSheet: View {
                         GroupBox {
                             VStack(alignment: .leading, spacing: 12) {
                                 Toggle(isOn: Binding(get: { profile.dockApplicationPath != nil }, set: { enabled in if enabled { consent = true } else { native(false) } })) {
-                                    HStack { Text("Native macOS Dock icon").font(.headline); Text("Experimental").font(.caption.weight(.medium)).padding(.horizontal, 7).padding(.vertical, 3).background(.orange.opacity(0.15), in: Capsule()) }
-                                }.toggleStyle(.switch).accessibilityLabel("Native macOS Dock icon, experimental").disabled(model.nativeDockChangeBlocker(for: profile) != nil)
+                                    HStack { Text("Native macOS Dock icon").font(.system(size: 13, weight: .semibold)); Text("Experimental").font(.caption.weight(.medium)).padding(.horizontal, 7).padding(.vertical, 3).background(.orange.opacity(0.15), in: Capsule()) }
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }.toggleStyle(.switch).controlSize(.small).accessibilityLabel("Native macOS Dock icon, experimental").disabled(model.nativeDockChangeBlocker(for: profile) != nil)
                                 Text("Give this profile its own running Dock icon and name. ProfileDock keeps the copy up to date automatically.").font(.callout).foregroundStyle(.secondary)
                                 if let reason = model.nativeDockChangeBlocker(for: profile) {
                                     Label(reason, systemImage: "info.circle").font(.callout).foregroundStyle(.secondary)
@@ -103,9 +103,9 @@ struct ProfileSettingsSheet: View {
                                 }
                             }.padding(10)
                         }
-                        GroupBox {
+                        GroupBox("App Installation") {
+                            DisclosureGroup("Shared or separate app") {
                             VStack(alignment: .leading, spacing: 12) {
-                                Label("ChatGPT installation", systemImage: "shippingbox").font(.headline)
                                 Text(profile.applicationPath == nil ? "Shared installation" : "Separate installation").font(.subheadline.weight(.medium))
                                 Text(profile.applicationPath == nil ? (profile.dockApplicationPath == nil ? "This profile uses the same installed ChatGPT app as your other shared profiles. Each profile still has its own sign-in, chats and settings. The app updates once for the group." : "This profile’s Dock app is rebuilt from the shared, signed ChatGPT installation. Profiles using that source update together. Sign-ins, chats and settings stay separate.") : "This profile has its own ChatGPT installation, so you can update or restart it separately. Its account data is still separate. A copy uses more disk space; it does not add another account or subscription.").font(.callout).foregroundStyle(.secondary)
                                 Button(profile.applicationPath == nil ? "Create a separate installation…" : "Use shared installation & trash managed copy") {
@@ -115,12 +115,13 @@ struct ProfileSettingsSheet: View {
                                     }
                                 }.disabled(model.running[profileID]?.isEmpty == false || model.opening.contains(profileID))
                                 if let app = model.applicationURL(for: profile) { Text(app.path).font(.caption).foregroundStyle(.tertiary).textSelection(.enabled) }
+                            }.padding(.top, 12)
                             }.padding(10)
                         }
                         GroupBox {
                             HStack {
                                 VStack(alignment: .leading, spacing: 5) {
-                                    Label("Context tagging", systemImage: "at").font(.headline)
+                                    Text("Context access").font(.system(size: 13, weight: .semibold))
                                     Text("Choose which other profiles \(profile.name) can mention for earlier conversations.").font(.callout).foregroundStyle(.secondary)
                                 }
                                 Spacer()
@@ -128,11 +129,20 @@ struct ProfileSettingsSheet: View {
                             }.padding(10)
                         }
                         if busy { ProgressView("Preparing your profile…") }
-                        if let error { Text(error).foregroundStyle(.orange).font(.callout) }
+                        errorNotice
                     }.padding(24)
                 }
             }
-        }.frame(width: 630, height: 720).disabled(busy).interactiveDismissDisabled(busy)
+            Divider()
+            HStack {
+                Text("Changes save automatically").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("Done") { dismiss() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+            }.padding(.horizontal, 24).padding(.vertical, 16)
+        }.frame(width: 600, height: min(660, (NSScreen.main?.visibleFrame.height ?? 800) - 100))
+            .background(Color(nsColor: .windowBackgroundColor)).groupBoxStyle(SettingsGroupBoxStyle())
+            .disabled(busy).interactiveDismissDisabled(busy)
+            .onExitCommand { if !busy { dismiss() } }
             .onAppear { hex = profile?.color ?? "377CF6" }
             .alert("Enable experimental native Dock icon?", isPresented: $consent) {
                 Button("Cancel", role: .cancel) {}
@@ -143,6 +153,14 @@ struct ProfileSettingsSheet: View {
     private func edit(_ change: (inout Profile) -> Void) {
         guard var profile else { return }; change(&profile); model.update(profile)
     }
+    @ViewBuilder private var errorNotice: some View {
+        if let error {
+            SettingsNotice(text: error, symbol: "exclamationmark.triangle.fill", isWarning: true,
+                           actionTitle: failedWork == nil ? nil : "Try Again",
+                           action: { if let failedWork { perform(failedWork) } },
+                           dismiss: { self.error = nil; failedWork = nil })
+        }
+    }
     private func artwork(_ profile: Profile, style: DockIconStyle? = nil) -> NSImage {
         var value = profile; if let style { value.dockIconStyle = style }
         return NativeProfileArtwork.preview(profile: value, image: model.image(for: value), vendor: model.applicationURL(for: value).map { NSWorkspace.shared.icon(forFile: $0.path) })
@@ -152,7 +170,11 @@ struct ProfileSettingsSheet: View {
         perform { try await model.setNativeDockIcon(for: profile, enabled: enabled) }
     }
     private func perform(_ work: @escaping @MainActor () async throws -> Void) {
-        busy = true; error = nil
-        Task { defer { busy = false }; do { try await work() } catch { self.error = error.localizedDescription } }
+        busy = true; error = nil; failedWork = nil
+        Task {
+            defer { busy = false }
+            do { try await work() }
+            catch { self.error = error.localizedDescription; failedWork = work }
+        }
     }
 }
