@@ -62,6 +62,15 @@ final class SettingsRenderingTests: XCTestCase {
                 .environment(\.colorScheme, scheme)
             try await render(editor, size: CGSize(width: 600, height: 660), scheme: scheme,
                              to: directory.appendingPathComponent("profile-editor-\(scheme == .dark ? "dark" : "light").png"))
+            model.nativeDockOperations.insert(profiles[3].id)
+            model.nativeDockProgress[profiles[3].id] = .copying
+            try await render(editor, size: CGSize(width: 600, height: 660), scheme: scheme,
+                             to: directory.appendingPathComponent("profile-editor-busy-\(scheme == .dark ? "dark" : "light").png"))
+            model.nativeDockOperations = []; model.nativeDockProgress = [:]
+            let progress = NativeDockProgressView(stage: .signing).padding(20)
+                .frame(width: 500).background(Color(nsColor: .windowBackgroundColor)).environment(\.colorScheme, scheme)
+            try await render(progress, size: CGSize(width: 500, height: 120), scheme: scheme,
+                             to: directory.appendingPathComponent("dock-progress-\(scheme == .dark ? "dark" : "light").png"))
         }
     }
 

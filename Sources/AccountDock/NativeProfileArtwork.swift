@@ -2,40 +2,40 @@ import AppKit
 import DockCore
 
 @MainActor enum NativeProfileArtwork {
-    static func preview(profile: Profile, image: NSImage?, vendor: NSImage?, size: CGFloat = 96) -> NSImage {
+    static func preview(profile: Profile, image: NSImage?, vendor: NSImage?, size: CGFloat = 96, margin: CGFloat = 0.1) -> NSImage {
         let result = NSImage(size: NSSize(width: size, height: size))
         result.lockFocus()
-        draw(profile: profile, image: image, vendor: vendor, dimension: size)
+        draw(profile: profile, image: image, vendor: vendor, dimension: size, margin: margin)
         result.unlockFocus()
         return result
     }
 
-    static func draw(profile: Profile, image: NSImage?, vendor: NSImage?, dimension d: CGFloat) {
-        let tile = NSRect(x: d * 0.1, y: d * 0.1, width: d * 0.8, height: d * 0.8)
+    static func draw(profile: Profile, image: NSImage?, vendor: NSImage?, dimension d: CGFloat, margin: CGFloat = 0.1) {
+        let tile = NSRect(x: d * margin, y: d * margin, width: d * (1 - 2 * margin), height: d * (1 - 2 * margin))
         let color = NSColor(hex: profile.color)
-        let shape = NSBezierPath(roundedRect: tile, xRadius: d * 0.2, yRadius: d * 0.2)
-        switch profile.dockIconStyle ?? .initials {
+        let shape = NSBezierPath(roundedRect: tile, xRadius: tile.width * 0.25, yRadius: tile.width * 0.25)
+        switch profile.profileIconStyle {
         case .dot:
             if let vendor { vendor.draw(in: NSRect(x: 0, y: 0, width: d, height: d)) }
-            else { NSColor.white.setFill(); shape.fill(); initials(profile, dimension: d, color: .black) }
+            else { NSColor.white.setFill(); shape.fill(); initials(profile, in: tile, color: .black) }
             let dot = NSRect(x: d * 0.66, y: d * 0.08, width: d * 0.27, height: d * 0.27)
             NSColor.white.setFill(); NSBezierPath(ovalIn: dot.insetBy(dx: -d * 0.025, dy: -d * 0.025)).fill()
             color.setFill(); NSBezierPath(ovalIn: dot).fill()
         case .initials:
-            color.setFill(); shape.fill(); initials(profile, dimension: d, color: .white)
+            color.setFill(); shape.fill(); initials(profile, in: tile, color: .white)
         case .image:
             color.setFill(); shape.fill()
             if let image {
                 NSGraphicsContext.saveGraphicsState(); shape.addClip()
                 fill(image, in: tile)
                 NSGraphicsContext.restoreGraphicsState()
-            } else { initials(profile, dimension: d, color: .white) }
+            } else { initials(profile, in: tile, color: .white) }
         case .chatgpt:
             color.setFill(); shape.fill()
             // Extract the monochrome knot from the installed vendor artwork,
             // ignoring its outer tile. No redistributed third-party bitmap.
-            if let vendor, let mark = logoMask(vendor) { fit(mark, in: tile.insetBy(dx: d * 0.13, dy: d * 0.13)) }
-            else { initials(profile, dimension: d, color: .white) }
+            if let vendor, let mark = logoMask(vendor) { fit(mark, in: tile.insetBy(dx: tile.width * 0.1625, dy: tile.width * 0.1625)) }
+            else { initials(profile, in: tile, color: .white) }
         }
     }
 
@@ -52,9 +52,9 @@ import DockCore
         image.draw(in: NSRect(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2, width: size.width, height: size.height))
     }
 
-    private static func initials(_ profile: Profile, dimension d: CGFloat, color: NSColor) {
-        let text = NSAttributedString(string: profile.dockLetters, attributes: [.font: NSFont.systemFont(ofSize: d * 0.34, weight: .semibold), .foregroundColor: color])
-        text.draw(at: NSPoint(x: (d - text.size().width) / 2, y: (d - text.size().height) / 2))
+    private static func initials(_ profile: Profile, in tile: NSRect, color: NSColor) {
+        let text = NSAttributedString(string: profile.dockLetters, attributes: [.font: NSFont.systemFont(ofSize: tile.width * 0.425, weight: .semibold), .foregroundColor: color])
+        text.draw(at: NSPoint(x: tile.midX - text.size().width / 2, y: tile.midY - text.size().height / 2))
     }
 
     private static func logoMask(_ vendor: NSImage) -> NSImage? {

@@ -3,7 +3,7 @@ import SwiftUI
 import DockCore
 
 enum NativeDockDisclosure {
-    static let text = "ProfileDock creates a local ChatGPT copy with this profile's icon. It replaces OpenAI's signature, removes vendor-only permissions and disables library validation, so some macOS protections and integrations differ. You may need to sign in again. The copy’s own updater is disabled; ProfileDock rebuilds it from the updated original. Your original app and profile data are kept. You can disable this at any time."
+    static let text = "ProfileDock creates a local ChatGPT copy with this profile's icon. It replaces OpenAI's signature, removes vendor-only permissions and disables library validation, so some macOS protections and integrations differ. You may need to sign in again. The copy’s own updater is disabled; ProfileDock rebuilds it from the updated original. Your original app and profile data are kept. To switch back, quit this profile’s Dock app and disable the option. ProfileDock verifies the original app’s signature before removing the copy."
 }
 
 struct ProfileSettingsSheet: View {
@@ -17,6 +17,8 @@ struct ProfileSettingsSheet: View {
     @State private var error: String?
     @State private var failedWork: (@MainActor () async throws -> Void)?
     private var profile: Profile? { model.preferences.profiles.first { $0.id == profileID } }
+    private var nativeProgress: NativeDockStage? { model.nativeDockProgress[profileID] }
+    private var isBusy: Bool { busy || model.nativeDockOperations.contains(profileID) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -48,9 +50,9 @@ struct ProfileSettingsSheet: View {
                                                 Image(nsImage: artwork(profile, style: style)).resizable().frame(width: 52, height: 52)
                                                 Text(style.label).font(.caption)
                                             }.frame(maxWidth: .infinity).padding(.vertical, 9)
-                                                .background((profile.dockIconStyle ?? .initials) == style ? Color.accentColor.opacity(0.13) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
-                                                .overlay(RoundedRectangle(cornerRadius: 10).stroke((profile.dockIconStyle ?? .initials) == style ? Color.accentColor : Color.secondary.opacity(0.15)))
-                                        }.buttonStyle(.plain).accessibilityLabel("\(style.label) Dock icon").accessibilityAddTraits((profile.dockIconStyle ?? .initials) == style ? .isSelected : [])
+                                                .background(profile.profileIconStyle == style ? Color.accentColor.opacity(0.13) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
+                                                .overlay(RoundedRectangle(cornerRadius: 10).stroke(profile.profileIconStyle == style ? Color.accentColor : Color.secondary.opacity(0.15)))
+                                        }.buttonStyle(.plain).accessibilityLabel("\(style.label) profile icon").accessibilityAddTraits(profile.profileIconStyle == style ? .isSelected : [])
                                     }
                                 }
                                 HStack(spacing: 12) {
@@ -66,11 +68,11 @@ struct ProfileSettingsSheet: View {
                                             if candidate.range(of: "^[0-9A-F]{6}$", options: .regularExpression) != nil { edit { $0.color = candidate } }
                                         }
                                 }
-                                if (profile.dockIconStyle ?? .initials) == .initials {
+                                if profile.profileIconStyle == .initials {
                                     TextField("Letters (leave empty for initials)", text: Binding(get: { profile.dockIconText ?? "" }, set: { value in edit { $0.dockIconText = String(value.prefix(3)) } }))
-                                        .textFieldStyle(.roundedBorder).accessibilityLabel("Dock icon letters, up to three")
+                                        .textFieldStyle(.roundedBorder).accessibilityLabel("Profile icon letters, up to three")
                                 }
-                                if profile.dockIconStyle == .image {
+                                if profile.profileIconStyle == .image {
                                     HStack {
                                         Button(profile.iconFilename == nil ? "Choose image…" : "Replace image…") { model.chooseImage(for: profile, window: NSApp.keyWindow) }
                                         if profile.iconFilename != nil { Button("Remove image") { model.removeImage(for: profile) } }
@@ -78,7 +80,7 @@ struct ProfileSettingsSheet: View {
                                     Text("Images fill the rounded icon. Wide or tall images are cropped from the center.")
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
-                                Text(profile.dockApplicationPath == nil ? "Preview only. Enable Native macOS Dock icon below to apply this look to the running app." : "Appearance changes apply when this profile next opens from ProfileDock.").font(.caption).foregroundStyle(.secondary)
+                                Text("Shown immediately in the notch, profile list and menu. " + (profile.dockApplicationPath == nil ? "Enable the option below to also use it for ChatGPT in the macOS Dock." : "The macOS Dock icon updates when you next open this profile from ProfileDock.")).font(.caption).foregroundStyle(.secondary)
                             }.padding(10)
                         }
                         GroupBox {
@@ -88,7 +90,9 @@ struct ProfileSettingsSheet: View {
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                 }.toggleStyle(.switch).controlSize(.small).accessibilityLabel("Native macOS Dock icon, experimental").disabled(model.nativeDockChangeBlocker(for: profile) != nil)
                                 Text("Give this profile its own running Dock icon and name. ProfileDock keeps the copy up to date automatically.").font(.callout).foregroundStyle(.secondary)
-                                if let reason = model.nativeDockChangeBlocker(for: profile) {
+                                if let nativeProgress {
+                                    NativeDockProgressView(stage: nativeProgress)
+                                } else if let reason = model.nativeDockChangeBlocker(for: profile) {
                                     Label(reason, systemImage: "info.circle").font(.callout).foregroundStyle(.secondary)
                                 } else if model.nativeDockAwaitsRelaunch(profile) {
                                     Label("Ready for your next launch. Your current window keeps its original icon until you quit and reopen this profile.", systemImage: "checkmark.circle").font(.callout).foregroundStyle(.secondary)
@@ -102,6 +106,7 @@ struct ProfileSettingsSheet: View {
                                         Button("Repair copy") { native(true) }.disabled(model.nativeDockChangeBlocker(for: profile) != nil)
                                     }
                                     Text("Drag the app from Finder to the Dock to pin it.").font(.caption).foregroundStyle(.secondary)
+                                    Text("Turning this off returns to the original installed ChatGPT app. Your profile’s chats, settings and data stay in place.").font(.caption).foregroundStyle(.secondary)
                                 }
                             }.padding(10)
                         }
@@ -130,21 +135,23 @@ struct ProfileSettingsSheet: View {
                                 Button("Manage access…") { tagging() }
                             }.padding(10)
                         }
-                        if busy { ProgressView("Preparing your profile…") }
-                        errorNotice
                     }.padding(24)
                 }
             }
             Divider()
+            if error != nil { errorNotice.padding(.horizontal, 24).padding(.top, 16) }
             HStack {
-                Text("Changes save automatically").font(.caption).foregroundStyle(.secondary)
+                if isBusy {
+                    ProgressView().controlSize(.small)
+                    Text(nativeProgress?.label ?? "Preparing your profile…").font(.caption).foregroundStyle(.secondary)
+                } else { Text("Changes save automatically").font(.caption).foregroundStyle(.secondary) }
                 Spacer()
                 Button("Done") { dismiss() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
             }.padding(.horizontal, 24).padding(.vertical, 16)
         }.frame(width: 600, height: min(660, (NSScreen.main?.visibleFrame.height ?? 800) - 100))
             .background(Color(nsColor: .windowBackgroundColor)).groupBoxStyle(SettingsGroupBoxStyle())
-            .disabled(busy).interactiveDismissDisabled(busy)
-            .onExitCommand { if !busy { dismiss() } }
+            .disabled(isBusy).interactiveDismissDisabled(isBusy)
+            .onExitCommand { if !isBusy { dismiss() } }
             .onAppear { hex = profile?.color ?? "377CF6" }
             .alert("Enable experimental native Dock icon?", isPresented: $consent) {
                 Button("Cancel", role: .cancel) {}
@@ -164,8 +171,7 @@ struct ProfileSettingsSheet: View {
         }
     }
     private func artwork(_ profile: Profile, style: DockIconStyle? = nil) -> NSImage {
-        var value = profile; if let style { value.dockIconStyle = style }
-        return NativeProfileArtwork.preview(profile: value, image: model.image(for: value), vendor: model.applicationURL(for: value).map { NSWorkspace.shared.icon(forFile: $0.path) })
+        model.artwork(for: profile, style: style)
     }
     private func native(_ enabled: Bool) {
         guard let profile else { return }
@@ -178,5 +184,20 @@ struct ProfileSettingsSheet: View {
             do { try await work() }
             catch { self.error = error.localizedDescription; failedWork = work }
         }
+    }
+}
+
+struct NativeDockProgressView: View {
+    let stage: NativeDockStage
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            ProgressView().controlSize(.small).padding(.top, 2)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(stage.label).font(.callout.weight(.medium))
+                Text("This can take a little while. Your profile data stays in place.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }.padding(12).background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            .accessibilityElement(children: .combine)
     }
 }

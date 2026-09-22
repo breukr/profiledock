@@ -185,10 +185,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             item.keyEquivalentModifierMask = [.command, .option]
             item.representedObject = profile.id
             item.target = self
-            let image = model.image(for: profile)
-            var menuProfile = profile
-            if image != nil { menuProfile.dockIconStyle = .image }
-            let artwork = NativeProfileArtwork.preview(profile: menuProfile, image: image, vendor: nil)
+            let artwork = model.artwork(for: profile)
             item.image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
                 artwork.draw(in: rect)
                 return true
@@ -367,6 +364,8 @@ struct AccountDock {
             let model = DockModel(), id = CommandLine.arguments[2]
             guard let profile = model.preferences.profiles.first(where: { $0.id == id }),
                   let expected = model.nativeDockURL(for: profile),
+                  let executable = try? NativeDockApp.info(expected)["CFBundleExecutable"] as? String,
+                  RunningProfileApplication.executablePath(pid: pid) == expected.appendingPathComponent("Contents/MacOS/\(executable)").resolvingSymlinksInPath().path,
                   NSRunningApplication(processIdentifier: pid)?.bundleURL?.resolvingSymlinksInPath().path == expected.path else { exit(1) }
             var done = false, succeeded = false
             Task { @MainActor in

@@ -427,7 +427,7 @@ struct SettingsView: View {
                     VStack(spacing: 0) {
                         ForEach(Array(model.preferences.profiles.enumerated()), id: \.element.id) { index, profile in
                             HStack(spacing: 14) {
-                                Image(nsImage: NativeProfileArtwork.preview(profile: profile, image: model.image(for: profile), vendor: model.applicationURL(for: profile).map { NSWorkspace.shared.icon(forFile: $0.path) }))
+                                Image(nsImage: model.artwork(for: profile))
                                     .resizable().frame(width: 44, height: 44).accessibilityHidden(true)
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text(profile.name).font(.system(size: 13, weight: .semibold)).lineLimit(1)

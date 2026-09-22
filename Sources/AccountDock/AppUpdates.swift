@@ -197,7 +197,7 @@ final class AppUpdates: ObservableObject {
                     let locks = try nativeApps.map { try NativeDockLock(directory: $0.deletingLastPathComponent()) }
                     defer { locks.forEach { $0.release() } }
                     let paths = Set(([group.application] + nativeApps).map { $0.resolvingSymlinksInPath().path })
-                    var apps = NSWorkspace.shared.runningApplications.filter { app in app.bundleURL.map { paths.contains($0.resolvingSymlinksInPath().path) } ?? false }
+                    var apps = model.observedApplications.filter { app in app.bundleURL.map { paths.contains($0.resolvingSymlinksInPath().path) } ?? false }
                     let known = Set(group.profiles.flatMap { model.running[$0.id] ?? [] }.map(\.processIdentifier))
                     guard apps.allSatisfy({ known.contains($0.processIdentifier) }) else {
                         throw AppOperationError.message("This app also has an unlisted window. Close it yourself before updating this group.")
@@ -215,7 +215,7 @@ final class AppUpdates: ObservableObject {
                             replacements.append(AppReplacement.Entry(prepared: rebuilt, destination: app, native: true))
                         }
                         model.refresh()
-                        apps = NSWorkspace.shared.runningApplications.filter { app in app.bundleURL.map { paths.contains($0.resolvingSymlinksInPath().path) } ?? false }
+                        apps = model.observedApplications.filter { app in app.bundleURL.map { paths.contains($0.resolvingSymlinksInPath().path) } ?? false }
                         let currentKnown = Set(group.profiles.flatMap { model.running[$0.id] ?? [] }.map(\.processIdentifier))
                         guard apps.allSatisfy({ currentKnown.contains($0.processIdentifier) }), !model.unreadableProcesses else { throw AppOperationError.message("An unlisted profile opened while preparing the update. Close it and try again.") }
                         guard group.profiles.allSatisfy({ profile in
@@ -230,7 +230,9 @@ final class AppUpdates: ObservableObject {
                         for app in apps { guard app.terminate() else { throw AppOperationError.message("ChatGPT declined to close. The update has been cancelled.") } }
                         let deadline = Date().addingTimeInterval(60)
                         while apps.contains(where: { !$0.isTerminated }), Date() < deadline { try await Task.sleep(nanoseconds: 250_000_000) }
-                        guard apps.allSatisfy(\.isTerminated), !NSWorkspace.shared.runningApplications.contains(where: { app in app.bundleURL.map { paths.contains($0.resolvingSymlinksInPath().path) } ?? false }) else {
+                        model.refresh()
+                        guard apps.allSatisfy(\.isTerminated), !model.unreadableProcesses,
+                              !model.observedApplications.contains(where: { app in app.bundleURL.map { paths.contains($0.resolvingSymlinksInPath().path) } ?? false }) else {
                             throw AppOperationError.message("This app is still running. Nothing was replaced; close it and try again.")
                         }
                         status = "Installing \(release.version)…"

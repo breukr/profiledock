@@ -189,7 +189,7 @@ final class NativeDockAppTests: XCTestCase {
         defer { if !app.isTerminated { app.terminate() } }
         let model = DockModel(home: root)
         var profile = Profile(id: "work", name: "Work", color: "377CF6", applicationPath: source.path)
-        model.running[profile.id] = [app]
+        model.running[profile.id] = [try XCTUnwrap(RunningProfileApplication(app))]
         XCTAssertNil(model.nativeDockChangeBlocker(for: profile), "An open source must not block preparing a separate Dock bundle")
         let copy = model.nativeDockDirectory.appendingPathComponent("work/ChatGPT.app")
         profile.dockApplicationPath = copy.path

@@ -13,6 +13,9 @@ public struct Profile: Identifiable, Codable, Equatable, Sendable {
     public var dockIconStyle: DockIconStyle?
     public var dockIconText: String?
 
+    /// Older profiles already had uploaded artwork before icon styles were introduced.
+    public var profileIconStyle: DockIconStyle { dockIconStyle ?? (iconFilename == nil ? .initials : .image) }
+
     public var dockLetters: String {
         let custom = dockIconText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return custom.isEmpty ? initials : String(custom.prefix(3)).uppercased()

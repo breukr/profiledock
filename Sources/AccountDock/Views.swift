@@ -53,15 +53,7 @@ struct ProfileBadge: View {
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            Group {
-                if let image = model.image(for: profile) {
-                    RoundedRectangle(cornerRadius: size * 0.26).fill(.white)
-                        .overlay { Image(nsImage: image).resizable().scaledToFill().frame(width: size, height: size) }
-                } else {
-                    RoundedRectangle(cornerRadius: size * 0.26).fill(Color(nsColor: NSColor(hex: profile.color)).gradient)
-                        .overlay { Text(profile.initials).font(.system(size: size * 0.41, weight: .semibold, design: .rounded)).foregroundStyle(.white).shadow(color: .black.opacity(0.25), radius: 2, y: 1) }
-                }
-            }
+            Image(nsImage: model.artwork(for: profile, margin: 0)).resizable()
             .frame(width: size, height: size)
             .clipShape(RoundedRectangle(cornerRadius: size * 0.26))
             .overlay(RoundedRectangle(cornerRadius: size * 0.26).stroke(.white.opacity(0.15), lineWidth: 1))
@@ -70,7 +62,7 @@ struct ProfileBadge: View {
                     .frame(width: size + 20, height: size + 20)
             }
             if showStatus {
-                if model.opening.contains(profile.id) {
+                if model.opening.contains(profile.id) || model.nativeDockOperations.contains(profile.id) {
                     ProgressView().controlSize(.mini).padding(4).background(.black, in: Circle()).offset(x: 4, y: 4)
                 } else if model.running[profile.id]?.isEmpty == false {
                     StatusDot(isOpen: true, size: 10).padding(3).background(.black, in: Circle()).offset(x: 4, y: 4)

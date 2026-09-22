@@ -4,6 +4,38 @@ import DockCore
 @testable import AccountDock
 
 final class NativeProfileArtworkTests: XCTestCase {
+    @MainActor func testProfileArtworkChangesImmediatelyWithoutNativeDockMode() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = DockModel(home: root)
+        var value = profile
+        value.dockIconStyle = .initials
+        model.preferences.profiles = [value]
+        let before = try raster(model.artwork(for: value, margin: 0))
+        let source = root.appendingPathComponent("image.tiff")
+        let white = NSImage(size: NSSize(width: 100, height: 100), flipped: false) { rect in
+            NSColor.white.setFill(); rect.fill(); return true
+        }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try XCTUnwrap(white.tiffRepresentation).write(to: source)
+        try model.importImage(from: source, for: value)
+        value = try XCTUnwrap(model.preferences.profiles.first)
+        XCTAssertNil(value.dockApplicationPath)
+        XCTAssertEqual(value.profileIconStyle, .image)
+        let after = try raster(model.artwork(for: value, margin: 0))
+        XCTAssertLessThan(try XCTUnwrap(before.colorAt(x: 4, y: 50)?.usingColorSpace(.deviceRGB)).greenComponent, 0.1)
+        XCTAssertGreaterThan(try XCTUnwrap(after.colorAt(x: 4, y: 50)?.usingColorSpace(.deviceRGB)).greenComponent, 0.9)
+        value.dockIconStyle = .initials
+        value.dockIconText = "XY"
+        model.update(value)
+        let initials = try raster(model.artwork(for: value, margin: 0))
+        XCTAssertLessThan(try XCTUnwrap(initials.colorAt(x: 4, y: 50)?.usingColorSpace(.deviceRGB)).greenComponent, 0.1)
+        XCTAssertNotEqual(initials.tiffRepresentation, before.tiffRepresentation, "Custom letters replace the cached initials")
+        var enabled = value; enabled.dockApplicationPath = "/irrelevant/Dock.app"
+        XCTAssertEqual(try raster(model.artwork(for: value)).tiffRepresentation,
+                       try raster(model.artwork(for: enabled)).tiffRepresentation, "Dock mode does not change ProfileDock's artwork")
+    }
+
     private var profile: Profile {
         var value = Profile(id: "work", name: "Work", color: "FF0000")
         value.dockIconStyle = .image
