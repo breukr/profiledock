@@ -3,6 +3,15 @@ import CoreGraphics
 @testable import DockCore
 
 final class IslandTests: XCTestCase {
+    func testRecoveryNoticeReservesRoomWithoutMovingTheTopAnchor() {
+        let screen = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        let normal = IslandLayout(screen: screen, notchHeight: 0, notchWidth: 0, count: 5, scale: 1, hasMessage: false)
+        let notice = IslandLayout(screen: screen, notchHeight: 0, notchWidth: 0, count: 5, scale: 1, hasMessage: true)
+        XCTAssertEqual(notice.expanded.height - normal.expanded.height, IslandLayout.messageHeight)
+        XCTAssertEqual(notice.expanded.maxY, normal.expanded.maxY)
+        XCTAssertTrue(screen.contains(notice.expanded))
+    }
+
     func testFreePositionKeepsStripAndPanelVisibleAcrossEdgesSizesAndScreenOrigins() {
         for screen in [CGRect(x: 0, y: 0, width: 1512, height: 982), CGRect(x: -2560, y: -600, width: 2560, height: 1440), CGRect(x: 1920, y: 200, width: 900, height: 1440)] {
             let visible = screen.insetBy(dx: 65, dy: 40)

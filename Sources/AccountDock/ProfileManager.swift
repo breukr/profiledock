@@ -148,7 +148,14 @@ extension DockModel {
 
     func removeProfile(_ profile: Profile, trashData: Bool) throws {
         refresh()
-        guard running[profile.id]?.isEmpty != false, !opening.contains(profile.id) else { throw AppOperationError.message("Close this profile before removing it.") }
+        guard running[profile.id]?.isEmpty != false, !opening.contains(profile.id), !nativeDockOperations.contains(profile.id) else { throw AppOperationError.message("Close this profile before removing it.") }
+        if trashData && (!profile.id.hasPrefix("profile-") || !Profile.validID(profile.id)) {
+            throw AppOperationError.message("Imported profiles can be removed from ProfileDock, but their original data is kept.")
+        }
+        if profile.dockApplicationPath != nil {
+            guard let app = nativeDockURL(for: profile) else { throw AppOperationError.message("The native Dock copy could not be verified. Disable or repair it before removing the profile.") }
+            try FileManager.default.trashItem(at: app, resultingItemURL: nil)
+        }
         if trashData {
             guard profile.id.hasPrefix("profile-"), Profile.validID(profile.id) else {
                 throw AppOperationError.message("Imported profiles can be removed from ProfileDock, but their original data is kept.")
@@ -176,7 +183,7 @@ extension DockModel {
             }
         }
         preferences.profiles.removeAll { $0.id == profile.id }
-        var retained = profile; retained.launcherPath = nil
+        var retained = profile; retained.launcherPath = nil; retained.dockApplicationPath = nil
         preferences.removedProfiles = (preferences.removedProfiles ?? []).filter { $0.id != profile.id } + [retained]
         preferences.hiddenProfileIDs = Array(Set((preferences.hiddenProfileIDs ?? []) + [profile.id]))
         save()

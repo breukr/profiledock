@@ -6,6 +6,17 @@ final class ProfileTests: XCTestCase {
     let profiles = [Profile(id: "default", name: "Personal", color: "377CF6"), Profile(id: "test", name: "Work", color: "009B87"), Profile(id: "test-2", name: "Second", color: "955CE5")]
     let executable = "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT"
 
+    func testLegacyImagesAndExplicitStylesHaveOneConsistentDefault() {
+        var profile = profiles[0]
+        XCTAssertEqual(profile.profileIconStyle, .initials)
+        profile.iconFilename = "existing-logo.png"
+        XCTAssertEqual(profile.profileIconStyle, .image)
+        for style in DockIconStyle.allCases {
+            profile.dockIconStyle = style
+            XCTAssertEqual(profile.profileIconStyle, style, "An uploaded image must not override the selected style")
+        }
+    }
+
     func testExactProfileMatchAndNoPrefixCollisions() {
         XCTAssertEqual(ProcessIdentity.profileID(arguments: [executable, "--user-data-dir=/Users/example/.codex-test/electron-user-data"], profiles: profiles, home: home), "test")
         XCTAssertEqual(ProcessIdentity.profileID(arguments: [executable, "--user-data-dir", "/Users/example/.codex-test-2/electron-user-data"], profiles: profiles, home: home), "test-2")
