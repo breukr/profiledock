@@ -4,9 +4,9 @@ import Carbon
 import DockCore
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate, NSMenuItemValidation {
     let model: DockModel
-    let previewMode = CommandLine.arguments.contains("--preview")
+    let previewMode = CommandLine.arguments.contains("--preview") || Bundle.main.object(forInfoDictionaryKey: "ProfileDockContextPreview") as? Bool == true
     let usage = UsageStore()
     let insights = InsightsStore()
     let activity = ActivityMonitor()
@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     let iconAppearance = AppIconController()
     var status: NSStatusItem!
     var settingsWindow: NSWindow?
+    private var settingsOpen = false
     var hotKeys: [EventHotKeyRef] = []
     var eventHandler: EventHandlerRef?
     private var globalMouseMonitor: Any?
@@ -25,12 +26,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private var mouseEvents = 0
 
     override init() {
-        if CommandLine.arguments.contains("--preview") {
-            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("profiledock-preview-" + UUID().uuidString)
+        let contextPreview = Bundle.main.object(forInfoDictionaryKey: "ProfileDockContextPreview") as? Bool == true
+        if CommandLine.arguments.contains("--preview") || contextPreview {
+            let arguments = CommandLine.arguments
+            let supplied = arguments.firstIndex(of: "--preview-home").flatMap { $0 + 1 < arguments.count ? URL(fileURLWithPath: arguments[$0 + 1]) : nil }
+            let directory = supplied ?? FileManager.default.temporaryDirectory.appendingPathComponent("profiledock-preview-" + UUID().uuidString)
             try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             model = DockModel(home: directory)
         } else { model = DockModel() }
         super.init()
+        if previewMode, CommandLine.arguments.contains("--preview-notice"), let profile = model.preferences.profiles.first {
+            // Keep notice/retry visual checks inside the isolated preview home.
+            model.unreadableProcesses = true
+            model.showProfileMessage("Couldn’t bring \(profile.name) to the front.", for: profile)
+        }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -41,11 +50,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             NSApp.terminate(nil)
             return
         }
-        NSApp.setActivationPolicy(model.preferences.showDockIcon == true ? .regular : .accessory)
-        usage.configure(model.preferences.profiles)
+        applyVisibility()
+        usage.configure(previewMode ? [] : model.preferences.profiles)
         insights.prepare(profiles: model.preferences.profiles, home: model.home)
-        usage.refreshAll()
-        activity.configure(model.preferences.profiles, running: Set(model.running.keys))
+        if !previewMode { usage.refreshAll() }
+        activity.configure(previewMode ? [] : model.preferences.profiles, running: Set(model.running.keys))
         if !previewMode { rebuildIslands(); startMouseMonitoring() }
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         status.button?.image = BrandArtwork.template(size: 16)
@@ -53,25 +62,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         status.button?.target = self
         status.button?.action = #selector(statusClick)
         status.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        applyVisibility()
         configureMenu()
         iconAppearance.update(model.preferences.appIconAppearance ?? .auto)
-        selfUpdates.mayUpdate = { [weak self] in self?.appUpdates.busy == false }
+        selfUpdates.mayUpdate = { [weak self] in self?.appUpdates.busy == false && self?.model.nativeDockOperations.isEmpty == true }
         if !previewMode { selfUpdates.start() }
         activity.$event.compactMap { $0 }.sink { [weak self] event in
             guard let self, !self.previewMode else { return }
             self.cues.receive(event, model: self.model)
         }.store(in: &subscriptions)
         if !previewMode { registerHotKeys() }
-        if model.preferences.profiles.isEmpty || CommandLine.arguments.contains("--settings") { showSettings() }
+        if model.preferences.profiles.isEmpty || previewMode || CommandLine.arguments.contains("--settings") || CommandLine.arguments.contains("--context-settings") || CommandLine.arguments.contains("--search-chats") { showSettings() }
         model.onPreferencesChanged = { [weak self] in
             guard let self else { return }
-            self.usage.configure(self.model.preferences.profiles)
+            self.usage.configure(self.previewMode ? [] : self.model.preferences.profiles)
             self.insights.prepare(profiles: self.model.preferences.profiles, home: self.model.home)
-            self.activity.configure(self.model.preferences.profiles, running: Set(self.model.running.keys))
+            self.activity.configure(self.previewMode ? [] : self.model.preferences.profiles, running: Set(self.model.running.keys))
             if !self.previewMode, self.islands.first?.layout.placement != self.model.placement { self.cues.dismiss(); self.rebuildIslands() }
             else { self.islands.forEach { $0.updateLayout() } }
-            let policy: NSApplication.ActivationPolicy = self.model.preferences.showDockIcon == true ? .regular : .accessory
-            if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
+            self.applyVisibility()
             self.iconAppearance.update(self.model.preferences.appIconAppearance ?? .auto)
             self.configureMenu(); if !self.previewMode { self.registerHotKeys() }
         }
@@ -82,7 +91,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         model.$message.dropFirst().sink { [weak self] _ in DispatchQueue.main.async { self?.islands.forEach { $0.updateLayout() } } }.store(in: &subscriptions)
         model.$running.dropFirst().sink { [weak self] running in
             guard let self else { return }
-            self.activity.configure(self.model.preferences.profiles, running: Set(running.keys))
+            self.activity.configure(self.previewMode ? [] : self.model.preferences.profiles, running: Set(running.keys))
         }.store(in: &subscriptions)
     }
 
@@ -117,6 +126,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if !model.nativeDockOperations.isEmpty {
+            model.message = "Keep ProfileDock open until the native Dock app finishes building."
+            showSettings()
+            return .terminateCancel
+        }
         guard appUpdates.busy else { return .terminateNow }
         model.message = appUpdates.canCancel ? "Cancel the ChatGPT download before quitting ProfileDock." : "Keep ProfileDock open until the ChatGPT installation finishes."
         showSettings()
@@ -143,52 +157,77 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { showSettings(); return true }
 
     @objc func statusClick() {
-        if NSApp.currentEvent?.type == .rightMouseUp, let menu = statusMenu {
-            status.menu = menu
-            status.button?.performClick(nil)
-            status.menu = nil
-        } else { showSettings() }
+        guard let menu = statusMenu else { return }
+        status.menu = menu
+        status.button?.performClick(nil)
+        status.menu = nil
     }
 
     var statusMenu: NSMenu?
     func menuWillOpen(_ menu: NSMenu) {
         model.refresh()
-        loginItem.refresh()
         for item in menu.items {
-            if item.action == #selector(toggleLoginItem) { item.state = loginItem.enabled ? .on : .off }
-            guard let id = item.representedObject as? String else { continue }
+            guard let id = item.representedObject as? String,
+                  let profile = model.preferences.profiles.first(where: { $0.id == id }) else { continue }
+            item.state = model.activeProfile == id ? .on : .off
             let isOpen = model.running[id]?.isEmpty == false
-            item.image = isOpen ? NSImage(size: NSSize(width: 12, height: 12), flipped: false) { rect in
-                NSColor(srgbRed: 0.23, green: 0.9, blue: 0.42, alpha: 1).setFill()
-                NSBezierPath(ovalIn: rect.insetBy(dx: 2, dy: 2)).fill()
-                return true
-            } : nil
+            item.toolTip = isOpen ? "Show \(profile.name) — already open" : "Open \(profile.name)"
         }
     }
 
     func configureMenu() {
         let menu = NSMenu()
         menu.delegate = self
+        menu.addItem(.sectionHeader(title: "Switch Profile"))
+        if model.preferences.profiles.isEmpty { menu.addItem(withTitle: "No profiles yet", action: nil, keyEquivalent: "") }
         for (index, profile) in model.preferences.profiles.enumerated() {
             let item = NSMenuItem(title: profile.name, action: #selector(menuSelect(_:)), keyEquivalent: index < 9 ? String(index + 1) : "")
             item.keyEquivalentModifierMask = [.command, .option]
             item.representedObject = profile.id
             item.target = self
+            let artwork = model.artwork(for: profile)
+            item.image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
+                artwork.draw(in: rect)
+                return true
+            }
             menu.addItem(item)
         }
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",").target = self
-        menu.addItem(withTitle: "Check ProfileDock for Updates…", action: #selector(checkProfileDockUpdates), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "Open at Login", action: #selector(toggleLoginItem), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Open ProfileDock…", action: #selector(showProfiles), keyEquivalent: "0").target = self
+        menu.addItem(withTitle: "Add Profile…", action: #selector(addProfile), keyEquivalent: "n").target = self
+        menu.addItem(withTitle: "Search Chats…", action: #selector(showSearch), keyEquivalent: "f").target = self
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Support ProfileDock…", action: #selector(supportProfileDock), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Updates…", action: #selector(showUpdateSettings), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Settings…", action: #selector(showGeneralSettings), keyEquivalent: ",").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit ProfileDock", action: #selector(quit), keyEquivalent: "q").target = self
         statusMenu = menu
         let main = NSMenu()
-        let appMenu = NSMenuItem()
-        appMenu.submenu = menu.copy() as? NSMenu
+        let application = NSMenu(title: "ProfileDock")
+        application.addItem(withTitle: "About ProfileDock", action: #selector(about), keyEquivalent: "").target = self
+        application.addItem(.separator())
+        application.addItem(withTitle: "Settings…", action: #selector(showGeneralSettings), keyEquivalent: ",").target = self
+        application.addItem(withTitle: "Check ProfileDock for Updates…", action: #selector(checkProfileDockUpdates), keyEquivalent: "").target = self
+        application.addItem(.separator())
+        application.addItem(withTitle: "Hide ProfileDock", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        let hideOthers = application.addItem(withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
+        hideOthers.keyEquivalentModifierMask = [.command, .option]
+        application.addItem(withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
+        application.addItem(.separator())
+        application.addItem(withTitle: "Quit ProfileDock", action: #selector(quit), keyEquivalent: "q").target = self
+        application.delegate = self
+        let appMenu = NSMenuItem(title: "ProfileDock", action: nil, keyEquivalent: "")
+        appMenu.submenu = application
         main.addItem(appMenu)
+        let profilesItem = NSMenuItem(title: "Profiles", action: nil, keyEquivalent: "")
+        let profiles = NSMenu(title: "Profiles")
+        for item in menu.items where item.representedObject is String { if let copy = item.copy() as? NSMenuItem { profiles.addItem(copy) } }
+        profiles.addItem(.separator())
+        profiles.addItem(withTitle: "Add Profile…", action: #selector(addProfile), keyEquivalent: "n").target = self
+        profiles.addItem(withTitle: "Manage Profiles…", action: #selector(showProfiles), keyEquivalent: "0").target = self
+        profiles.addItem(withTitle: "Search Chats…", action: #selector(showSearch), keyEquivalent: "f").target = self
+        profiles.delegate = self
+        profilesItem.submenu = profiles; main.addItem(profilesItem)
         let edit = NSMenu(title: "Edit")
         edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
         edit.addItem(.separator())
@@ -199,7 +238,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let editItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
         editItem.submenu = edit
         main.addItem(editItem)
+        let windowItem = NSMenuItem(title: "Window", action: nil, keyEquivalent: "")
+        let windows = NSMenu(title: "Window")
+        windows.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windows.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        windows.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windowItem.submenu = windows; main.addItem(windowItem)
+        NSApp.windowsMenu = windows
+        let help = NSMenu(title: "Help")
+        help.addItem(withTitle: "ProfileDock Help", action: #selector(showHelp), keyEquivalent: "?").target = self
+        help.addItem(withTitle: "Support ProfileDock…", action: #selector(showSupport), keyEquivalent: "").target = self
+        help.addItem(withTitle: "About ProfileDock…", action: #selector(about), keyEquivalent: "").target = self
+        let helpItem = NSMenuItem(title: "Help", action: nil, keyEquivalent: "")
+        helpItem.submenu = help; main.addItem(helpItem)
+        NSApp.helpMenu = help
         NSApp.mainMenu = main
+    }
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(checkProfileDockUpdates) { return selfUpdates.canCheck && !appUpdates.busy && model.nativeDockOperations.isEmpty }
+        return true
+    }
+    @objc func about() { showDestination(.profileDockShowAbout) }
+    private func showDestination(_ notification: Notification.Name) {
+        showSettings()
+        DispatchQueue.main.async { NotificationCenter.default.post(name: notification, object: nil) }
+    }
+    @objc func showProfiles() { showDestination(.profileDockShowProfiles) }
+    @objc func addProfile() { showDestination(.profileDockAddProfile) }
+    @objc func showSearch() { showDestination(.profileDockShowSearch) }
+    @objc func showSupport() { showDestination(.profileDockShowSupport) }
+    @objc func showHelp() { NSWorkspace.shared.open(AppBrand.repository.appendingPathComponent("blob/main/docs/GUIDE.md")) }
+    @objc func showGeneralSettings() {
+        showSettings()
+        DispatchQueue.main.async { NotificationCenter.default.post(name: .profileDockShowGeneralSettings, object: nil) }
+    }
+    @objc func showUpdateSettings() {
+        showSettings()
+        DispatchQueue.main.async { NotificationCenter.default.post(name: .profileDockShowUpdates, object: nil) }
+    }
+    private func applyVisibility() {
+        let policy = AppVisibility.activationPolicy(preferences: model.preferences, settingsOpen: settingsOpen)
+        if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
+        status?.isVisible = model.preferences.showMenuBarIcon != false
+    }
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window === settingsWindow else { return }
+        settingsOpen = false; applyVisibility()
     }
     @objc func checkProfileDockUpdates() { selfUpdates.check() }
     @objc func supportProfileDock() { NSWorkspace.shared.open(AppBrand.donation) }
@@ -218,15 +302,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc func showSettings() {
         loginItem.refresh()
         if settingsWindow == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 840, height: 620), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+            let compact = previewMode && CommandLine.arguments.contains("--compact-preview")
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: compact ? 760 : 920, height: compact ? 560 : 700), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
             window.title = "ProfileDock"
-            if previewMode { window.subtitle = "New installation preview" }
+            if previewMode, let index = CommandLine.arguments.firstIndex(of: "--preview-appearance"), CommandLine.arguments.indices.contains(index + 1) {
+                window.appearance = NSAppearance(named: CommandLine.arguments[index + 1] == "light" ? .aqua : .darkAqua)
+            }
+            if previewMode { window.subtitle = Bundle.main.object(forInfoDictionaryKey: "ProfileDockContextPreview") as? Bool == true ? "Context preview" : "New installation preview" }
             window.contentView = NSHostingView(rootView: SettingsView(model: model, loginItem: loginItem, activity: activity, updates: appUpdates, selfUpdates: selfUpdates, insights: insights, cues: cues, chooseImage: { [weak self, weak window] profile in self?.model.chooseImage(for: profile, window: window) }))
             window.minSize = NSSize(width: 760, height: 560)
             window.isReleasedWhenClosed = false
+            window.delegate = self
             window.center()
+            if !previewMode {
+                window.setFrameAutosaveName("ProfileDock.Settings")
+                window.setFrameUsingName("ProfileDock.Settings")
+            }
             settingsWindow = window
         }
+        settingsOpen = true
+        applyVisibility()
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
@@ -264,6 +359,23 @@ import Combine
 struct AccountDock {
     static func main() {
         let application = NSApplication.shared
+        if CommandLine.arguments.dropFirst().first == "--prepare-native-dock" {
+            guard CommandLine.arguments.count == 4, let pid = Int32(CommandLine.arguments[3]), pid == getppid() else { exit(1) }
+            let model = DockModel(), id = CommandLine.arguments[2]
+            guard let profile = model.preferences.profiles.first(where: { $0.id == id }),
+                  let expected = model.nativeDockURL(for: profile),
+                  let executable = try? NativeDockApp.info(expected)["CFBundleExecutable"] as? String,
+                  RunningProfileApplication.executablePath(pid: pid) == expected.appendingPathComponent("Contents/MacOS/\(executable)").resolvingSymlinksInPath().path,
+                  NSRunningApplication(processIdentifier: pid)?.bundleURL?.resolvingSymlinksInPath().path == expected.path else { exit(1) }
+            var done = false, succeeded = false
+            Task { @MainActor in
+                do { try await model.setNativeDockIcon(for: profile, enabled: true, launchingPID: pid); succeeded = true }
+                catch { FileHandle.standardError.write(Data(error.localizedDescription.utf8)) }
+                done = true
+            }
+            while !done { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
+            exit(succeeded ? 0 : 1)
+        }
         if CommandLine.arguments.contains("--validate-launcher") {
             guard let id = Bundle.main.object(forInfoDictionaryKey: "ProfileDockProfileID") as? String, Profile.validID(id) else { exit(1) }
             print(id); return

@@ -33,6 +33,7 @@ public struct FloatingPosition: Codable, Equatable, Sendable {
 
 public struct IslandLayout: Equatable, Sendable {
     public static let resetDetailsHeight: Double = 120
+    public static let messageHeight: Double = 100
     public let screen: CGRect
     public let notchHeight: Double
     public let collapsed: CGRect
@@ -55,8 +56,8 @@ public struct IslandLayout: Equatable, Sendable {
         let availableHeight: Double = placement == .topCenter ? Double(screen.maxY - (visibleFrame?.minY ?? screen.minY)) - 12 - self.notchHeight : Double(available.height)
         let expandedWidth = min(placement == .topCenter ? screen.width - 32 : available.width, WidgetSizing.expanded(count: count, scale: scale, preferred: preferredExpanded, insights: showsInsights))
         let insightsHeight = showsInsights ? WidgetSizing.insightsHeight(width: expandedWidth, count: count) : 0
-        let singleRowHeight = 325 + 32 * scale + Self.usageHeight(rows: usageRows) - 104 + (hasMessage ? 52 : 0) + (showsResetDetails ? Self.resetDetailsHeight : 0) + 34
-        let cardHeight = singleRowHeight - 110 - (hasMessage ? 52 : 0)
+        let singleRowHeight = 325 + 32 * scale + Self.usageHeight(rows: usageRows) - 104 + (hasMessage ? Self.messageHeight : 0) + (showsResetDetails ? Self.resetDetailsHeight : 0) + 34
+        let cardHeight = singleRowHeight - 110 - (hasMessage ? Self.messageHeight : 0)
         profileColumns = WidgetSizing.columns(count: count, available: expandedWidth - 32, scale: scale)
         let desiredRows = (max(1, count) + profileColumns - 1) / profileColumns
         // Keep row count stable when reset details open, so the clicked account cannot disappear onto another page.
