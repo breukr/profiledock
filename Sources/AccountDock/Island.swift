@@ -18,10 +18,13 @@ final class AccountPanel: NSPanel {
     @Published private(set) var insightsExpanded = false
     var insightsPopoverPresented = false
     var onResetDetailsChange: (() -> Void)?
+    var onInsightsWillChange: (() -> Void)?
+    var onInsightsChange: (() -> Void)?
     init(expanded: Bool = false) { self.expanded = expanded }
     func setInsightsExpanded(_ value: Bool) {
         guard value != insightsExpanded else { return }
-        insightsExpanded = value; onResetDetailsChange?()
+        onInsightsWillChange?()
+        insightsExpanded = value; onInsightsChange?()
     }
     func toggleResetDetails(_ profileID: String) {
         if !resetDetails.insert(profileID).inserted { resetDetails.remove(profileID) }
@@ -38,6 +41,7 @@ final class IslandController {
     let usage: UsageStore
     let presentation = IslandPresentation()
     private let presentWindows: Bool
+    private let reduceMotion: () -> Bool
     private(set) var layout: IslandLayout
     private(set) var expanded = false
     private(set) var animating = false
@@ -46,6 +50,7 @@ final class IslandController {
     private var scheduledCollapse: TimeInterval?
     private var hoverIntent = HoverIntent()
     private var animationGeneration = 0
+    private var insightsSnapshot: CGImage?
     private var usageSubscription: AnyCancellable?
     private var menuSubscriptions = Set<AnyCancellable>()
     private var trackedMenus: Set<ObjectIdentifier> = []
@@ -73,9 +78,11 @@ final class IslandController {
         return IslandLayout(screen: screen.frame, notchHeight: screen.safeAreaInsets.top, notchWidth: notchWidth, count: model.preferences.profiles.count, scale: model.preferences.scale, hasMessage: model.message != nil, menuBarHeight: menuBarHeight, showsResetDetails: showsResetDetails, placement: model.placement, visibleFrame: screen.visibleFrame, position: position ?? model.floatingPosition(for: positionKey(for: screen)), usageRows: usageRows, showsInsights: showsInsights || model.preferences.insightsExpansion == .always, compactWidth: model.preferences.compactWidth, expandedWidth: model.preferences.expandedWidth)
     }
 
-    init(screen: NSScreen, model: DockModel, usage: UsageStore, activity: ActivityMonitor? = nil, insights: InsightsStore? = nil, presentWindows: Bool = true, settings: @escaping () -> Void) {
+    init(screen: NSScreen, model: DockModel, usage: UsageStore, activity: ActivityMonitor? = nil, insights: InsightsStore? = nil, presentWindows: Bool = true,
+         reduceMotion: @escaping () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }, settings: @escaping () -> Void) {
         self.screen = screen; self.model = model; self.usage = usage
         self.presentWindows = presentWindows
+        self.reduceMotion = reduceMotion
         let activity = activity ?? ActivityMonitor(home: model.home)
         layout = Self.layout(screen: screen, model: model, usageRows: usage.cardUsageRows)
         presentation.profileColumns = layout.profileColumns; presentation.profileRows = layout.profileRows
@@ -101,6 +108,11 @@ final class IslandController {
         surface.compactOrigin = layout.compactOrigin; surface.floating = layout.placement != .topCenter
         surface.reveal(expanded: false, compactSize: layout.collapsed.size, duration: 0, fps: preferredFPS)
         presentation.onResetDetailsChange = { [weak self] in self?.updateLayout() }
+        presentation.onInsightsWillChange = { [weak self] in
+            guard let self, self.expanded, !self.reduceMotion() else { return }
+            self.insightsSnapshot = self.surface.contentSnapshot()
+        }
+        presentation.onInsightsChange = { [weak self] in self?.updateLayout(animateInsights: true) }
         presentation.opensUpward = layout.opensUpward
         usageSubscription = usage.$entries.receive(on: RunLoop.main).map { _ in usage.cardUsageRows }.removeDuplicates().sink { [weak self] _ in self?.updateLayout() }
         NotificationCenter.default.publisher(for: NSMenu.didBeginTrackingNotification).sink { [weak self] notice in
@@ -143,24 +155,56 @@ final class IslandController {
         presentation.expanded = false
         animationGeneration += 1
         collapseTimer?.invalidate(); frameMeter.stop()
+        surface.reveal(expanded: false, compactSize: layout.collapsed.size, duration: 0, fps: preferredFPS)
         usage.setVisible(false, screen: screenKey)
         panel.orderOut(nil); compactPanel.orderOut(nil)
     }
 
-    func updateLayout() {
+    func updateLayout(animateInsights: Bool = false) {
+        defer { insightsSnapshot = nil }
         let next = Self.layout(screen: screen, model: model, showsResetDetails: !presentation.resetDetails.isEmpty, position: draggedPosition, usageRows: usage.cardUsageRows, showsInsights: presentation.insightsExpanded)
         guard next != layout else { return }
+        let animate = animateInsights && expanded && !reduceMotion()
+        let oldFrame = panel.frame
+        let oldVisible = (surface.presentationBounds ?? surface.bounds).offsetBy(dx: oldFrame.minX, dy: oldFrame.minY)
+        let oldContent = surface.contentFrame.offsetBy(dx: oldFrame.minX, dy: oldFrame.minY)
+        let snapshot = animate ? insightsSnapshot : nil
         animationGeneration += 1; animating = false; frameMeter.stop()
+        let generation = animationGeneration
         layout = next
         presentation.profileColumns = layout.profileColumns; presentation.profileRows = layout.profileRows
         presentation.opensUpward = next.opensUpward
         surface.compactOrigin = layout.compactOrigin; surface.floating = layout.placement != .topCenter
-        panel.setFrame(layout.expanded, display: false)
+        // Resize the native window once; animate its mask and content layers on a fixed canvas.
+        let canvas = animate ? oldFrame.union(next.expanded) : next.expanded
+        panel.setFrame(canvas, display: false)
+        surface.contentRect = next.expanded.offsetBy(dx: -canvas.minX, dy: -canvas.minY)
         compactPanel.setFrame(layout.collapsed, display: false)
         surface.layoutSubtreeIfNeeded()
+        if animate {
+            animating = true
+            if measureAnimations { frameMeter.start(screen: screen, fps: preferredFPS, surface: surface) }
+            surface.resize(from: oldVisible.offsetBy(dx: -canvas.minX, dy: -canvas.minY),
+                           to: surface.contentRect!, snapshot: snapshot,
+                           snapshotRect: oldContent.offsetBy(dx: -canvas.minX, dy: -canvas.minY),
+                           opening: presentation.insightsExpanded, fps: preferredFPS) { [weak self] in
+                guard let self, self.animationGeneration == generation else { return }
+                self.finishLayoutResize()
+            }
+            return
+        }
+        surface.contentRect = nil
         surface.reveal(expanded: expanded, compactSize: layout.collapsed.size, duration: 0, fps: preferredFPS)
         if !expanded { panel.orderOut(nil) }
         showPanel()
+    }
+
+    private func finishLayoutResize() {
+        animating = false; frameMeter.stop()
+        panel.setFrame(layout.expanded, display: false)
+        surface.contentRect = nil
+        surface.layoutSubtreeIfNeeded()
+        surface.reveal(expanded: expanded, compactSize: layout.collapsed.size, duration: 0, fps: preferredFPS)
     }
 
     func pointerMoved(to point: NSPoint) {
@@ -180,6 +224,7 @@ final class IslandController {
            CGRect(x: layout.collapsed.minX, y: layout.collapsed.minY, width: 30, height: layout.collapsed.height).contains(point) { return }
         // One stable source of pointer truth; animated SwiftUI enter/exit events cannot toggle the island.
         let inside = layout.containsPointer(point, expandedOrClosing: expanded || animating)
+            || (surface.isResizing && panel.frame.contains(point))
         setExpanded(hoverIntent.update(inside: inside, now: ProcessInfo.processInfo.systemUptime))
         guard scheduledCollapse != hoverIntent.collapseDeadline else { return }
         collapseTimer?.invalidate(); collapseTimer = nil
@@ -219,11 +264,17 @@ final class IslandController {
 
     private func setExpanded(_ value: Bool) {
         guard expanded != value else { return }
+        if surface.isResizing {
+            let visible = surface.presentationBounds?.offsetBy(dx: panel.frame.minX, dy: panel.frame.minY)
+            animationGeneration += 1
+            finishLayoutResize()
+            if let visible { surface.setVisibleRect(visible.offsetBy(dx: -panel.frame.minX, dy: -panel.frame.minY)) }
+        }
         expanded = value
         presentation.expanded = value
         animationGeneration += 1
         let generation = animationGeneration
-        let duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : (value ? 0.16 : 0.14)
+        let duration = reduceMotion() ? 0 : (value ? 0.16 : 0.14)
         animating = duration > 0
         if value {
             compactPanel.orderOut(nil)
@@ -259,9 +310,12 @@ final class IslandController {
 final class IslandSurface: NSView {
     var compactOrigin: CGPoint?
     var floating = false
+    var contentRect: CGRect? { didSet { needsLayout = true } }
     private var hosted: NSView?
     private let revealMask = CAShapeLayer()
     private let border = CAShapeLayer()
+    private var outgoingContent: CALayer?
+    private(set) var isResizing = false
 
     func install(_ view: NSView) {
         wantsLayer = true
@@ -278,13 +332,67 @@ final class IslandSurface: NSView {
 
     override func layout() {
         super.layout()
-        hosted?.frame = bounds
+        hosted?.frame = contentRect ?? bounds
         border.frame = bounds; revealMask.frame = bounds
     }
 
     var presentationBounds: CGRect? { revealMask.presentation()?.path?.boundingBoxOfPath }
+    var contentFrame: CGRect { hosted?.frame ?? bounds }
+
+    func setVisibleRect(_ rect: CGRect) {
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        let shape = Self.path(in: rect, bottomRadius: 27, roundedTop: floating)
+        revealMask.path = shape; border.path = shape
+        CATransaction.commit()
+    }
+
+    func contentSnapshot() -> CGImage? {
+        guard let hosted, let bitmap = hosted.bitmapImageRepForCachingDisplay(in: hosted.bounds) else { return nil }
+        hosted.cacheDisplay(in: hosted.bounds, to: bitmap)
+        return bitmap.cgImage
+    }
+
+    func resize(from: CGRect, to: CGRect, snapshot: CGImage?, snapshotRect: CGRect,
+                opening: Bool, fps: Float, completion: @escaping () -> Void) {
+        cancelResize()
+        isResizing = true
+        let target = Self.path(in: to, bottomRadius: 27, roundedTop: floating)
+        let duration = opening ? 0.42 : 0.3
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        revealMask.removeAnimation(forKey: "reveal"); border.removeAnimation(forKey: "reveal")
+        hosted?.layer?.removeAnimation(forKey: "revealOpacity")
+        revealMask.path = target; border.path = target; hosted?.layer?.opacity = 1
+        CATransaction.setCompletionBlock(completion)
+        let spring = CASpringAnimation(keyPath: "path")
+        spring.fromValue = Self.path(in: from, bottomRadius: 27, roundedTop: floating)
+        spring.toValue = target; spring.duration = duration
+        spring.mass = 1; spring.stiffness = opening ? 320 : 420; spring.damping = opening ? 36 : 42
+        spring.preferredFrameRateRange = CAFrameRateRange(minimum: min(60, fps), maximum: fps, preferred: fps)
+        revealMask.add(spring, forKey: "resize"); border.add(spring, forKey: "resize")
+        if let snapshot {
+            let outgoing = CALayer()
+            outgoing.frame = snapshotRect; outgoing.contents = snapshot; outgoing.opacity = 0
+            layer?.insertSublayer(outgoing, below: border); outgoingContent = outgoing
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 1; fade.toValue = 0; fade.duration = opening ? 0.16 : 0.2
+            outgoing.add(fade, forKey: "contentFade")
+        }
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0; fade.toValue = 1; fade.duration = opening ? 0.24 : 0.18
+        fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        hosted?.layer?.add(fade, forKey: "resizeOpacity")
+        CATransaction.commit()
+    }
+
+    private func cancelResize() {
+        isResizing = false
+        revealMask.removeAnimation(forKey: "resize"); border.removeAnimation(forKey: "resize")
+        hosted?.layer?.removeAnimation(forKey: "resizeOpacity")
+        outgoingContent?.removeFromSuperlayer(); outgoingContent = nil
+    }
 
     func reveal(expanded: Bool, compactSize: CGSize, duration: TimeInterval, fps: Float, completion: @escaping () -> Void = {}) {
+        cancelResize()
         let rect = expanded ? bounds : CGRect(origin: compactOrigin ?? CGPoint(x: (bounds.width - compactSize.width) / 2, y: bounds.height - compactSize.height), size: compactSize)
         let target = Self.path(in: rect, bottomRadius: expanded ? 27 : 10, roundedTop: floating)
         let previous = revealMask.presentation()?.path ?? revealMask.path ?? target

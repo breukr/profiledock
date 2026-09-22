@@ -9,6 +9,66 @@ private actor NoNetworkUsage: UsageFetching {
 }
 
 final class IslandRenderingTests: XCTestCase {
+    @MainActor func testInsightsSpringKeepsCanvasFixedAndRapidReversalSettlesAtLatestSize() async throws {
+        _ = NSApplication.shared
+        guard let screen = NSScreen.screens.first else { throw XCTSkip("No attached screen") }
+        for placement in [DockPlacement.topCenter, .free] {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let model = DockModel(home: directory), usage = UsageStore(client: NoNetworkUsage())
+            model.preferences.placement = placement
+            let island = IslandController(screen: screen, model: model, usage: usage, presentWindows: false,
+                                          reduceMotion: { false }, settings: {})
+            defer { island.shutdown(); usage.shutdown() }
+            island.pointerMoved(to: CGPoint(x: island.layout.collapsed.midX, y: island.layout.collapsed.midY))
+            try await Task.sleep(for: .milliseconds(180))
+            let initial = island.panel.frame
+            let surface = try XCTUnwrap(island.panel.contentView as? IslandSurface)
+            island.presentation.setInsightsExpanded(true)
+            let canvas = island.panel.frame
+            XCTAssertTrue(surface.isResizing)
+            XCTAssertTrue(canvas.contains(initial))
+            XCTAssertTrue(canvas.contains(island.layout.expanded))
+            try await Task.sleep(for: .milliseconds(100))
+            XCTAssertEqual(island.panel.frame, canvas, "The native window does not resize on each animation frame")
+            island.presentation.setInsightsExpanded(false)
+            island.presentation.setInsightsExpanded(true)
+            try await Task.sleep(for: .milliseconds(550))
+            XCTAssertFalse(surface.isResizing)
+            XCTAssertEqual(island.panel.frame.size, island.layout.expanded.size)
+            XCTAssertEqual(island.panel.frame.minX, island.layout.expanded.minX, accuracy: 1)
+            XCTAssertEqual(island.panel.frame.minY, island.layout.expanded.minY, accuracy: 1)
+            XCTAssertEqual(surface.contentFrame, CGRect(origin: .zero, size: island.layout.expanded.size))
+            XCTAssertTrue(island.expanded)
+            island.presentation.setInsightsExpanded(false)
+            try await Task.sleep(for: .milliseconds(400))
+            XCTAssertFalse(surface.isResizing)
+            XCTAssertEqual(island.panel.frame, initial, "Closing does not leave an oversized invisible window")
+        }
+    }
+
+    @MainActor func testReducedMotionSkipsDrawerGeometryAndShutdownCancelsInFlightSpring() throws {
+        _ = NSApplication.shared
+        guard let screen = NSScreen.screens.first else { throw XCTSkip("No attached screen") }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let model = DockModel(home: directory), usage = UsageStore(client: NoNetworkUsage())
+        var reduceMotion = true
+        let island = IslandController(screen: screen, model: model, usage: usage, presentWindows: false,
+                                      reduceMotion: { reduceMotion }, settings: {})
+        defer { island.shutdown(); usage.shutdown() }
+        island.pointerMoved(to: CGPoint(x: island.layout.collapsed.midX, y: island.layout.collapsed.midY))
+        let surface = try XCTUnwrap(island.panel.contentView as? IslandSurface)
+        island.presentation.setInsightsExpanded(true)
+        XCTAssertFalse(surface.isResizing)
+        XCTAssertEqual(island.panel.frame, island.layout.expanded)
+        reduceMotion = false
+        island.presentation.setInsightsExpanded(false)
+        XCTAssertTrue(surface.isResizing)
+        island.shutdown()
+        XCTAssertFalse(surface.isResizing)
+    }
+
     @MainActor func testNativeMenuAndSubmenuKeepStripOpenUntilDismissed() async throws {
         _ = NSApplication.shared
         guard let screen = NSScreen.screens.first else { throw XCTSkip("No attached screen") }
