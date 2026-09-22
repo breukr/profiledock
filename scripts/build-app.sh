@@ -36,7 +36,7 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <key>CFBundleDisplayName</key><string>ProfileDock</string>
 <key>CFBundleExecutable</key><string>AccountDock</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleVersion</key><string>149</string>
+<key>CFBundleVersion</key><string>150</string>
 <key>CFBundleShortVersionString</key><string>1.4.0</string>
 <key>CFBundleIconFile</key><string>ProfileDock</string>
 <key>CFBundleIconName</key><string>ProfileDock</string>
@@ -57,7 +57,7 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 </dict></plist>
 PLIST
 if [[ "${PROFILEDOCK_CONTEXT_PREVIEW:-0}" == "1" ]]; then
-    /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $bundle_id" -c "Set :CFBundleName $bundle_name" -c "Set :CFBundleDisplayName $bundle_name" -c "Set :CFBundleVersion 149" -c "Set :CFBundleShortVersionString 1.4.0-preview.10" -c "Add :ProfileDockContextPreview bool true" "$bundle/Contents/Info.plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $bundle_id" -c "Set :CFBundleName $bundle_name" -c "Set :CFBundleDisplayName $bundle_name" -c "Set :CFBundleVersion 150" -c "Set :CFBundleShortVersionString 1.4.0-preview.11" -c "Add :ProfileDockContextPreview bool true" "$bundle/Contents/Info.plist"
 fi
 # Compile the layered monochrome icon; macOS selects light/dark/tinted/clear.
 xcrun actool "$project_dir/Resources/ProfileDock.icon" --compile "$bundle/Contents/Resources" --output-format human-readable-text --output-partial-info-plist "$stage_dir/icon-info.plist" --app-icon ProfileDock --enable-on-demand-resources NO --target-device mac --minimum-deployment-target 14.0 --platform macosx --bundle-identifier nl.breukr.account-dock

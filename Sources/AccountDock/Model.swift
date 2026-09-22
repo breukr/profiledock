@@ -43,7 +43,8 @@ final class DockModel: ObservableObject {
         preferences.floatingPositions = (preferences.floatingPositions ?? [:]).merging([screenID: position]) { _, new in new }
         save()
     }
-    @Published var running: [String: [NSRunningApplication]] = [:]
+    @Published var running: [String: [RunningProfileApplication]] = [:]
+    private(set) var observedApplications: [RunningProfileApplication] = []
     @Published var activeProfile: String?
     @Published var opening: Set<String> = []
     @Published var closing: Set<String> = []
@@ -58,6 +59,7 @@ final class DockModel: ObservableObject {
     @Published var unreadableProcesses = false
     @Published var updatingApplications: Set<String> = []
     @Published var nativeDockOperations: Set<String> = []
+    @Published var nativeDockProgress: [String: NativeDockStage] = [:]
     let home: URL
     private let tracksApplications: Bool
     private var readinessTimer: Timer?
@@ -68,6 +70,7 @@ final class DockModel: ObservableObject {
     var onPreferencesChanged: (() -> Void)?
     lazy var contextSettings = ContextSettingsStore(home: home)
     private var imageCache: [String: NSImage] = [:]
+    private var artworkCache: [String: (profile: Profile, source: String, image: NSImage)] = [:]
 
     var iconsDirectory: URL { settingsURL.deletingLastPathComponent().appendingPathComponent("Icons") }
 
@@ -76,6 +79,21 @@ final class DockModel: ObservableObject {
         if let cached = imageCache[filename] { return cached }
         guard let image = NSImage(contentsOf: iconsDirectory.appendingPathComponent(filename)) else { return nil }
         imageCache[filename] = image
+        return image
+    }
+
+    /// One choice drives the editor, notch, profile list and menu, independently of Dock mode.
+    func artwork(for profile: Profile, style: DockIconStyle? = nil, margin: CGFloat = 0.1) -> NSImage {
+        var value = profile
+        if let style { value.dockIconStyle = style }
+        let source = applicationURL(for: value)
+        let version = source.flatMap { Bundle(url: $0)?.object(forInfoDictionaryKey: "CFBundleVersion") as? String } ?? ""
+        let sourceKey = (source?.path ?? "") + ":" + version
+        let key = "\(profile.id):\(value.profileIconStyle.rawValue):\(margin)"
+        if let cached = artworkCache[key], cached.profile == value, cached.source == sourceKey { return cached.image }
+        let vendor = source.map { NSWorkspace.shared.icon(forFile: $0.path) }
+        let image = NativeProfileArtwork.preview(profile: value, image: image(for: value), vendor: vendor, margin: margin)
+        artworkCache[key] = (value, sourceKey, image)
         return image
     }
 
@@ -93,6 +111,7 @@ final class DockModel: ObservableObject {
         var changed = profile
         changed.iconFilename = filename
         changed.iconIsTile = false
+        changed.dockIconStyle = .image
         update(changed)
     }
 
@@ -155,12 +174,12 @@ final class DockModel: ObservableObject {
     }
 
     private func refreshActiveProfile() {
-        let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
-        let active = running.first(where: { $0.value.contains(where: { $0.processIdentifier == pid }) })?.key
+        let active = running.first(where: { $0.value.contains(where: \.isActive) })?.key
         if activeProfile != active { activeProfile = active }
     }
 
     static func arguments(pid: pid_t) -> [String]? {
+        guard pid > 0 else { return nil }
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
         var size = 0
         guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 0, size < 8 * 1024 * 1024 else { return nil }
@@ -170,12 +189,25 @@ final class DockModel: ObservableObject {
         return ProcessIdentity.arguments(from: data.prefix(size))
     }
 
-    func refresh() {
+    func refresh(applications: [NSRunningApplication]? = nil, preparingNativePID: pid_t? = nil) {
         refreshCount += 1
-        guard tracksApplications else { return }
-        var result: [String: [NSRunningApplication]] = [:]
-        var unreadable = false
-        for app in NSWorkspace.shared.runningApplications where app.bundleIdentifier == "com.openai.codex" || app.bundleIdentifier?.hasPrefix(NativeDock.prefix) == true {
+        guard tracksApplications || applications != nil else { return }
+        var result: [String: [RunningProfileApplication]] = [:]
+        let snapshot = RunningProfileApplication.snapshot(applications: applications ?? NSWorkspace.shared.runningApplications)
+        observedApplications = snapshot.applications
+        var unreadable = snapshot.unresolved
+        for app in observedApplications {
+            if app.processIdentifier == preparingNativePID,
+               let profile = preferences.profiles.first(where: { NativeDock.identifier($0) == app.bundleIdentifier }),
+               let expected = nativeDockURL(for: profile),
+               app.bundleURL?.resolvingSymlinksInPath().path == expected.path,
+               let executable = try? NativeDockApp.info(expected)["CFBundleExecutable"] as? String,
+               RunningProfileApplication.executablePath(pid: app.processIdentifier) == expected.appendingPathComponent("Contents/MacOS/\(executable)").resolvingSymlinksInPath().path {
+                // The verified parent shim is waiting for this preparation process.
+                // A Finder launch has no user-data argument until the shim execs;
+                // do not mistake that one parent for an unidentified ChatGPT app.
+                continue
+            }
             guard let args = Self.arguments(pid: app.processIdentifier) else {
                 if !app.isTerminated { unreadable = true }
                 continue
@@ -303,7 +335,7 @@ final class DockModel: ObservableObject {
             return
         }
         guard !unreadableProcesses else {
-            showProfileMessage("A ChatGPT profile is still starting. Wait for its window to appear, then try again.", for: profile)
+            showProfileMessage("ProfileDock couldn’t identify a running ChatGPT app. Wait a moment, then try again.", for: profile)
             return
         }
         guard let appURL = applicationURL(for: profile),

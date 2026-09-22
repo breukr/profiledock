@@ -1,6 +1,23 @@
 import AppKit
 import DockCore
 
+enum NativeDockStage: Int, Comparable, Sendable {
+    case preparingIcon, checkingSource, copying, signing, verifyingCopy, installing, restoring
+
+    static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
+    var label: String {
+        switch self {
+        case .preparingIcon: return "Preparing your icon…"
+        case .checkingSource: return "Checking the original ChatGPT app…"
+        case .copying: return "Copying ChatGPT…"
+        case .signing: return "Signing your profile’s copy…"
+        case .verifyingCopy: return "Verifying the Dock app…"
+        case .installing: return "Installing the Dock app…"
+        case .restoring: return "Switching back to the signed app…"
+        }
+    }
+}
+
 /// Local wrapper construction adapted from ai-profiles 1.2.0 (MIT).
 /// Vendor files are only read. Re-sign only the moved executable and outer
 /// bundle; keep nested vendor frameworks and their signatures intact.
@@ -12,7 +29,9 @@ enum NativeDockApp {
 
     static func build(source: URL, profile: Profile, home: URL, data: URL, destination: URL, shim: URL, icon: Data,
                       sourceIdentity: URL? = nil, manager: URL? = nil,
-                      verifySource: (URL) throws -> Void = AppFiles.verifyVendorApp) throws {
+                      verifySource: (URL) throws -> Void = AppFiles.verifyVendorApp,
+                      progress: @Sendable (NativeDockStage) -> Void = { _ in }) throws {
+        progress(.checkingSource)
         try verifySource(source)
         let vendor = try info(source)
         var patched = try NativeDock.patchedInfo(vendor, profile: profile, home: home, data: data)
@@ -26,6 +45,7 @@ enum NativeDockApp {
         let entitlementFile = staging.appendingPathExtension("entitlements.plist")
         defer { try? fm.removeItem(at: staging); try? fm.removeItem(at: entitlementFile) }
         // APFS clone: independent files without a full additional copy of every resource.
+        progress(.copying)
         _ = try AppFiles.run("/bin/cp", ["-cR", source.path, staging.path])
         let contents = staging.appendingPathComponent("Contents")
         let main = contents.appendingPathComponent("MacOS/\(executable)")
@@ -47,9 +67,11 @@ enum NativeDockApp {
         try icon.write(to: contents.appendingPathComponent("Resources/ProfileDockProfile.icns"))
         try fm.moveItem(at: main, to: binary)
         try fm.copyItem(at: shim, to: main)
+        progress(.signing)
         for target in [binary, staging] {
             _ = try AppFiles.run("/usr/bin/codesign", ["--force", "--sign", "-", "--options", "runtime", "--entitlements", entitlementFile.path, target.path])
         }
+        progress(.verifyingCopy)
         _ = try AppFiles.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", staging.path])
         try fm.moveItem(at: staging, to: destination)
     }
@@ -108,7 +130,7 @@ enum NativeDockApp {
             || info["ProfileDockNativeColor"] as? String != profile.color
             || info["ProfileDockNativeImage"] as? String != (profile.iconFilename ?? "")
             || info["ProfileDockNativeIconText"] as? String != profile.dockLetters
-            || info["ProfileDockNativeIconStyle"] as? String != (profile.dockIconStyle ?? .initials).rawValue
+            || info["ProfileDockNativeIconStyle"] as? String != profile.profileIconStyle.rawValue
             || info[NativeDock.sourceKey] as? String != source.path
     }
 
@@ -134,20 +156,37 @@ enum NativeDockApp {
             && nativeDockChangeBlocker(for: profile) == nil
     }
 
-    func setNativeDockIcon(for requested: Profile, enabled: Bool, launchingPID: pid_t? = nil) async throws {
-        refresh()
+    func setNativeDockIcon(for requested: Profile, enabled: Bool, launchingPID: pid_t? = nil,
+                           verifySource: @escaping @Sendable (URL) throws -> Void = { try AppFiles.verifyVendorApp($0) },
+                           trashCopy: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }) async throws {
+        refresh(preparingNativePID: launchingPID)
         guard let profile = preferences.profiles.first(where: { $0.id == requested.id }) else {
             throw AppOperationError.message("This profile is no longer available.")
         }
         if let reason = nativeDockChangeBlocker(for: profile, launchingPID: launchingPID) { throw AppOperationError.message(reason) }
         nativeDockOperations.insert(profile.id)
-        defer { nativeDockOperations.remove(profile.id) }
+        nativeDockProgress[profile.id] = enabled ? .preparingIcon : .checkingSource
+        defer { nativeDockProgress.removeValue(forKey: profile.id); nativeDockOperations.remove(profile.id) }
         let parent = nativeDockDirectory.appendingPathComponent(profile.id)
         guard parent.resolvingSymlinksInPath().path == parent.standardizedFileURL.path else { throw CocoaError(.fileWriteNoPermission) }
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
         let lock = try NativeDockLock(directory: parent)
         defer { lock.release() }
         if !enabled {
+            // Do not discard the working copy unless its original is still available
+            // and signed by OpenAI. Switching mode never moves or removes account data.
+            guard let source = applicationURL(for: profile) else {
+                throw AppOperationError.message("The original ChatGPT app is missing. Reinstall it before disabling the Dock copy. Your copy and profile data have been kept.")
+            }
+            do { try await Task.detached { try verifySource(source) }.value }
+            catch { throw AppOperationError.message("The original ChatGPT app could not be verified. Reinstall the official app before switching back. Your Dock copy and profile data have been kept.") }
+            refresh(preparingNativePID: launchingPID)
+            guard nativeDockChangeBlocker(for: profile, launchingPID: launchingPID, ownPreparation: true) == nil,
+                  preferences.profiles.first(where: { $0.id == profile.id }) == profile,
+                  applicationURL(for: profile) == source else {
+                throw AppOperationError.message("This profile changed or its Dock app opened. Close the Dock app and try again.")
+            }
+            nativeDockProgress[profile.id] = .restoring
             // Remove the executable wrapper as well: a pinned stale icon must not reopen it.
             guard let app = nativeDockURL(for: profile) else {
                 if let path = profile.dockApplicationPath, FileManager.default.fileExists(atPath: path) {
@@ -155,7 +194,7 @@ enum NativeDockApp {
                 }
                 var updated = profile; updated.dockApplicationPath = nil; update(updated); return
             }
-            try FileManager.default.trashItem(at: app, resultingItemURL: nil)
+            try trashCopy(app)
             var updated = profile; updated.dockApplicationPath = nil; update(updated)
             return
         }
@@ -165,13 +204,14 @@ enum NativeDockApp {
         guard !exists || nativeDockURL(for: profile)?.path == destination.path else { throw CocoaError(.fileWriteFileExists) }
         let prepared = parent.appendingPathComponent(".prepared-\(UUID().uuidString).app")
         defer { try? FileManager.default.removeItem(at: prepared) }
-        try await prepareNativeDockCopy(profile: profile, source: source, sourceIdentity: source, destination: prepared)
+        try await prepareNativeDockCopy(profile: profile, source: source, sourceIdentity: source, destination: prepared, verifySource: verifySource)
         // A Finder/Dock click may have launched a profile while the copy was building.
-        refresh()
+        refresh(preparingNativePID: launchingPID)
         guard nativeDockChangeBlocker(for: profile, launchingPID: launchingPID, ownPreparation: true) == nil,
               preferences.profiles.first(where: { $0.id == profile.id }) == profile else {
             throw AppOperationError.message("This profile changed or its Dock app opened while building. Close the Dock app and try again.")
         }
+        nativeDockProgress[profile.id] = .installing
         if exists { try AppReplacement.swap(prepared: prepared, destination: destination) }
         else { try FileManager.default.moveItem(at: prepared, to: destination) }
         if profile.dockApplicationPath != destination.path {
@@ -180,7 +220,8 @@ enum NativeDockApp {
         NSWorkspace.shared.noteFileSystemChanged(destination.path)
     }
 
-    func prepareNativeDockCopy(profile: Profile, source: URL, sourceIdentity: URL, destination: URL) async throws {
+    func prepareNativeDockCopy(profile: Profile, source: URL, sourceIdentity: URL, destination: URL,
+                               verifySource: @escaping @Sendable (URL) throws -> Void = { try AppFiles.verifyVendorApp($0) }) async throws {
         let candidates = [Bundle.main.resourceURL?.appendingPathComponent("ProfileDockShim"), Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("ProfileDockShim")]
         guard let shim = candidates.compactMap({ $0 }).first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) else {
             throw AppOperationError.message("The profile helper is missing. Rebuild or reinstall ProfileDock.")
@@ -193,8 +234,15 @@ enum NativeDockApp {
             data = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) ?? candidates[0]
         } else { data = profile.home(in: home).appendingPathComponent("electron-user-data") }
         let userHome = home, manager = Bundle.main.executableURL
+        let progress: @Sendable (NativeDockStage) -> Void = { [weak self] stage in
+            Task { @MainActor in
+                guard let self, self.nativeDockOperations.contains(profile.id),
+                      let current = self.nativeDockProgress[profile.id], stage > current else { return }
+                self.nativeDockProgress[profile.id] = stage
+            }
+        }
         try await Task.detached {
-            try NativeDockApp.build(source: source, profile: profile, home: userHome, data: data, destination: destination, shim: shim, icon: icon, sourceIdentity: sourceIdentity, manager: manager)
+            try NativeDockApp.build(source: source, profile: profile, home: userHome, data: data, destination: destination, shim: shim, icon: icon, sourceIdentity: sourceIdentity, manager: manager, verifySource: verifySource, progress: progress)
         }.value
     }
 }
