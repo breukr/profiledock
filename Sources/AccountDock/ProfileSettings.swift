@@ -75,6 +75,8 @@ struct ProfileSettingsSheet: View {
                                         Button(profile.iconFilename == nil ? "Choose image…" : "Replace image…") { model.chooseImage(for: profile, window: NSApp.keyWindow) }
                                         if profile.iconFilename != nil { Button("Remove image") { model.removeImage(for: profile) } }
                                     }
+                                    Text("Images fill the rounded icon. Wide or tall images are cropped from the center.")
+                                        .font(.caption).foregroundStyle(.secondary)
                                 }
                                 Text(profile.dockApplicationPath == nil ? "Preview only. Enable Native macOS Dock icon below to apply this look to the running app." : "Appearance changes apply when this profile next opens from ProfileDock.").font(.caption).foregroundStyle(.secondary)
                             }.padding(10)

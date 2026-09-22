@@ -4,7 +4,7 @@ import SwiftUI
 enum SettingsDestination: String, CaseIterable, Identifiable {
     case profiles = "Profiles", search = "Search Chats", insights = "Usage Insights"
     case general = "General", appearance = "Appearance", icons = "Profile Icons", access = "Context Access", updates = "Updates"
-    case support = "About & Support"
+    case support = "Support", about = "About"
 
     var id: String { rawValue }
     static let workspace: [Self] = [.profiles, .search, .insights]
@@ -26,7 +26,8 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .icons: return "app.badge"
         case .access: return "lock.shield"
         case .updates: return "arrow.down.circle"
-        case .support: return "info.circle"
+        case .support: return "heart.fill"
+        case .about: return "info.circle"
         }
     }
 
@@ -40,7 +41,8 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .icons: return "Give each profile a recognizable icon."
         case .access: return "Choose which profiles can share earlier conversations."
         case .updates: return "Keep ProfileDock and your ChatGPT apps up to date."
-        case .support: return "An independent companion, made by Breukr."
+        case .support: return "Help keep ProfileDock free and independent."
+        case .about: return "An independent companion, made by Breukr."
         }
     }
 
@@ -54,7 +56,8 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .icons: return "custom color colour image initials native experimental dock"
         case .access: return "permissions privacy sharing tagging mentions context"
         case .updates: return "versions software install download repair"
-        case .support: return "help version about donate sponsorship github"
+        case .support: return "donate donation sponsor sponsorship contribute heart"
+        case .about: return "help version guide feedback issues github privacy security"
         }
     }
 

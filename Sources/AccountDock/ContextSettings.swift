@@ -189,9 +189,12 @@ struct ContextSettingsView: View {
                     .frame(maxWidth: .infinity, minHeight: 220)
             } else {
                 HStack {
-                    Picker(mode == .access ? "Profile that can tag" : "Search as", selection: Binding(get: { store.callerID }, set: { store.selectCaller($0, check: mode == .access) })) {
-                        ForEach(store.profiles) { Text($0.name).tag($0.id) }
-                    }.disabled(store.connecting).frame(maxWidth: 360)
+                    HStack(spacing: 8) {
+                        Text(mode == .access ? "Profile that can tag" : "Search as").fixedSize()
+                        Picker(mode == .access ? "Profile that can tag" : "Search as", selection: Binding(get: { store.callerID }, set: { store.selectCaller($0, check: mode == .access) })) {
+                            ForEach(store.profiles) { Text($0.name).tag($0.id) }
+                        }.labelsHidden().disabled(store.connecting)
+                    }.frame(maxWidth: 360, alignment: .leading)
                     Spacer()
                     if mode == .search { Button("Manage access…", action: manageAccess) }
                 }
@@ -222,7 +225,7 @@ struct ContextSettingsView: View {
                         ForEach(store.profiles.filter { $0.id != store.callerID }) { profile in
                             Toggle(isOn: Binding(get: { store.access.allows(caller: store.callerID, source: profile.id) }, set: { store.setAllowed(profile, $0) })) {
                                 HStack { Text(profile.name); Spacer(); Text(profile.alias).font(.caption.monospaced()).foregroundStyle(.secondary) }
-                            }.toggleStyle(.switch).accessibilityLabel("\(store.caller?.name ?? "This profile") can tag \(profile.name)")
+                            }.toggleStyle(.switch).controlSize(.small).accessibilityLabel("\(store.caller?.name ?? "This profile") can tag \(profile.name)")
                         }
                         if store.profiles.count == 1 { Text("Add another profile to share conversation context.").foregroundStyle(.secondary) }
                         Text("Access goes in one direction. Allowing Work to tag Personal does not allow Personal to tag Work. Only enable the directions you want. Search stays local; excerpts used in a task become context in that task's account.")

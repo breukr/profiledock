@@ -7,6 +7,8 @@ public enum NativeDock {
     public static let homeKey = "ProfileDockNativeHome"
     public static let dataKey = "ProfileDockNativeUserData"
     public static let versionKey = "ProfileDockNativeVendorVersion"
+    public static let artworkVersionKey = "ProfileDockNativeArtworkVersion"
+    public static let artworkVersion = 2
     public static let sourceKey = "ProfileDockNativeSourceApp"
     public static let managerKey = "ProfileDockNativeManager"
 
@@ -41,6 +43,7 @@ public enum NativeDock {
         info[homeKey] = profile.home(in: home).path
         info[dataKey] = data.path
         info[versionKey] = version
+        info[artworkVersionKey] = artworkVersion
         info["ProfileDockNativeColor"] = profile.color
         info["ProfileDockNativeImage"] = profile.iconFilename ?? ""
         info["ProfileDockNativeIconStyle"] = (profile.dockIconStyle ?? .initials).rawValue
