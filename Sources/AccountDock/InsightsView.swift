@@ -237,6 +237,8 @@ struct InsightsDrawer: View {
     @ObservedObject var store: InsightsStore
     @ObservedObject var presentation: IslandPresentation
     @State private var hoverTask: Task<Void, Never>?
+    @State private var hovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var mode: InsightsExpansion { model.preferences.insightsExpansion ?? .button }
     private var expanded: Bool { mode == .always || presentation.insightsExpanded }
     var body: some View {
@@ -249,7 +251,9 @@ struct InsightsDrawer: View {
                         Image(systemName: "chart.bar.xaxis").foregroundStyle(.blue)
                         Text("Usage insights").fontWeight(.medium)
                         Spacer(minLength: 5)
-                        Image(systemName: expanded ? "chevron.up" : "chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+                        Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(expanded ? 180 : 0))
+                            .animation(reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.86), value: expanded)
                     }.contentShape(Rectangle())
                 }.buttonStyle(.plain).disabled(mode == .always)
                     .accessibilityLabel(mode == .always ? "Usage insights, always expanded" : expanded ? "Collapse usage insights" : "Expand usage insights")
@@ -260,19 +264,25 @@ struct InsightsDrawer: View {
                 } label: { Image(systemName: "ellipsis.circle").foregroundStyle(.secondary) }.menuStyle(.borderlessButton).fixedSize()
                     .help("Choose whether insights open on click, on hover, or stay expanded")
             }.font(.system(size: 11)).frame(height: 24)
+                .background(.white.opacity(hovering ? 0.055 : 0), in: RoundedRectangle(cornerRadius: 6))
+                .animation(.easeOut(duration: 0.14), value: hovering)
                 .onHover { hovering in
+                    self.hovering = hovering
                     hoverTask?.cancel()
                     guard hovering, mode == .hover, !expanded else { return }
                     hoverTask = Task { @MainActor in
                         do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+                        guard !Task.isCancelled, presentation.expanded, mode == .hover else { return }
                         presentation.setInsightsExpanded(true)
                     }
                 }
             if expanded {
                 InsightsPanel(model: model, store: store, compact: true, active: presentation.expanded,
                               onPopoverChange: { presentation.insightsPopoverPresented = $0 })
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: -6)))
             }
         }
+        .animation(.easeOut(duration: reduceMotion ? 0.12 : 0.24), value: expanded)
         .onChange(of: presentation.expanded) { _, open in
             if !open { hoverTask?.cancel() }
         }
