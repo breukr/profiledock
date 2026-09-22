@@ -18,6 +18,7 @@ Context sharing is a separate, opt-in feature. Its local preview stays on your M
 - Preferences and resized pictures in `~/Library/Application Support/Account Dock`. This historical folder name remains for compatibility.
 - New local profiles in `~/.codex-profile-…`; no existing credentials or conversations are copied into a new profile.
 - Finder launchers in `~/Applications/ProfileDock Launchers` and optional signed ChatGPT copies in `~/Applications/ProfileDock Apps`.
+- When experimental native Dock icons are explicitly enabled, locally re-signed ChatGPT copies in `~/Applications/ProfileDock Dock Apps`. The original signed app and profile data directories are retained. Copy preparation, repairs and updates may also create temporary or recovery app bundles.
 - Downloaded updates in a temporary directory, and a recovery copy beside each replaced app.
 - Directional Context permissions and the bundled helper in `~/Library/Application Support/Account Dock/Context` (private directory 0700; permissions file 0600). No persistent transcript index is created. Source databases are opened read-only. For closed WAL-mode databases without sidecars, the helper makes a consistency-checked copy in a private temporary directory, reads that copy, then deletes it when the read finishes. A crash may leave a temporary copy for macOS cleanup; it can contain the original database's text. Live WAL records are never silently ignored.
 - When you select Context **Connect**, the official `codex mcp add` command registers a profile-bound local helper in that profile's Codex configuration. ProfileDock also installs its marked skill in `skills/profiledock-context/SKILL.md`, plus a small skill and UI metadata for each enabled source in that receiving profile's skills directory. These source skills let the desktop chat offer profile mentions in its existing skill picker. They contain profile labels and stable IDs, never conversation text. Other server entries and custom skills are preserved. **Disconnect & turn off sharing** revokes that caller's grants first, removes the managed connection and unmodified skills, and keeps source conversations intact.
@@ -35,6 +36,8 @@ Repository and donation links open when clicked. The terminal installer uses Git
 ## Boundaries
 
 Separate profiles are a convenience within one macOS account, not isolation of Keychain, filesystem, developer tools, or server-side access. Verify the signed-in account in each ChatGPT window. Use separate macOS users when you need stronger separation.
+
+Experimental native Dock copies replace OpenAI's signature, remove vendor-only permissions and disable library validation. Some integrations and sign-in or permission prompts can differ from the original signed app. The option is off by default, and generated copies are never distributed with ProfileDock. Disabling first verifies the original app's signature, then removes the copy without moving or deleting profile data. See [native Dock tradeoffs](docs/NATIVE-DOCK.md).
 
 The reset and activity interfaces are not a compatibility guarantee from OpenAI. Unknown and unavailable readings are shown explicitly. ProfileDock does not redeem resets or alter subscription plans.
 

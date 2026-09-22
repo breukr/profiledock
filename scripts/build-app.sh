@@ -26,6 +26,7 @@ ditto Resources/Sounds "$bundle/Contents/Resources/Sounds"
 ditto Resources/Brand "$bundle/Contents/Resources/Brand"
 strip -S "$bundle/Contents/MacOS/AccountDock"
 strip -S "$bundle/Contents/MacOS/ProfileDockContext"
+strip -S "$bundle/Contents/Resources/ProfileDockShim"
 cp THIRD_PARTY_NOTICES.md "$bundle/Contents/Resources/ThirdPartyNotices.txt"
 cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
