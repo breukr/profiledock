@@ -15,6 +15,16 @@
 
 **Quick switching:** click the menu-bar icon to open the dropdown. Profiles use their own icons; a checkmark identifies the active profile. **Open ProfileDock…** opens the profile list. Click a profile name to edit it, or use its **•••** menu for more actions.
 
+**Profile icons:** choose a colored dot, initials or custom letters, a custom image, or a colored ChatGPT logo in the profile editor. The notch, profile list and menu update immediately, even with experimental mode off. Square, wide and tall images fill a rounded tile without distortion. The optional **Native macOS Dock icon** also gives the running ChatGPT app this identity. Setup displays its current copy, signing and installation stage; [setup and tradeoffs](NATIVE-DOCK.md) explain how to return to the original signed app.
+
+**Search earlier chats:** open **Search Chats** for local Work/Codex conversations. Choose all words, any word or an exact phrase, then narrow by source, date or archive status. Results retain their source and date and open around the matching passage. Your own profile needs no sharing permission; other sources require explicit, directional access in **Context Access**. [Context setup and limits](CONTEXT.md).
+
+**Usage Insights:** use its sidebar page or the drawer beneath the profile strip. Hover mode adds a short delay before opening, followed by a spring and content fade. The drawer stays open while its chart controls are in use. Reduce Motion skips geometry changes. [Metrics and coverage](INSIGHTS.md).
+
+**Warnings and retry:** recovery buttons retry the affected profile or operation. A failed window switch does not silently launch another account. Dock-copy errors stay visible in the profile editor with **Try Again**.
+
+**Support and About:** the pink-heart **Support** page offers optional one-time donations and monthly sponsorships. **About**, last in the sidebar, contains version information, the guide and feedback links.
+
 **Shared app or separate copy?** Shared profiles use less disk space but update together. A separate, unmodified ChatGPT copy uses more space and can update independently. Click a profile’s name and expand **App Installation** to create a copy or return to the shared app.
 
 **Remove a profile:** close it, then choose **Remove profile**. Data stays on your Mac by default. For profiles created here, you can also move their data and app copy to the Trash. Imported profiles' original data is protected from deletion here.
@@ -41,4 +51,4 @@ The app, menu bar, and GitHub use matching four-tile [artwork](BRANDING.md), wit
 - Update selection is by physical app bundle. The signed source app keeps its updater; experimental native Dock copies update through ProfileDock. New ProfileDock releases require Apple Silicon and macOS 14 or later.
 - Only the apps selected for an update restart. If an app refuses to quit, it is not force-closed. A hidden copy of its previous version is retained beside an updated app for recovery.
 
-Read [Privacy & security](PRIVACY.md). ProfileDock is an independent project and is not affiliated with OpenAI.
+Read [Privacy & security](../PRIVACY.md). ProfileDock is an independent project and is not affiliated with OpenAI.
