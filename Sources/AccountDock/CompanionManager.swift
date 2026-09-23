@@ -47,6 +47,7 @@ import DockCore
     func sessions(for profile: Profile) -> [ClaudeSession] {
         if profile.kind == .claude { return sessions.filter { $0.tty == nil } }
         guard profile.kind.usesTerminal else { return [] }
+        if window(for: profile)?.agent == .codex { return [] }
         return sessions.filter { session in
             if let id = profile.claudeSessionID, session.id == id { return true }
             return window(for: profile) != nil && session.tty == profile.terminalTTY && ClaudeProcess.isAlive(session)
@@ -55,12 +56,25 @@ import DockCore
 }
 
 @MainActor extension DockModel {
+    var displayedProfiles: [Profile] {
+        preferences.profiles.filter { !$0.kind.usesTerminal || companions.window(for: $0)?.agent != nil }
+    }
+    func terminalAgent(for profile: Profile) -> TerminalAgent? { companions.window(for: profile)?.agent }
+    func moveDisplayed(_ id: String, by delta: Int) {
+        let shown = displayedProfiles
+        guard let index = shown.firstIndex(where: { $0.id == id }), shown.indices.contains(index + delta) else { return }
+        move(id, to: shown[index + delta].id)
+    }
     var claudeBridge: ClaudeBridge { ClaudeBridge(home: home) }
     func rememberCompanionSessions() {
         var changed = false
         for index in preferences.profiles.indices {
             let profile = preferences.profiles[index]
-            guard profile.kind.usesTerminal, companions.window(for: profile) != nil,
+            guard profile.kind.usesTerminal, let window = companions.window(for: profile) else { continue }
+            if let agent = window.agent, agent != profile.terminalAgent {
+                preferences.profiles[index].terminalAgent = agent; changed = true
+            }
+            guard window.agent == .claude,
                   let latest = companions.sessions.filter({ $0.tty == profile.terminalTTY && ClaudeProcess.isAlive($0) }).max(by: { $0.updatedAt < $1.updatedAt }),
                   profile.claudeSessionID != latest.id else { continue }
             preferences.profiles[index].claudeSessionID = latest.id
@@ -82,13 +96,14 @@ import DockCore
     }
     func bind(_ profile: inout Profile, to window: TerminalWindow) {
         profile.terminalTTY = window.tty; profile.terminalWindowID = window.windowID
+        profile.terminalAgent = window.agent
         profile.terminalProcessStarted = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Terminal").first.flatMap { ClaudeProcess.startTime($0.processIdentifier) }
         profile.claudeSessionID = companions.sessions.filter { $0.tty == window.tty && ClaudeProcess.isAlive($0) }.max(by: { $0.updatedAt < $1.updatedAt })?.id
     }
     func companionApplications(_ applications: [NSRunningApplication]) -> [String: [RunningProfileApplication]] {
         var result: [String: [RunningProfileApplication]] = [:]
         for profile in preferences.profiles where profile.kind != .codex {
-            guard profile.kind == .claude || companions.window(for: profile) != nil,
+            guard profile.kind == .claude || companions.window(for: profile)?.agent != nil,
                   let app = applications.first(where: { $0.bundleIdentifier == profile.kind.bundleIdentifier }),
                   let running = RunningProfileApplication(app) else { continue }
             result[profile.id] = [running]
@@ -121,7 +136,7 @@ import DockCore
                 if let window = windows.first(where: { $0.matches(profile, processStarted: started) }) {
                     try await TerminalClient.shared.select(window)
                 } else {
-                    let window = try await TerminalClient.shared.open(project: profile.projectPath ?? home.path, claude: profile.kind == .claudeCode)
+                    let window = try await TerminalClient.shared.open(project: profile.projectPath ?? home.path, agent: profile.kind == .claudeCode ? .claude : profile.terminalAgent)
                     if var current = preferences.profiles.first(where: { $0.id == profile.id }) {
                         bind(&current, to: window); update(current)
                     }

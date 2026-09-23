@@ -46,7 +46,7 @@ Usage insights cover local profile history, not an account-wide billing record. 
 Diagnostics are opt-in local files and can contain profile identifiers and app paths. Review them before sharing; never attach credentials, raw task databases, or private screenshots to a public issue.
 # Claude and Terminal integration
 
-The development version can control Apple Terminal through macOS Automation permission. It reads window/tab identifiers and titles, not terminal contents or scrollback. A user-selected project folder is retained for reopening a tab.
+The development version can control Apple Terminal through macOS Automation permission. It reads window/tab identifiers and titles, plus process executable names, TTYs and foreground state to detect active Claude Code and Codex terminals. It does not read terminal contents, scrollback or CLI command arguments. A user-selected project folder is retained for reopening a tab.
 
 The optional Claude Code bridge receives local hook and status-line input. It persists only session metadata, activity and usage counters. Prompts, tool inputs, responses and credentials from hook input are discarded. Existing Claude hooks are preserved, an existing status-line command retains its input/output, and private backups are kept before changing configuration.
 

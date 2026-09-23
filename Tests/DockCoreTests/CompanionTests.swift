@@ -2,6 +2,20 @@ import XCTest
 @testable import DockCore
 
 final class CompanionTests: XCTestCase {
+    func testCodingTerminalDetectionRequiresAnActualForegroundAgent() {
+        let table = """
+        ttys001 S+ /Users/fixture/.local/bin/claude
+        ttys002 R+ /opt/bin/codex
+        ttys003 S+ /bin/zsh
+        ttys004 S /opt/bin/claude
+        ttys005 T+ /opt/bin/codex
+        ?? S+ /Applications/Claude.app/Contents/MacOS/Claude
+        ttys006 S+ /opt/bin/not-claude
+        ttys007 Z+ /opt/bin/claude
+        ttys008 S+ /Users/fixture/Folder With Spaces/claude
+        """
+        XCTAssertEqual(TerminalAgent.processes(table), ["/dev/ttys001": .claude, "/dev/ttys002": .codex, "/dev/ttys008": .claude])
+    }
     func testExistingProfilesDecodeAsCodexAndKeepTheirHome() throws {
         let profile = try JSONDecoder().decode(Profile.self, from: Data(#"{"id":"default","name":"Personal","color":"abcdef"}"#.utf8))
         XCTAssertEqual(profile.kind, .codex)

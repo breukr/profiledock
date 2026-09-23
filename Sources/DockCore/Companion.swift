@@ -1,5 +1,25 @@
 import Foundation
 
+public enum TerminalAgent: String, Codable, Sendable {
+    case claude, codex
+    public var label: String { self == .claude ? "Claude Code" : "Codex" }
+    public var bundleIdentifier: String { self == .claude ? "com.anthropic.claudefordesktop" : "com.openai.codex" }
+    /// Only foreground CLI executables count, never window titles, arguments or idle shells.
+    public static func processes(_ table: String) -> [String: TerminalAgent] {
+        var result: [String: TerminalAgent] = [:]
+        for line in table.split(separator: "\n") {
+            let fields = line.split(maxSplits: 2, whereSeparator: { $0.isWhitespace })
+            guard fields.count == 3, fields[1].contains("+"), !fields[1].contains("T"), !fields[1].contains("Z") else { continue }
+            let tty = "/dev/" + fields[0]
+            guard ClaudeSession.validTTY(tty) else { continue }
+            let executable = URL(fileURLWithPath: String(fields[2])).lastPathComponent.lowercased()
+            guard let agent = TerminalAgent(rawValue: executable) else { continue }
+            result[tty] = agent
+        }
+        return result
+    }
+}
+
 public enum ProfileProvider: String, Codable, CaseIterable, Sendable {
     case codex, claude, terminal, claudeCode
     public var label: String {

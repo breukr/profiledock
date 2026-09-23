@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private var globalMouseMonitor: Any?
     private var localMouseMonitor: Any?
     private var mouseEvents = 0
+    private var displayedProfileIDs: [String] = []
 
     override init() {
         let contextPreview = Bundle.main.object(forInfoDictionaryKey: "ProfileDockContextPreview") as? Bool == true
@@ -93,6 +94,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             guard let self else { return }
             self.activity.updateCompanions(model: self.model)
             self.usage.updateCompanions(model: self.model)
+            let ids = self.model.displayedProfiles.map(\.id)
+            if ids != self.displayedProfileIDs {
+                self.displayedProfileIDs = ids
+                self.islands.forEach { $0.updateLayout() }
+                self.configureMenu(); if !self.previewMode { self.registerHotKeys() }
+            }
         }.store(in: &subscriptions)
         model.$message.dropFirst().sink { [weak self] _ in DispatchQueue.main.async { self?.islands.forEach { $0.updateLayout() } } }.store(in: &subscriptions)
         model.$running.dropFirst().sink { [weak self] running in
@@ -187,7 +194,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         menu.delegate = self
         menu.addItem(.sectionHeader(title: "Switch Profile"))
         if model.preferences.profiles.isEmpty { menu.addItem(withTitle: "No profiles yet", action: nil, keyEquivalent: "") }
-        for (index, profile) in model.preferences.profiles.enumerated() {
+        for (index, profile) in model.displayedProfiles.enumerated() {
             let item = NSMenuItem(title: profile.name, action: #selector(menuSelect(_:)), keyEquivalent: index < 9 ? String(index + 1) : "")
             item.keyEquivalentModifierMask = [.command, .option]
             item.representedObject = profile.id
@@ -345,13 +352,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 let delegate = Unmanaged<AppDelegate>.fromOpaque(pointer).takeUnretainedValue()
                 MainActor.assumeIsolated {
                     let index = Int(id.id) - 1
-                    if delegate.model.preferences.profiles.indices.contains(index) { delegate.model.select(delegate.model.preferences.profiles[index]) }
+                    if delegate.model.displayedProfiles.indices.contains(index) { delegate.model.select(delegate.model.displayedProfiles[index]) }
                 }
                 return noErr
             }, 1, &event, Unmanaged.passUnretained(self).toOpaque(), &eventHandler)
         }
         let codes = [kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3, kVK_ANSI_4, kVK_ANSI_5, kVK_ANSI_6, kVK_ANSI_7, kVK_ANSI_8, kVK_ANSI_9]
-        for index in 0..<min(model.preferences.profiles.count, codes.count) {
+        for index in 0..<min(model.displayedProfiles.count, codes.count) {
             var reference: EventHotKeyRef?
             let status = RegisterEventHotKey(UInt32(codes[index]), UInt32(cmdKey | optionKey), EventHotKeyID(signature: 0x41444F43, id: UInt32(index + 1)), GetApplicationEventTarget(), 0, &reference)
             if status == noErr, let reference { hotKeys.append(reference) }

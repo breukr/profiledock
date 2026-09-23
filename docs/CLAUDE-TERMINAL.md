@@ -2,6 +2,10 @@
 
 Add Claude Desktop, a Claude Code project, or an Apple Terminal tab from **Profiles → Add Profile → App**. These entries share the strip, colors, custom artwork, keyboard shortcuts, Finder shortcuts and ordering with Codex profiles.
 
+Only open Terminal tabs with a foreground Claude Code or Codex process appear in the strip or terminal suggestions. Idle shells, stopped/background agents and closed tabs are excluded. A small circular agent logo on the upper-right corner of the Terminal icon identifies the active tool, including when it changes in the same tab. Detection reads process executable names, TTYs and foreground state, never command arguments or terminal contents. The picker refreshes while open and revalidates a selection before saving it.
+
+Saved projects remain in Profiles settings so they can be reopened. Hidden terminals do not consume strip space or keyboard shortcuts. Order is stored independently of visibility. Codex terminal support covers detection, branding and window control; per-tab Codex CLI activity/usage is unavailable rather than borrowed from an unrelated desktop account.
+
 Drag the dotted handle on a tile or profile row to reorder it. The highlighted tile is the destination. The new order is saved when you drop; cancelling or dropping outside keeps the old order. Hover over the page arrows while dragging to reach another page. Move earlier/later actions remain available through the tile menu and accessibility actions.
 
 ## Windows

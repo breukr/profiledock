@@ -19,6 +19,13 @@ final class CompanionRenderingTests: XCTestCase {
         try model.createCompanion(kind: .claude, name: "Claude", project: nil)
         try model.createCompanion(kind: .claudeCode, name: "Website project", project: home)
         try model.createCompanion(kind: .terminal, name: "Terminal", project: home)
+        model.companions.terminalStarted = 42
+        for index in model.preferences.profiles.indices where model.preferences.profiles[index].kind.usesTerminal {
+            var profile = model.preferences.profiles[index]
+            profile.terminalTTY = "/dev/ttys12\(index)"; profile.terminalWindowID = index; profile.terminalProcessStarted = 42
+            model.update(profile)
+            model.companions.windows.append(TerminalWindow(windowID: index, tty: profile.terminalTTY!, title: "Fixture", selected: false, front: false, agent: profile.kind == .claudeCode ? .claude : .codex))
+        }
         for width in [360.0, 680, 1040] {
             for scale in [0.85, 1, 1.3] {
                 model.preferences.scale = scale

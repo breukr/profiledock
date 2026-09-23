@@ -7,6 +7,8 @@ struct TerminalWindow: Codable, Identifiable, Equatable, Sendable {
     let title: String
     let selected: Bool
     let front: Bool
+    var agent: TerminalAgent? = nil
+    var suggestionLabel: String { [agent?.label ?? "", title, tty].joined(separator: " · ") }
     var id: String { "\(windowID):\(tty)" }
     func matches(_ profile: Profile, processStarted: Double?) -> Bool {
         profile.kind.usesTerminal && profile.terminalTTY == tty && profile.terminalWindowID == windowID
@@ -76,11 +78,25 @@ actor TerminalClient {
             return result
         }.value
     }
-    func windows() async throws -> [TerminalWindow] { try JSONDecoder().decode([TerminalWindow].self, from: await run(["list"])) }
-    func open(project: String, claude: Bool) async throws -> TerminalWindow {
+    func windows() async throws -> [TerminalWindow] {
+        let windows = try JSONDecoder().decode([TerminalWindow].self, from: await run(["list"]))
+        guard !windows.isEmpty else { return [] }
+        let agents = try await Task.detached(priority: .utility) {
+            let process = Process(), output = Pipe()
+            process.executableURL = URL(fileURLWithPath: "/bin/ps")
+            process.arguments = ["-axo", "tty=,stat=,comm="]
+            process.standardOutput = output; process.standardError = FileHandle.nullDevice
+            try process.run()
+            let data = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
+            guard process.terminationStatus == 0 else { throw CompanionError.message("Running coding terminals could not be detected.") }
+            return TerminalAgent.processes(String(data: data, encoding: .utf8) ?? "")
+        }.value
+        return windows.map { var value = $0; value.agent = agents[value.tty]; return value }
+    }
+    func open(project: String, agent: TerminalAgent? = nil) async throws -> TerminalWindow {
         var directory: ObjCBool = false
         guard project.hasPrefix("/"), !project.contains("\0"), FileManager.default.fileExists(atPath: project, isDirectory: &directory), directory.boolValue else { throw CompanionError.message("Choose an existing project folder.") }
-        let command = "cd -- " + ClaudeBridgeSettings.shellQuote(project) + (claude ? " && claude" : "")
+        let command = "cd -- " + ClaudeBridgeSettings.shellQuote(project) + (agent.map { " && " + $0.rawValue } ?? "")
         return try JSONDecoder().decode(TerminalWindow.self, from: await run(["open", command]))
     }
     func select(_ window: TerminalWindow) async throws { _ = try await run(["select", String(window.windowID), window.tty]) }

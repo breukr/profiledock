@@ -75,7 +75,7 @@ final class IslandController {
         } else { notchWidth = 180 }
         let topInset = screen.frame.maxY - screen.visibleFrame.maxY
         let menuBarHeight = topInset > 0 ? topInset : NSStatusBar.system.thickness
-        return IslandLayout(screen: screen.frame, notchHeight: screen.safeAreaInsets.top, notchWidth: notchWidth, count: model.preferences.profiles.count, scale: model.preferences.scale, hasMessage: model.message != nil, menuBarHeight: menuBarHeight, showsResetDetails: showsResetDetails, placement: model.placement, visibleFrame: screen.visibleFrame, position: position ?? model.floatingPosition(for: positionKey(for: screen)), usageRows: usageRows, showsInsights: showsInsights || model.preferences.insightsExpansion == .always, compactWidth: model.preferences.compactWidth, expandedWidth: model.preferences.expandedWidth)
+        return IslandLayout(screen: screen.frame, notchHeight: screen.safeAreaInsets.top, notchWidth: notchWidth, count: model.displayedProfiles.count, scale: model.preferences.scale, hasMessage: model.message != nil, menuBarHeight: menuBarHeight, showsResetDetails: showsResetDetails, placement: model.placement, visibleFrame: screen.visibleFrame, position: position ?? model.floatingPosition(for: positionKey(for: screen)), usageRows: usageRows, showsInsights: showsInsights || model.preferences.insightsExpansion == .always, compactWidth: model.preferences.compactWidth, expandedWidth: model.preferences.expandedWidth)
     }
 
     init(screen: NSScreen, model: DockModel, usage: UsageStore, activity: ActivityMonitor? = nil, insights: InsightsStore? = nil, presentWindows: Bool = true,

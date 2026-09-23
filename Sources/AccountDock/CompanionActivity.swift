@@ -17,7 +17,7 @@ extension ActivityMonitor {
             }.count
             let summary = ActivitySummary(unread: unread, working: live.filter { $0.state == .working }.count,
                 waiting: live.filter { $0.state == .waiting || $0.state == .failed }.count,
-                liveAvailable: !live.isEmpty || (profile.kind == .terminal && open), appOpen: open)
+                liveAvailable: !live.isEmpty, appOpen: open)
             for session in live {
                 let key = profile.id + ":" + session.id
                 if let previous = companionStates[key], previous != session.state {

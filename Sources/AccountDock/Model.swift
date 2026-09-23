@@ -75,6 +75,16 @@ final class DockModel: ObservableObject {
     lazy var contextSettings = ContextSettingsStore(home: home)
     private var imageCache: [String: NSImage] = [:]
     private var artworkCache: [String: (profile: Profile, source: String, image: NSImage)] = [:]
+    private var terminalAgentArt: [TerminalAgent: NSImage] = [:]
+    func terminalAgentArtwork(_ agent: TerminalAgent) -> NSImage {
+        if let cached = terminalAgentArt[agent] { return cached }
+        var profile = Profile(id: agent.rawValue, name: agent == .claude ? "Cl" : "Cx", color: agent == .claude ? "C97B5D" : "202020")
+        profile.dockIconStyle = .chatgpt
+        let vendor = NSWorkspace.shared.urlForApplication(withBundleIdentifier: agent.bundleIdentifier).map { NSWorkspace.shared.icon(forFile: $0.path) }
+        let image = NativeProfileArtwork.preview(profile: profile, image: nil, vendor: vendor, margin: 0)
+        terminalAgentArt[agent] = image
+        return image
+    }
 
     var iconsDirectory: URL { settingsURL.deletingLastPathComponent().appendingPathComponent("Icons") }
 
@@ -90,7 +100,7 @@ final class DockModel: ObservableObject {
     func artwork(for profile: Profile, style: DockIconStyle? = nil, margin: CGFloat = 0.1) -> NSImage {
         var value = profile
         if let style { value.dockIconStyle = style }
-        let source = value.kind == .claudeCode ? (NSWorkspace.shared.urlForApplication(withBundleIdentifier: ProfileProvider.claude.bundleIdentifier) ?? applicationURL(for: value)) : applicationURL(for: value)
+        let source = applicationURL(for: value)
         let version = source.flatMap { Bundle(url: $0)?.object(forInfoDictionaryKey: "CFBundleVersion") as? String } ?? ""
         let sourceKey = (source?.path ?? "") + ":" + version
         let key = "\(profile.id):\(value.profileIconStyle.rawValue):\(margin)"
@@ -167,6 +177,7 @@ final class DockModel: ObservableObject {
     }
 
     @objc private func workspaceChanged(_ notification: Notification) {
+        guard tracksApplications else { return }
         if notification.name == NSWorkspace.didActivateApplicationNotification {
             companions.refresh()
             refreshActiveProfile()
@@ -430,6 +441,7 @@ final class DockModel: ObservableObject {
         if closing.contains(profile.id) { return "Closing…" }
         if opening.contains(profile.id) { return "Opening…" }
         if profile.kind.usesTerminal, companions.terminalError != nil { return "Status unavailable" }
+        if profile.kind.usesTerminal, let window = companions.window(for: profile), window.agent == nil { return "No coding session" }
         if activeProfile == profile.id { return "Active" }
         return running[profile.id]?.isEmpty == false ? "Open" : "Closed"
     }

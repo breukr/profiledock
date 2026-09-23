@@ -69,6 +69,16 @@ struct ProfileBadge: View {
                 }
             }
         }
+        .overlay(alignment: .topTrailing) {
+            if let agent = model.terminalAgent(for: profile) {
+                Image(nsImage: model.terminalAgentArtwork(agent)).resizable()
+                    .frame(width: max(16, size * 0.36), height: max(16, size * 0.36))
+                    .clipShape(Circle()).overlay(Circle().stroke(.black, lineWidth: 2))
+                    .offset(x: 4, y: -4)
+                    .accessibilityLabel("\(agent.label) terminal")
+                    .help("\(agent.label) is running in this Terminal tab")
+            }
+        }
         .overlay(alignment: .topLeading) {
             if let activity, let badge = activity.badge {
                 Text(badge).font(.system(size: 10, weight: .bold, design: .rounded)).monospacedDigit()
@@ -96,16 +106,16 @@ struct CompactIslandView: View {
     let drag: (DockDragPhase, CGPoint) -> Void
     var body: some View {
         GeometryReader { geometry in
-        let visible = WidgetSizing.visibleDots(count: model.preferences.profiles.count, width: geometry.size.width, floating: model.placement == .free)
+        let visible = WidgetSizing.visibleDots(count: model.displayedProfiles.count, width: geometry.size.width, floating: model.placement == .free)
         HStack(spacing: 7) {
             if model.placement == .free { DockDragHandle(drag: drag).frame(width: 22).help("Drag to move ProfileDock") }
             BrandMark(size: 11).foregroundStyle(.white.opacity(0.85))
             Text("Apps").font(.system(size: 10, weight: .medium)).foregroundStyle(.white.opacity(0.9))
             HStack(spacing: 5) {
-                ForEach(Array(model.preferences.profiles.prefix(visible))) { profile in
+                ForEach(Array(model.displayedProfiles.prefix(visible))) { profile in
                     ActivityDot(state: ProfileActivityState(summary: activity.entries[profile.id], isOpen: model.running[profile.id]?.isEmpty == false), visible: !presentation.expanded)
                 }
-                if model.preferences.profiles.count > visible { Text("+\(model.preferences.profiles.count - visible)").font(.system(size: 9)).foregroundStyle(.white.opacity(0.6)) }
+                if model.displayedProfiles.count > visible { Text("+\(model.displayedProfiles.count - visible)").font(.system(size: 9)).foregroundStyle(.white.opacity(0.6)) }
             }
             Image(systemName: presentation.opensUpward ? "chevron.up" : "chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(.white.opacity(0.5))
         }
@@ -119,7 +129,7 @@ struct CompactIslandView: View {
         }
     }
     private var statusDescription: String {
-        model.preferences.profiles.map { "\($0.name): \(ProfileActivityState(summary: activity.entries[$0.id], isOpen: model.running[$0.id]?.isEmpty == false).label)" }.joined(separator: ". ")
+        model.displayedProfiles.map { "\($0.name): \(ProfileActivityState(summary: activity.entries[$0.id], isOpen: model.running[$0.id]?.isEmpty == false).label)" }.joined(separator: ". ")
     }
 }
 
@@ -138,7 +148,7 @@ struct IslandView: View {
         GeometryReader { geometry in
         let columns = presentation.profileColumns
         let capacity = max(1, columns * presentation.profileRows)
-        let pageCount = max(1, (model.preferences.profiles.count + capacity - 1) / capacity)
+        let pageCount = max(1, (model.displayedProfiles.count + capacity - 1) / capacity)
         let page = min(profilePage, pageCount - 1)
         let tileWidth = WidgetSizing.tile(count: columns, available: geometry.size.width - 32, scale: model.preferences.scale)
         ScrollView(.vertical) {
@@ -156,12 +166,12 @@ struct IslandView: View {
                 }.accessibilityLabel("Settings").help("Profiles, apps, and settings")
             }.buttonStyle(.plain).foregroundStyle(.white.opacity(0.65))
             LazyVGrid(columns: Array(repeating: GridItem(.fixed(tileWidth), spacing: 10 * model.preferences.scale, alignment: .top), count: columns), alignment: .center, spacing: 10) {
-                ForEach(Array(model.preferences.profiles.enumerated().dropFirst(page * capacity).prefix(capacity)), id: \.element.id) { index, profile in
+                ForEach(Array(model.displayedProfiles.enumerated().dropFirst(page * capacity).prefix(capacity)), id: \.element.id) { index, profile in
                     accountCard(profile, index: index, tileWidth: tileWidth).frame(width: tileWidth)
-                        .modifier(ReorderableProfile(model: model, profile: profile))
+                        .modifier(ReorderableProfile(model: model, profile: profile, displayedOnly: true))
                         .contextMenu {
-                            Button("Move earlier") { model.move(profile.id, by: -1) }.disabled(index == 0)
-                            Button("Move later") { model.move(profile.id, by: 1) }.disabled(index == model.preferences.profiles.count - 1)
+                            Button("Move earlier") { model.moveDisplayed(profile.id, by: -1) }.disabled(index == 0)
+                            Button("Move later") { model.moveDisplayed(profile.id, by: 1) }.disabled(index == model.displayedProfiles.count - 1)
                         }
                 }
             }
@@ -170,14 +180,14 @@ struct IslandView: View {
                     Button { profilePage = max(0, page - 1) } label: { Image(systemName: "chevron.left") }
                         .disabled(page == 0).accessibilityLabel("Previous accounts")
                         .overlay { ProfileDropTarget(model: model, entered: { profilePage = max(0, page - 1) }, targeted: .constant(false)) }
-                    Text("\(page * capacity + 1)–\(min((page + 1) * capacity, model.preferences.profiles.count)) of \(model.preferences.profiles.count)")
+                    Text("\(page * capacity + 1)–\(min((page + 1) * capacity, model.displayedProfiles.count)) of \(model.displayedProfiles.count)")
                         .font(.system(size: 10)).monospacedDigit().foregroundStyle(.secondary)
                     Button { profilePage = min(pageCount - 1, page + 1) } label: { Image(systemName: "chevron.right") }
                         .disabled(page == pageCount - 1).accessibilityLabel("Next accounts")
                         .overlay { ProfileDropTarget(model: model, entered: { profilePage = min(pageCount - 1, page + 1) }, targeted: .constant(false)) }
                 }.buttonStyle(.plain).font(.system(size: 10, weight: .semibold)).frame(height: 20)
             }
-            if model.preferences.profiles.isEmpty { Button("Add your first profile", action: settings).buttonStyle(.borderedProminent) }
+            if model.displayedProfiles.isEmpty { Button("Add your first profile", action: settings).buttonStyle(.borderedProminent) }
             InsightsDrawer(model: model, store: insights, presentation: presentation)
             ProfileMessageNotice(model: model, compact: true)
         }
@@ -188,7 +198,7 @@ struct IslandView: View {
         .padding(.bottom, 14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .environment(\.colorScheme, .dark)
-        .onChange(of: model.preferences.profiles.count) { _, _ in profilePage = min(profilePage, pageCount - 1) }
+        .onChange(of: model.displayedProfiles.count) { _, _ in profilePage = min(profilePage, pageCount - 1) }
         }
     }
 
@@ -272,6 +282,7 @@ struct IslandView: View {
 
     private func activityHelp(_ state: ActivitySummary?, profile: Profile) -> String {
         if profile.kind != .codex {
+            if model.terminalAgent(for: profile) == .codex { return "Codex is running in this Terminal tab. Per-tab Codex CLI task activity and usage are not reported by this integration." }
             if profile.kind == .terminal, state?.working == 0, state?.waiting == 0 { return "This Terminal tab. Claude Code activity appears when connected." }
             return "Tracks connected local Claude Code sessions. Claude Chat and Cowork activity are not available. " + (state?.liveAvailable == true ? "" : "Connect Claude Code in Profiles to enable activity.")
         }

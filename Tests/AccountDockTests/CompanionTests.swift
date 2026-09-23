@@ -8,7 +8,7 @@ final class CompanionIntegrationTests: XCTestCase {
         guard ProcessInfo.processInfo.environment["PROFILEDOCK_TEST_TERMINAL"] == "1" else { throw XCTSkip("Opt-in Terminal window test") }
         let client = TerminalClient.shared
         let before = try await client.windows()
-        let created = try await client.open(project: "/private/tmp", claude: false)
+        let created = try await client.open(project: "/private/tmp")
         XCTAssertFalse(before.contains(where: { $0.id == created.id }))
         do {
             try await client.select(created)
@@ -58,7 +58,7 @@ final class CompanionIntegrationTests: XCTestCase {
         var profile = model.preferences.profiles[0]
         profile.terminalTTY = "/dev/fixture"; profile.terminalWindowID = 123; profile.terminalProcessStarted = 42
         model.update(profile)
-        model.companions.windows = [TerminalWindow(windowID: 123, tty: "/dev/fixture", title: "Fixture", selected: true, front: true)]
+        model.companions.windows = [TerminalWindow(windowID: 123, tty: "/dev/fixture", title: "Fixture", selected: true, front: true, agent: .claude)]
         model.companions.terminalStarted = 42
         var session = ClaudeSession(id: "new-session", project: model.home.path, processID: getpid(), processStarted: ClaudeProcess.startTime(getpid()))
         session.tty = "/dev/fixture"
@@ -154,5 +154,32 @@ final class CompanionIntegrationTests: XCTestCase {
         XCTAssertEqual(model.preferences.profiles.map(\.id), ids)
         drag(ids[0], to: NSPoint(x: -200, y: -200), commit: true)
         XCTAssertEqual(model.preferences.profiles.map(\.id), ids)
+    }
+    @MainActor func testOnlyOpenCodingTerminalsAppearAndAgentChangesClearClaudeUsage() throws {
+        let model = DockModel(home: try temporaryHome())
+        try model.createCompanion(kind: .claude, name: "Assistant", project: nil)
+        try model.createCompanion(kind: .terminal, name: "Project", project: model.home)
+        var profile = model.preferences.profiles[1]
+        profile.terminalTTY = "/dev/ttys123"; profile.terminalWindowID = 123; profile.terminalProcessStarted = 42
+        profile.claudeSessionID = "old-claude-session"
+        model.update(profile)
+        model.companions.terminalStarted = 42
+        var window = TerminalWindow(windowID: 123, tty: "/dev/ttys123", title: "claude in title only", selected: true, front: true)
+        model.companions.windows = [window]
+        XCTAssertEqual(model.displayedProfiles.count, 1)
+        window.agent = .claude; model.companions.windows = [window]
+        XCTAssertEqual(model.displayedProfiles.count, 2)
+        XCTAssertEqual(model.terminalAgent(for: profile), .claude)
+        model.companions.sessions = [ClaudeSession(id: "old-claude-session", project: model.home.path)]
+        window.agent = .codex; model.companions.windows = [window]
+        XCTAssertEqual(model.terminalAgent(for: profile), .codex)
+        XCTAssertTrue(model.companions.sessions(for: profile).isEmpty)
+        model.rememberCompanionSessions()
+        XCTAssertEqual(model.preferences.profiles[1].terminalAgent, .codex)
+        window.agent = nil; model.companions.windows = [window]
+        XCTAssertEqual(model.displayedProfiles.count, 1)
+        model.companions.windows = []
+        XCTAssertEqual(model.displayedProfiles.count, 1)
+        XCTAssertEqual(model.preferences.profiles.count, 2)
     }
 }

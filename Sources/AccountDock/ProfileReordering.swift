@@ -88,6 +88,7 @@ struct ReorderableProfile: ViewModifier {
     @ObservedObject var model: DockModel
     let profile: Profile
     var handle = true
+    var displayedOnly = false
     @State private var targeted = false
     func body(content: Content) -> some View {
         content.overlay { ProfileDropTarget(model: model, target: profile.id, targeted: $targeted) }
@@ -95,8 +96,8 @@ struct ReorderableProfile: ViewModifier {
             if handle { ProfileDragHandle(model: model, profile: profile).frame(width: 18, height: 22).padding(3) }
         }
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(targeted && model.draggingProfileID != nil ? Color.accentColor : .clear, lineWidth: 2).allowsHitTesting(false))
-        .accessibilityAction(named: "Move earlier") { model.move(profile.id, by: -1) }
-        .accessibilityAction(named: "Move later") { model.move(profile.id, by: 1) }
+        .accessibilityAction(named: "Move earlier") { if displayedOnly { model.moveDisplayed(profile.id, by: -1) } else { model.move(profile.id, by: -1) } }
+        .accessibilityAction(named: "Move later") { if displayedOnly { model.moveDisplayed(profile.id, by: 1) } else { model.move(profile.id, by: 1) } }
     }
 }
 

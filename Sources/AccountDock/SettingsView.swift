@@ -274,9 +274,9 @@ struct SettingsView: View {
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }.contentShape(Rectangle())
             }.buttonStyle(.plain).help("Edit \(profile.name)").accessibilityLabel("Edit \(profile.name)")
-            if index < 9 {
-                Text("⌥⌘\(index + 1)").font(.system(size: 11)).foregroundStyle(.tertiary).frame(width: 38)
-                    .accessibilityLabel("Option Command \(index + 1)")
+            if let shortcut = model.displayedProfiles.firstIndex(where: { $0.id == profile.id }), shortcut < 9 {
+                Text("⌥⌘\(shortcut + 1)").font(.system(size: 11)).foregroundStyle(.tertiary).frame(width: 38)
+                    .accessibilityLabel("Option Command \(shortcut + 1)")
             }
             Button(isOpen ? "Show" : "Open") { model.select(profile) }
                 .buttonStyle(.bordered).frame(width: 62)
@@ -644,7 +644,7 @@ private struct AddProfileSheet: View {
             Picker("App", selection: $kind) {
                 ForEach(ProfileProvider.allCases, id: \.self) { Text($0.label).tag($0) }
             }
-            Text(kind == .codex ? "Create a separate Codex sign-in, history and settings." : kind == .claude ? "Add your existing Claude Desktop app and sign-in to the strip." : "Pin a project or an existing Terminal tab to the strip.").foregroundStyle(.secondary)
+            Text(kind == .codex ? "Create a separate Codex sign-in, history and settings." : kind == .claude ? "Add your existing Claude Desktop app and sign-in to the strip." : kind == .terminal ? "Choose an open Terminal tab running Claude Code or Codex. It appears in the strip only while a coding session is open." : "Save a Claude Code project. It appears in the strip while Claude runs in its Terminal tab.").foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 6) {
                 Text("Profile name").font(.subheadline.weight(.medium))
                 TextField("For example, Personal or Work", text: $name).textFieldStyle(.roundedBorder)
@@ -674,18 +674,13 @@ private struct AddProfileSheet: View {
                         panel.begin { if $0 == .OK { project = panel.url } }
                     }
                 }
-                Button("Choose an open Terminal tab…") {
-                    loadingWindows = true; error = nil
-                    Task {
-                        defer { loadingWindows = false }
-                        do { terminalWindows = try await TerminalClient.shared.windows(); if terminalWindows.isEmpty { error = "No open Terminal tabs. Create a project entry instead." } }
-                        catch { self.error = error.localizedDescription }
-                    }
+                Button("Find coding terminals…") {
+                    Task { await refreshTerminals() }
                 }.disabled(loadingWindows)
                 if !terminalWindows.isEmpty {
                     Picker("Tab", selection: $terminalSelection) {
-                        Text("New tab when opened").tag("")
-                        ForEach(terminalWindows) { Text($0.title + " · " + $0.tty).tag($0.id) }
+                        Text(kind == .terminal ? "Choose a coding terminal" : "New Claude Code window when opened").tag("")
+                        ForEach(terminalWindows) { window in Text(window.suggestionLabel).tag(window.id) }
                     }
                 }
             }
@@ -699,14 +694,43 @@ private struct AddProfileSheet: View {
                     Task {
                         do {
                             if kind == .codex { try await model.createProfile(name: name, separateApp: separate, source: source) }
-                            else { try model.createCompanion(kind: kind, name: name, project: project, window: terminalWindows.first { $0.id == terminalSelection }) }
+                            else {
+                                var window: TerminalWindow?
+                                if kind.usesTerminal, !terminalSelection.isEmpty {
+                                    window = try await TerminalClient.shared.windows().first { $0.id == terminalSelection && $0.agent != nil }
+                                    guard window != nil else { throw CompanionError.message("That coding session has closed. Refresh the terminal list.") }
+                                }
+                                if kind == .terminal, window == nil { throw CompanionError.message("Choose an open coding terminal first.") }
+                                try model.createCompanion(kind: kind, name: name, project: project, window: window)
+                            }
                             model.companions.refresh(); dismiss()
                         }
                         catch { self.error = error.localizedDescription }
                         creating = false
                     }
-                }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(ProfileLaunch.newProfile(name: name) == nil)
+                }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(ProfileLaunch.newProfile(name: name) == nil || (kind == .terminal && terminalSelection.isEmpty))
             }
         }.padding(28).frame(width: 500).disabled(creating).interactiveDismissDisabled(creating).onAppear { nameFocused = true }
+            .onChange(of: kind) { _, _ in terminalSelection = ""; terminalWindows = []; error = nil }
+            .task(id: kind) {
+                guard kind.usesTerminal else { return }
+                while !Task.isCancelled {
+                    await refreshTerminals()
+                    do { try await Task.sleep(for: .seconds(3)) } catch { return }
+                }
+            }
+    }
+    private func refreshTerminals() async {
+        guard !loadingWindows, kind.usesTerminal else { return }
+        let requestedKind = kind
+        loadingWindows = true
+        defer { loadingWindows = false }
+        do {
+            let windows = try await TerminalClient.shared.windows().filter { $0.agent != nil && (requestedKind != .claudeCode || $0.agent == .claude) }
+            guard requestedKind == kind, !Task.isCancelled else { return }
+            terminalWindows = windows
+            if !windows.contains(where: { $0.id == terminalSelection }) { terminalSelection = "" }
+            error = windows.isEmpty ? "No open coding terminals. Start a Claude Code or Codex session in Terminal, then try again." : nil
+        } catch { if requestedKind == kind { self.error = error.localizedDescription; terminalWindows = []; terminalSelection = "" } }
     }
 }

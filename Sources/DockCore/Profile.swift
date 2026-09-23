@@ -12,6 +12,7 @@ public struct Profile: Identifiable, Codable, Equatable, Sendable {
     public var terminalTTY: String?
     public var terminalWindowID: Int?
     public var terminalProcessStarted: Double?
+    public var terminalAgent: TerminalAgent?
     public var claudeSessionID: String?
     public var kind: ProfileProvider { provider ?? .codex }
     public var launcherPath: String?
