@@ -33,7 +33,7 @@ final class IslandRenderingTests: XCTestCase {
             XCTAssertEqual(island.panel.frame, canvas, "The native window does not resize on each animation frame")
             island.presentation.setInsightsExpanded(false)
             island.presentation.setInsightsExpanded(true)
-            try await Task.sleep(for: .milliseconds(550))
+            try await waitForResizeCompletion(surface)
             XCTAssertFalse(surface.isResizing)
             XCTAssertEqual(island.panel.frame.size, island.layout.expanded.size)
             XCTAssertEqual(island.panel.frame.minX, island.layout.expanded.minX, accuracy: 1)
@@ -41,9 +41,17 @@ final class IslandRenderingTests: XCTestCase {
             XCTAssertEqual(surface.contentFrame, CGRect(origin: .zero, size: island.layout.expanded.size))
             XCTAssertTrue(island.expanded)
             island.presentation.setInsightsExpanded(false)
-            try await Task.sleep(for: .milliseconds(400))
+            try await waitForResizeCompletion(surface)
             XCTAssertFalse(surface.isResizing)
             XCTAssertEqual(island.panel.frame, initial, "Closing does not leave an oversized invisible window")
+        }
+    }
+
+    @MainActor private func waitForResizeCompletion(_ surface: IslandSurface) async throws {
+        // Core Animation completion delivery can lag on a busy CI runner.
+        let clock = ContinuousClock(), deadline = ContinuousClock.now + .seconds(2)
+        while surface.isResizing && clock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
         }
     }
 
