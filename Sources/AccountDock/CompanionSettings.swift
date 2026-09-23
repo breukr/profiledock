@@ -23,6 +23,8 @@ struct ActivityConnectionsView: View {
             Divider()
             ClaudeConnectionView(model: model)
             Divider()
+            ClaudeAccountConnectionView()
+            Divider()
             HStack {
                 Label("Terminal connector", systemImage: "terminal").font(.headline)
                 Spacer()

@@ -122,4 +122,38 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertNil(store.entries[a.id]?.snapshot)
         XCTAssertEqual(store.entries[a.id]?.error, .wrongAccount)
     }
+    func testClaudeRefreshesWhileClosedAndUsesItsOwnClient() async throws {
+        let codex = FixtureUsageClient(), claude = FixtureUsageClient()
+        let profile = { var p = Profile(id: "claude", name: "Claude", color: "377CF6"); p.provider = .claude; return p }()
+        let store = UsageStore(client: codex, claudeClient: claude, backgroundInterval: 0.05)
+        defer { store.shutdown() }
+        store.configure([profile]); store.refreshAll()
+        try await eventually { !store.isRefreshing }
+        XCTAssertEqual(store.entries[profile.id]?.snapshot?.identity, "claude")
+        await claude.setIdentity("switched-claude-account", for: profile.id)
+        try await eventually { store.entries[profile.id]?.snapshot?.identity == "switched-claude-account" }
+        let codexCalls = await codex.fetchCalls
+        XCTAssertEqual(codexCalls, 0)
+        await claude.setFailure(.claudeSignInRequired)
+        store.refreshAll(force: true)
+        try await eventually { !store.isRefreshing }
+        XCTAssertNil(store.entries[profile.id]?.snapshot)
+    }
+
+    func testCompanionActivityCannotOverwriteClaudeAccountMeasurements() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let model = DockModel(home: home)
+        var profile = a; profile.provider = .claude
+        let client = FixtureUsageClient()
+        let store = UsageStore(claudeClient: client)
+        defer { store.shutdown() }
+        store.configure([profile]); store.refreshAll()
+        try await eventually { !store.isRefreshing }
+        let expected = store.entries[profile.id]?.snapshot
+        XCTAssertNotNil(expected)
+        store.updateCompanions(model: model)
+        XCTAssertEqual(store.entries[profile.id]?.snapshot, expected)
+    }
+
 }
