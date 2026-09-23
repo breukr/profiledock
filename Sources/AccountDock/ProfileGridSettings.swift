@@ -24,11 +24,6 @@ struct ProfileGridSettings: View {
                         ForEach(1...12, id: \.self) { Text("\($0)").tag($0) }
                     }.fixedSize()
                     Spacer(minLength: 0)
-                    Menu("Presets") {
-                        ForEach(ProfileGrid.presets, id: \.label) { preset in
-                            Button(preset.label) { set(preset) }
-                        }
-                    }.fixedSize()
                 }
                 HStack(alignment: .center, spacing: 18) {
                     VStack(spacing: 3) {
@@ -62,9 +57,6 @@ struct ProfileGridMenu: View {
     var body: some View {
         Menu {
             Button("Automatic") { set(nil) }
-            Section("Columns × rows") {
-                ForEach(ProfileGrid.presets, id: \.label) { preset in Button(preset.label) { set(preset) } }
-            }
             Section("Sections") {
                 Toggle("Terminals", isOn: Binding(get: { model.preferences.showTerminalsSection != false }, set: { model.preferences.showTerminalsSection = $0; model.save() }))
                 Toggle("Usage Insights", isOn: Binding(get: { model.preferences.showInsightsSection != false }, set: { model.preferences.showInsightsSection = $0; model.save() }))

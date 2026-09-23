@@ -3,7 +3,7 @@
 ## Your layout
 
 - Choose your own columns and rows, from 1 to 12 each, directly in the notch grid menu or under Settings → Appearance.
-- Presets include 2 × 2, 3 × 3, 6 × 1 and 1 × 6. Automatic remains available.
+- Set columns and rows independently, or choose Automatic.
 - Apps and terminals paginate independently. Tall pages scroll; narrower displays adapt the column count to keep tiles readable.
 - Hide the Terminals and Usage Insights sections independently, including their headings and reserved space. Your connection settings and expansion choices are kept.
 - Drag profile handles to reorder. A floating preview follows the pointer, with a faded source and insertion indicator. Escape or dropping outside cancels. Reduced Motion is respected.

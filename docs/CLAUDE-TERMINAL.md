@@ -12,7 +12,7 @@ Drag the dotted handle on a tile or profile row to reorder it. A floating card f
 
 ## Grid layout
 
-Use the grid icon in the expanded strip to choose Automatic, 2 × 2, 3 × 3, 6 × 1, 1 × 6, or custom Columns and Rows. **Settings → Appearance → Grid layout** exposes the same controls with a visual preview. Dimensions mean columns × rows per page, with 1–12 of each. The choice persists across restarts and applies to both the apps and terminal sections, which have independent page controls.
+Use the grid icon in the expanded strip to choose Automatic or set your own Columns and Rows. **Settings → Appearance → Grid layout** exposes the same controls with a visual preview. Dimensions mean columns × rows per page, with 1–12 of each. The choice persists across restarts and applies to both the apps and terminal sections, which have independent page controls.
 
 The same grid menu and Appearance settings include independent **Terminals** and **Usage Insights** switches. Turning a section off removes its heading, content and reserved space from the notch; it keeps connection settings, analytics history and saved expansion choices. Hidden terminals do not consume notch shortcuts.
 
