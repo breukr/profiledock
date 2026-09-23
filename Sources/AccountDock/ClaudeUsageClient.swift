@@ -79,11 +79,14 @@ actor ClaudeUsageClient: UsageFetching {
 
     func identity(for profile: Profile) async throws -> String {
         let credential = try credentials()
-        return try await account(for: credential).identity
+        let identity = try await account(for: credential).identity
+        guard try credentials().fingerprint == credential.fingerprint else { throw UsageLoadError.accountChanged }
+        return identity
     }
 
     func fetch(_ profile: Profile, expectedIdentity: String) async throws -> UsageSnapshot {
         let credential = try credentials(), account = try await account(for: credential)
+        guard try credentials().fingerprint == credential.fingerprint else { throw UsageLoadError.accountChanged }
         guard account.identity == expectedIdentity else { throw UsageLoadError.accountChanged }
         if let retryAfter, retryAfter > clock() { throw UsageLoadError.rateLimited(retryAfter) }
         // Shared Desktop/project tiles coalesce onto one account request, including manual refresh.

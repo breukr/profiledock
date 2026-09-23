@@ -92,6 +92,29 @@ final class ClaudeUsageClientTests: XCTestCase {
         catch { XCTAssertEqual(error as? UsageLoadError, .accountChanged) }
     }
 
+    func testCoalescedIdentityChecksAllRejectSignInChangedDuringValidation() async throws {
+        let account = account, box = CredentialBox(credential()), next = credential("new-account")
+        ClaudeResponseProtocol.handler = { _ in
+            Thread.sleep(forTimeInterval: 0.1)
+            box.set(next)
+            return (200, account, [:])
+        }
+        let client = ClaudeUsageClient(session: session(), credentials: { box.read() }, resetFetcher: { _ in nil })
+        let profile = profile
+        let rejected = await withTaskGroup(of: Bool.self) { group in
+            for _ in 0..<8 {
+                group.addTask {
+                    do { _ = try await client.identity(for: profile); return false }
+                    catch { return error as? UsageLoadError == .accountChanged }
+                }
+            }
+            var count = 0
+            for await result in group where result { count += 1 }
+            return count
+        }
+        XCTAssertEqual(rejected, 8)
+    }
+
     func testSavedResetEnrichmentAndDisconnectInvalidatesCachedBalance() async throws {
         let account = account, usage = usage, credential = credential()
         let connected = CredentialBox(credential)
