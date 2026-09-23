@@ -38,7 +38,7 @@ struct ProfileSettingsSheet: View {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("Profile name").font(.caption).foregroundStyle(.secondary)
                                 TextField("Name", text: Binding(get: { profile.name }, set: { value in edit { $0.name = value } })).textFieldStyle(.roundedBorder)
-                                Text("Your sign-in and conversation history belong to this profile.").font(.caption).foregroundStyle(.secondary)
+                                Text(profile.kind == .codex ? "Your sign-in and conversation history belong to this profile." : "This entry uses your existing app and sign-in.").font(.caption).foregroundStyle(.secondary)
                             }
                         }
                         GroupBox("Icon Style") {
@@ -48,7 +48,7 @@ struct ProfileSettingsSheet: View {
                                         Button { edit { $0.dockIconStyle = style } } label: {
                                             VStack(spacing: 5) {
                                                 Image(nsImage: artwork(profile, style: style)).resizable().frame(width: 52, height: 52)
-                                                Text(style.label).font(.caption)
+                                                Text(style == .chatgpt ? "App icon" : style.label).font(.caption)
                                             }.frame(maxWidth: .infinity).padding(.vertical, 9)
                                                 .background(profile.profileIconStyle == style ? Color.accentColor.opacity(0.13) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
                                                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(profile.profileIconStyle == style ? Color.accentColor : Color.secondary.opacity(0.15)))
@@ -80,9 +80,10 @@ struct ProfileSettingsSheet: View {
                                     Text("Images fill the rounded icon. Wide or tall images are cropped from the center.")
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
-                                Text("Shown immediately in the notch, profile list and menu. " + (profile.dockApplicationPath == nil ? "Enable the option below to also use it for ChatGPT in the macOS Dock." : "The macOS Dock icon updates when you next open this profile from ProfileDock.")).font(.caption).foregroundStyle(.secondary)
+                                Text("Shown immediately in the notch, profile list and menu. " + (profile.kind != .codex ? "" : profile.dockApplicationPath == nil ? "Enable the option below to also use it for ChatGPT in the macOS Dock." : "The macOS Dock icon updates when you next open this profile from ProfileDock.")).font(.caption).foregroundStyle(.secondary)
                             }.padding(10)
                         }
+                        if profile.kind == .codex {
                         GroupBox {
                             VStack(alignment: .leading, spacing: 12) {
                                 Toggle(isOn: Binding(get: { profile.dockApplicationPath != nil }, set: { enabled in if enabled { consent = true } else { native(false) } })) {
@@ -135,6 +136,7 @@ struct ProfileSettingsSheet: View {
                                 Button("Manage access…") { tagging() }
                             }.padding(10)
                         }
+                        } else { CompanionDetails(model: model, profile: profile) }
                     }.padding(24)
                 }
             }

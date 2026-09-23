@@ -44,3 +44,10 @@ The reset and activity interfaces are not a compatibility guarantee from OpenAI.
 Usage insights cover local profile history, not an account-wide billing record. Changing a profile's sign-in does not reassign older records. API-equivalent amounts compare recorded text tokens against a dated table of Standard USD API rates; they are not invoices or subscription savings. Unpriced and incomplete records are identified. See [the calculation guide](docs/INSIGHTS.md).
 
 Diagnostics are opt-in local files and can contain profile identifiers and app paths. Review them before sharing; never attach credentials, raw task databases, or private screenshots to a public issue.
+# Claude and Terminal integration
+
+The development version can control Apple Terminal through macOS Automation permission. It reads window/tab identifiers and titles, plus process executable names, TTYs and foreground state to detect active Claude Code and Codex terminals. It does not read terminal contents, scrollback or CLI command arguments. A user-selected project folder is retained for reopening a tab.
+
+The optional Claude Code bridge receives local hook and status-line input. It persists only session metadata, activity and usage counters. Prompts, tool inputs, responses and credentials from hook input are discarded. Existing Claude hooks are preserved, an existing status-line command retains its input/output, and private backups are kept before changing configuration.
+
+Claude conversation search reads visible user/assistant text from local `~/.claude/projects` transcripts under the existing directional context permissions. Thinking blocks, tool payloads, metadata records and subagent directories are excluded. Claude Chat, Cowork and cloud-only histories are not covered. Usage Insights retains counters, not transcript text. See [Claude and Terminal](docs/CLAUDE-TERMINAL.md) for the exact paths and scope.

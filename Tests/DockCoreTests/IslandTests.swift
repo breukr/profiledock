@@ -3,6 +3,51 @@ import CoreGraphics
 @testable import DockCore
 
 final class IslandTests: XCTestCase {
+    func testCustomGridsHonorDimensionsAndKeepTallPagesInsideDisplay() {
+        let screen = CGRect(x: 0, y: 0, width: 1512, height: 982)
+        for grid in ProfileGrid.presets {
+            for scale in [0.85, 1.0, 1.3] {
+                let layout = IslandLayout(screen: screen, notchHeight: 32, notchWidth: 180, count: 18, scale: scale, hasMessage: false, grid: grid)
+                XCTAssertEqual(layout.profileColumns, grid.columns)
+                XCTAssertEqual(layout.profileRows, grid.rows)
+                XCTAssertTrue(screen.contains(layout.expanded))
+                XCTAssertEqual(layout.expanded.maxY, screen.maxY)
+                XCTAssertLessThanOrEqual(Double(layout.profileColumns) * WidgetSizing.tile(count: layout.profileColumns, available: layout.expanded.width - 32, scale: scale) + Double(layout.profileColumns - 1) * 10 * scale, layout.expanded.width - 32 + 0.01)
+            }
+        }
+        let six = IslandLayout(screen: screen, notchHeight: 32, notchWidth: 180, count: 6, scale: 1, hasMessage: false, grid: ProfileGrid(columns: 1, rows: 6))
+        XCTAssertEqual(six.profileRows, 6)
+        XCTAssertLessThan(six.expanded.height, 6 * 300)
+    }
+    func testCustomGridAdaptsColumnsButKeepsRowsOnNarrowDisplays() {
+        let screen = CGRect(x: -900, y: 0, width: 900, height: 1440)
+        let layout = IslandLayout(screen: screen, notchHeight: 0, notchWidth: 0, count: 30, scale: 1.3, hasMessage: false, placement: .free, visibleFrame: screen, grid: ProfileGrid(columns: 12, rows: 3))
+        XCTAssertLessThan(layout.profileColumns, 12)
+        XCTAssertEqual(layout.profileRows, 3)
+        XCTAssertTrue(screen.contains(layout.expanded))
+    }
+    func testCustomGridKeepsChosenColumnsWithFewerProfilesAndAvoidsEmptyRows() {
+        let screen = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        let one = IslandLayout(screen: screen, notchHeight: 0, notchWidth: 0, count: 1, scale: 1, hasMessage: false, grid: ProfileGrid(columns: 3, rows: 3))
+        let nine = IslandLayout(screen: screen, notchHeight: 0, notchWidth: 0, count: 9, scale: 1, hasMessage: false, grid: ProfileGrid(columns: 3, rows: 3))
+        XCTAssertEqual(one.profileColumns, 3)
+        XCTAssertEqual(one.profileRows, 3)
+        XCTAssertLessThan(one.expanded.height, nine.expanded.height)
+    }
+    func testHiddenSectionsRemoveTheirHeadersAndExpandedAnalyticsSpace() {
+        let screen = CGRect(x: 0, y: 0, width: 1920, height: 2800)
+        let shown = IslandLayout(screen: screen, notchHeight: 0, notchWidth: 0, count: 9, scale: 1, hasMessage: false, terminalCount: 0, grid: ProfileGrid(columns: 3, rows: 3))
+        let hidden = IslandLayout(screen: screen, notchHeight: 0, notchWidth: 0, count: 9, scale: 1, hasMessage: false, showsInsights: true, grid: ProfileGrid(columns: 3, rows: 3), showsInsightsSection: false)
+        XCTAssertEqual(shown.expanded.height - hidden.expanded.height, 90)
+        XCTAssertEqual(shown.expanded.width, hidden.expanded.width)
+        XCTAssertEqual(shown.profileColumns, hidden.profileColumns)
+    }
+    func testGridDecoderBoundsInvalidDimensions() throws {
+        let grid = try JSONDecoder().decode(ProfileGrid.self, from: Data(#"{"columns":999,"rows":-2}"#.utf8))
+        XCTAssertEqual(grid, ProfileGrid(columns: 12, rows: 1))
+        XCTAssertEqual(grid.capacity, 12)
+    }
+
     func testRecoveryNoticeReservesRoomWithoutMovingTheTopAnchor() {
         let screen = CGRect(x: 0, y: 0, width: 1920, height: 1080)
         let normal = IslandLayout(screen: screen, notchHeight: 0, notchWidth: 0, count: 5, scale: 1, hasMessage: false)

@@ -15,11 +15,14 @@ jobs:
         run: ./scripts/build-app.sh
       - name: Verify packaged context transport with fictional profiles
         run: python3 scripts/context-smoke.py dist/ProfileDock.app/Contents/MacOS/ProfileDockContext
+      - name: Verify packaged Claude bridge with fictional sessions
+        run: python3 scripts/claude-smoke.py dist/ProfileDock.app/Contents/MacOS/ProfileDockClaude
       - name: Verify packaged native Dock helper with fixture apps
         run: PROFILEDOCK_SHIM_PATH="$PWD/dist/ProfileDock.app/Contents/Resources/ProfileDockShim" swift test --filter NativeDockAppTests.testClonedFixtureRunsWithDistinctIdentityAndIsolatedEnvironment
       - name: Verify architectures and signature
         run: |
           test "$(lipo -archs dist/ProfileDock.app/Contents/MacOS/AccountDock)" = arm64
           test "$(lipo -archs dist/ProfileDock.app/Contents/MacOS/ProfileDockContext)" = arm64
+          test "$(lipo -archs dist/ProfileDock.app/Contents/MacOS/ProfileDockClaude)" = arm64
           test "$(lipo -archs dist/ProfileDock.app/Contents/Resources/ProfileDockShim)" = arm64
           codesign --verify --deep --strict dist/ProfileDock.app

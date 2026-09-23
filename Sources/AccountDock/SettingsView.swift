@@ -66,7 +66,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 18) {
                 Text("Remove \(profile.name)?").font(.title2.weight(.semibold))
                 Text("The profile will disappear from ProfileDock. Its chats and sign-in data stay on this Mac unless you choose to move them to the Trash.")
-                if profile.id.hasPrefix("profile-") { Toggle("Also move this profile's data and managed app copy to the Trash", isOn: $trashData) }
+                if profile.kind == .codex && profile.id.hasPrefix("profile-") { Toggle("Also move this profile's data and managed app copy to the Trash", isOn: $trashData) }
                 HStack { Spacer(); Button("Cancel") { removing = nil }.keyboardShortcut(.cancelAction)
                     Button("Remove", role: .destructive) {
                         do { try model.removeProfile(profile, trashData: trashData); removing = nil }
@@ -238,18 +238,20 @@ struct SettingsView: View {
                     VStack(spacing: 0) {
                         ForEach(Array(model.preferences.profiles.enumerated()), id: \.element.id) { index, profile in
                             profileRow(profile, index: index)
+                                .modifier(ReorderableProfile(model: model, profile: profile, handle: false))
                             if index < model.preferences.profiles.count - 1 { Divider().padding(.leading, 72) }
                         }
                     }
                 }
             }
+            SettingsCard { ActivityConnectionsView(model: model, activity: activity).padding(16) }
             if copying || !model.nativeDockOperations.isEmpty { ProgressView("Preparing your profile…").controlSize(.small) }
             HStack {
                 Button { model.restoreImportedProfiles() } label: { Label("Import or Restore Profiles…", systemImage: "square.and.arrow.down") }
                     .buttonStyle(.borderless)
                 Spacer()
             }
-            Text("Each profile keeps its own sign-in, chats and settings. Click its name to edit it.")
+            Text("Drag the handles to change the order here or in the strip. Click a name to edit its icon and settings.")
                 .font(.caption).foregroundStyle(.secondary)
         }.disabled(updates.busy || copying || !model.nativeDockOperations.isEmpty)
     }
@@ -257,6 +259,7 @@ struct SettingsView: View {
     private func profileRow(_ profile: Profile, index: Int) -> some View {
         let isOpen = model.running[profile.id]?.isEmpty == false
         return HStack(spacing: 12) {
+            ProfileDragHandle(model: model, profile: profile).frame(width: 18, height: 22)
             Button { editing = profile } label: {
                 HStack(spacing: 12) {
                     ProfileBadge(model: model, profile: profile, size: 40, showStatus: false)
@@ -266,14 +269,14 @@ struct SettingsView: View {
                             Circle().fill(isOpen ? Color.green : Color.secondary.opacity(0.5)).frame(width: 5, height: 5)
                             Text(model.state(profile))
                             Text("·")
-                            Text(profile.dockApplicationPath != nil ? "Custom Dock icon" : profile.applicationPath == nil ? "Shared app" : "Separate app")
+                            Text(profile.kind != .codex ? profile.kind.label : profile.dockApplicationPath != nil ? "Custom Dock icon" : profile.applicationPath == nil ? "Shared app" : "Separate app")
                         }.font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }.contentShape(Rectangle())
             }.buttonStyle(.plain).help("Edit \(profile.name)").accessibilityLabel("Edit \(profile.name)")
-            if index < 9 {
-                Text("⌥⌘\(index + 1)").font(.system(size: 11)).foregroundStyle(.tertiary).frame(width: 38)
-                    .accessibilityLabel("Option Command \(index + 1)")
+            if let shortcut = model.displayedProfiles.firstIndex(where: { $0.id == profile.id }), shortcut < 9 {
+                Text("⌥⌘\(shortcut + 1)").font(.system(size: 11)).foregroundStyle(.tertiary).frame(width: 38)
+                    .accessibilityLabel("Option Command \(shortcut + 1)")
             }
             Button(isOpen ? "Show" : "Open") { model.select(profile) }
                 .buttonStyle(.bordered).frame(width: 62)
@@ -291,7 +294,7 @@ struct SettingsView: View {
 
         Section {
             Button("Profile settings…", systemImage: "slider.horizontal.3") { editing = profile }
-            Button("Context tagging…", systemImage: "at") { manageContext(for: profile.id) }
+            if profile.kind != .terminal { Button("Context tagging…", systemImage: "at") { manageContext(for: profile.id) } }
         }
         Section("Window") {
             Button("Open profile", systemImage: "arrow.up.forward.app") { model.select(profile) }
@@ -497,9 +500,19 @@ struct SettingsView: View {
                         }.labelsHidden().pickerStyle(.segmented).frame(width: 210)
                     }
                     Divider().padding(.leading, 16)
+                    ProfileGridSettings(model: model).padding(16)
+                    Divider().padding(.leading, 16)
+                    SettingsRow(title: "Terminals section", detail: "Show coding terminals in the notch menu.") {
+                        Toggle("Show terminals section", isOn: Binding(get: { model.preferences.showTerminalsSection != false }, set: { model.preferences.showTerminalsSection = $0; model.save() })).labelsHidden().toggleStyle(.switch)
+                    }
+                    Divider().padding(.leading, 16)
+                    SettingsRow(title: "Usage Insights section", detail: "Show usage analytics in the notch menu.") {
+                        Toggle("Show Usage Insights section", isOn: Binding(get: { model.preferences.showInsightsSection != false }, set: { model.preferences.showInsightsSection = $0; model.save() })).labelsHidden().toggleStyle(.switch)
+                    }
+                    Divider().padding(.leading, 16)
                     VStack(spacing: 18) {
                         widthControl("Compact width", value: Binding(get: { model.preferences.compactWidth }, set: { model.preferences.compactWidth = $0; model.save() }), range: 160...480, automatic: WidgetSizing.compact(count: model.preferences.profiles.count, preferred: nil))
-                        widthControl("Expanded width", value: Binding(get: { model.preferences.expandedWidth }, set: { model.preferences.expandedWidth = $0; model.save() }), range: 320...1400, automatic: WidgetSizing.expanded(count: model.preferences.profiles.count, scale: model.preferences.scale, preferred: nil, insights: false))
+                        if model.preferences.profileGrid == nil { widthControl("Expanded width", value: Binding(get: { model.preferences.expandedWidth }, set: { model.preferences.expandedWidth = $0; model.save() }), range: 320...1400, automatic: WidgetSizing.expanded(count: model.preferences.profiles.count, scale: model.preferences.scale, preferred: nil, insights: false)) }
                     }.padding(16)
                     if model.placement == .free {
                         Divider().padding(.leading, 16)
@@ -626,6 +639,11 @@ private struct AddProfileSheet: View {
     @Environment(\.dismiss) var dismiss
     @State private var name = ""
     @FocusState private var nameFocused: Bool
+    @State private var kind: ProfileProvider = .codex
+    @State private var project: URL?
+    @State private var terminalWindows: [TerminalWindow] = []
+    @State private var terminalSelection = ""
+    @State private var loadingWindows = false
     @State private var separate = false
     @State private var source: URL?
     @State private var creating = false
@@ -633,12 +651,16 @@ private struct AddProfileSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Add Profile").font(.title2.weight(.semibold))
-            Text("A profile is a separate sign-in, conversation history and settings. Give it a name, then sign in when it opens.").foregroundStyle(.secondary)
+            Picker("App", selection: $kind) {
+                ForEach(ProfileProvider.allCases, id: \.self) { Text($0.label).tag($0) }
+            }
+            Text(kind == .codex ? "Create a separate Codex sign-in, history and settings." : kind == .claude ? "Add your existing Claude Desktop app and sign-in to the strip." : kind == .terminal ? "Choose an open Terminal tab running Claude Code or Codex. It appears in the strip only while a coding session is open." : "Save a Claude Code project. It appears in the strip while Claude runs in its Terminal tab.").foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 6) {
                 Text("Profile name").font(.subheadline.weight(.medium))
                 TextField("For example, Personal or Work", text: $name).textFieldStyle(.roundedBorder)
                     .focused($nameFocused).accessibilityLabel("Profile name")
             }
+            if kind == .codex {
             Picker("Application", selection: $separate) {
                 Text("Shared installation · recommended").tag(false)
                 Text("Separate installation").tag(true)
@@ -646,11 +668,42 @@ private struct AddProfileSheet: View {
             Text(separate ? "Copies the ChatGPT app so you can update this profile independently. Uses more disk space. It does not create another account or subscription." : "Uses your existing ChatGPT installation. Your sign-in, chats and settings are still separate; only the app files and update schedule are shared.")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
-                Text((source ?? model.defaultApplication)?.lastPathComponent ?? "ChatGPT is not installed").font(.caption).foregroundStyle(.secondary)
+                Menu {
+                    ForEach(model.installedApplications, id: \.path) { application in
+                        Button { source = application } label: {
+                            Label(application.lastPathComponent, systemImage: source == application || (source == nil && model.defaultApplication == application) ? "checkmark" : "app")
+                        }
+                    }
+                    Divider()
+                    Button("Browse Applications…") {
+                        let panel = NSOpenPanel(); panel.allowedContentTypes = [.applicationBundle]
+                        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+                        panel.canChooseDirectories = false
+                        panel.begin { response in if response == .OK { source = panel.url } }
+                    }
+                } label: {
+                    Label((source ?? model.defaultApplication)?.lastPathComponent ?? "Choose App…", systemImage: "app")
+                }.accessibilityLabel("Choose App")
                 Spacer()
-                Button("Choose app…") {
-                    let panel = NSOpenPanel(); panel.allowedContentTypes = [.applicationBundle]; panel.canChooseDirectories = false
-                    panel.begin { response in if response == .OK { source = panel.url } }
+            }
+
+            } else if kind.usesTerminal {
+                HStack {
+                    Text(project?.path ?? model.home.path).font(.caption).lineLimit(2)
+                    Spacer()
+                    Button("Choose folder…") {
+                        let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true
+                        panel.begin { if $0 == .OK { project = panel.url } }
+                    }
+                }
+                Button("Find coding terminals…") {
+                    Task { await refreshTerminals() }
+                }.disabled(loadingWindows)
+                if !terminalWindows.isEmpty {
+                    Picker("Tab", selection: $terminalSelection) {
+                        Text(kind == .terminal ? "Choose a coding terminal" : "New Claude Code window when opened").tag("")
+                        ForEach(terminalWindows) { window in Text(window.suggestionLabel).tag(window.id) }
+                    }
                 }
             }
             if let error { Text(error).font(.callout).foregroundStyle(.orange) }
@@ -661,12 +714,45 @@ private struct AddProfileSheet: View {
                 Button("Create profile") {
                     creating = true; error = nil
                     Task {
-                        do { try await model.createProfile(name: name, separateApp: separate, source: source); dismiss() }
+                        do {
+                            if kind == .codex { try await model.createProfile(name: name, separateApp: separate, source: source) }
+                            else {
+                                var window: TerminalWindow?
+                                if kind.usesTerminal, !terminalSelection.isEmpty {
+                                    window = try await TerminalClient.shared.windows().first { $0.id == terminalSelection && $0.agent != nil }
+                                    guard window != nil else { throw CompanionError.message("That coding session has closed. Refresh the terminal list.") }
+                                }
+                                if kind == .terminal, window == nil { throw CompanionError.message("Choose an open coding terminal first.") }
+                                try model.createCompanion(kind: kind, name: name, project: project, window: window)
+                            }
+                            model.companions.refresh(); dismiss()
+                        }
                         catch { self.error = error.localizedDescription }
                         creating = false
                     }
-                }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(ProfileLaunch.newProfile(name: name) == nil)
+                }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(ProfileLaunch.newProfile(name: name) == nil || (kind == .terminal && terminalSelection.isEmpty))
             }
         }.padding(28).frame(width: 500).disabled(creating).interactiveDismissDisabled(creating).onAppear { nameFocused = true }
+            .onChange(of: kind) { _, _ in terminalSelection = ""; terminalWindows = []; error = nil }
+            .task(id: kind) {
+                guard kind.usesTerminal else { return }
+                while !Task.isCancelled {
+                    await refreshTerminals()
+                    do { try await Task.sleep(for: .seconds(3)) } catch { return }
+                }
+            }
+    }
+    private func refreshTerminals() async {
+        guard !loadingWindows, kind.usesTerminal else { return }
+        let requestedKind = kind
+        loadingWindows = true
+        defer { loadingWindows = false }
+        do {
+            let windows = try await TerminalClient.shared.windows().filter { $0.agent != nil && (requestedKind != .claudeCode || $0.agent == .claude) }
+            guard requestedKind == kind, !Task.isCancelled else { return }
+            terminalWindows = windows
+            if !windows.contains(where: { $0.id == terminalSelection }) { terminalSelection = "" }
+            error = windows.isEmpty ? "No open coding terminals. Start a Claude Code or Codex session in Terminal, then try again." : nil
+        } catch { if requestedKind == kind { self.error = error.localizedDescription; terminalWindows = []; terminalSelection = "" } }
     }
 }

@@ -170,6 +170,7 @@ actor InsightsScanner {
     }
     private var cache: [String: CachedFile] = [:]
     private var loadedHome: URL?
+    private var claudeSamples: [InsightSample] = []
     private var savedAt: Date?
     private var savedWarnings: [String: String] = [:]
 
@@ -183,7 +184,7 @@ actor InsightsScanner {
             let right = ranks[$1.value.parser.checkpoint.profileID] ?? Int.max
             return left == right ? $0.key < $1.key : left < right
         }.map(\.value.parser).filter { ids.contains($0.checkpoint.profileID) }
-        let samples = parsers.flatMap(\.samples).filter { $0.date >= cutoff && $0.date <= now }
+        let samples = (parsers.flatMap(\.samples) + claudeSamples.filter { ids.contains($0.profileID) }).filter { $0.date >= cutoff && $0.date <= now }
         return (report(samples: samples, parsers: parsers, warnings: savedWarnings.filter { ids.contains($0.key) }, files: parsers.count), savedAt)
     }
 
@@ -197,6 +198,7 @@ actor InsightsScanner {
             file.offset = record.offset; file.size = record.size; file.fingerprint = record.fingerprint
             cache[key] = file
         }
+        claudeSamples = saved.claudePricing == ClaudePricing.checkedOn ? saved.claudeSamples ?? [] : []
         savedAt = saved.updated; savedWarnings = saved.warnings
     }
 
@@ -206,6 +208,7 @@ actor InsightsScanner {
         restore(home: home, now: now)
         var result = InsightsScan(), paths: Set<String> = [], parsers: [InsightRolloutParser] = []
         for profile in profiles {
+            if profile.kind != .codex { continue }
             try Task.checkCancellation()
             guard Profile.validID(profile.id) else { continue }
             let profileHome = profile.home(in: home).resolvingSymlinksInPath()
@@ -261,13 +264,20 @@ actor InsightsScanner {
                 catch { result.warnings[profile.id] = "Some local session files could not be read." }
             }
         }
+        do {
+            let claude = try ClaudeInsights.scan(profiles: profiles, home: home, cutoff: cutoff)
+            claudeSamples = claude.samples
+            result.samples += claude.samples; result.files += claude.files
+            result.warnings.merge(claude.warnings) { _, new in new }
+        } catch is CancellationError { throw CancellationError() }
+        catch { for profile in profiles where profile.kind != .codex { result.warnings[profile.id] = "Claude history could not be read. " + error.localizedDescription } }
         cache = cache.filter { paths.contains($0.key) }
         result = report(samples: result.samples, parsers: parsers, warnings: result.warnings, files: result.files, bytesRead: result.bytesRead)
         try Task.checkCancellation()
         let records = cache.mapValues { entry in
             InsightsDiskCache.Record(inode: entry.inode, modified: entry.modified, offset: entry.offset, size: entry.size, fingerprint: entry.fingerprint, parser: entry.parser.checkpoint)
         }
-        try? InsightsDiskCache.save(InsightsDiskCache(updated: now, warnings: result.warnings, files: records), home: home)
+        try? InsightsDiskCache.save(InsightsDiskCache(updated: now, warnings: result.warnings, files: records, claudeSamples: claudeSamples, claudePricing: ClaudePricing.checkedOn), home: home)
         savedAt = now; savedWarnings = result.warnings
         return result
     }

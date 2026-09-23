@@ -69,6 +69,16 @@ struct ProfileBadge: View {
                 }
             }
         }
+        .overlay(alignment: .topTrailing) {
+            if let agent = model.terminalAgent(for: profile) {
+                Image(nsImage: model.terminalAgentArtwork(agent)).resizable()
+                    .frame(width: max(16, size * 0.36), height: max(16, size * 0.36))
+                    .clipShape(Circle()).overlay(Circle().stroke(.black, lineWidth: 2))
+                    .offset(x: 4, y: -4)
+                    .accessibilityLabel("\(agent.label) terminal")
+                    .help("\(agent.label) is running in this Terminal tab")
+            }
+        }
         .overlay(alignment: .topLeading) {
             if let activity, let badge = activity.badge {
                 Text(badge).font(.system(size: 10, weight: .bold, design: .rounded)).monospacedDigit()
@@ -96,16 +106,16 @@ struct CompactIslandView: View {
     let drag: (DockDragPhase, CGPoint) -> Void
     var body: some View {
         GeometryReader { geometry in
-        let visible = WidgetSizing.visibleDots(count: model.preferences.profiles.count, width: geometry.size.width, floating: model.placement == .free)
+        let visible = WidgetSizing.visibleDots(count: model.displayedProfiles.count, width: geometry.size.width, floating: model.placement == .free)
         HStack(spacing: 7) {
             if model.placement == .free { DockDragHandle(drag: drag).frame(width: 22).help("Drag to move ProfileDock") }
             BrandMark(size: 11).foregroundStyle(.white.opacity(0.85))
-            Text("Accounts").font(.system(size: 10, weight: .medium)).foregroundStyle(.white.opacity(0.9))
+            Text("Apps").font(.system(size: 10, weight: .medium)).foregroundStyle(.white.opacity(0.9))
             HStack(spacing: 5) {
-                ForEach(Array(model.preferences.profiles.prefix(visible))) { profile in
+                ForEach(Array(model.displayedProfiles.prefix(visible))) { profile in
                     ActivityDot(state: ProfileActivityState(summary: activity.entries[profile.id], isOpen: model.running[profile.id]?.isEmpty == false), visible: !presentation.expanded)
                 }
-                if model.preferences.profiles.count > visible { Text("+\(model.preferences.profiles.count - visible)").font(.system(size: 9)).foregroundStyle(.white.opacity(0.6)) }
+                if model.displayedProfiles.count > visible { Text("+\(model.displayedProfiles.count - visible)").font(.system(size: 9)).foregroundStyle(.white.opacity(0.6)) }
             }
             Image(systemName: presentation.opensUpward ? "chevron.up" : "chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(.white.opacity(0.5))
         }
@@ -119,7 +129,7 @@ struct CompactIslandView: View {
         }
     }
     private var statusDescription: String {
-        model.preferences.profiles.map { "\($0.name): \(ProfileActivityState(summary: activity.entries[$0.id], isOpen: model.running[$0.id]?.isEmpty == false).label)" }.joined(separator: ". ")
+        model.displayedProfiles.map { "\($0.name): \(ProfileActivityState(summary: activity.entries[$0.id], isOpen: model.running[$0.id]?.isEmpty == false).label)" }.joined(separator: ". ")
     }
 }
 
@@ -133,12 +143,18 @@ struct IslandView: View {
     let settings: () -> Void
     let drag: (DockDragPhase, CGPoint) -> Void
     @State private var profilePage = 0
+    @State private var terminalPage = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { geometry in
         let columns = presentation.profileColumns
         let capacity = max(1, columns * presentation.profileRows)
-        let pageCount = max(1, (model.preferences.profiles.count + capacity - 1) / capacity)
+        let desktopProfiles = Array(model.displayedProfiles.enumerated()).filter { !$0.element.kind.usesTerminal }
+        let terminalProfiles = Array(model.displayedProfiles.enumerated()).filter { $0.element.kind.usesTerminal }
+        let terminalPageCount = max(1, (terminalProfiles.count + capacity - 1) / capacity)
+        let terminalsPage = min(terminalPage, terminalPageCount - 1)
+        let pageCount = max(1, (desktopProfiles.count + capacity - 1) / capacity)
         let page = min(profilePage, pageCount - 1)
         let tileWidth = WidgetSizing.tile(count: columns, available: geometry.size.width - 32, scale: model.preferences.scale)
         ScrollView(.vertical) {
@@ -148,41 +164,73 @@ struct IslandView: View {
                 Text("ProfileDock").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.85))
                 Spacer()
                 Text(usage.isRefreshing ? "Refreshing…" : "Remaining").font(.system(size: 10)).foregroundStyle(.white.opacity(0.55))
-                Button { usage.refreshAll(force: true) } label: {
+                Button { usage.refreshAll(force: true); model.companions.refresh() } label: {
                     Image(systemName: "arrow.clockwise").frame(width: 20, height: 20)
-                }.disabled(usage.isRefreshing).accessibilityLabel("Refresh usage for all accounts").help("Refresh usage and saved resets")
+                }.accessibilityLabel("Refresh apps, terminals and usage").help("Find open coding terminals and refresh usage")
+                ProfileGridMenu(model: model, columns: columns, rows: presentation.profileRows)
                 Button(action: settings) {
                     Image(systemName: "slider.horizontal.3").frame(width: 22, height: 20)
                 }.accessibilityLabel("Settings").help("Profiles, apps, and settings")
             }.buttonStyle(.plain).foregroundStyle(.white.opacity(0.65))
-            LazyVGrid(columns: Array(repeating: GridItem(.fixed(tileWidth), spacing: 10 * model.preferences.scale, alignment: .top), count: columns), alignment: .center, spacing: 10) {
-                ForEach(Array(model.preferences.profiles.enumerated().dropFirst(page * capacity).prefix(capacity)), id: \.element.id) { index, profile in
-                    accountCard(profile, index: index, tileWidth: tileWidth).frame(width: tileWidth)
+            profileGrid(profiles: Array(desktopProfiles.dropFirst(page * capacity).prefix(capacity)), columns: columns, tileWidth: tileWidth)
+            ProfileGridPagination(model: model, page: $profilePage, count: desktopProfiles.count, capacity: capacity, terminals: false)
+            if model.preferences.showTerminalsSection != false {
+            VStack(spacing: 10) {
+                HStack {
+                    Button { model.setTerminalsExpanded(model.preferences.terminalsExpanded == false) } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: model.preferences.terminalsExpanded == false ? "chevron.right" : "chevron.down")
+                            Image(systemName: "terminal")
+                            Text("Terminals")
+                            Text("\(model.liveTerminalProfiles.count)").monospacedDigit().foregroundStyle(.secondary)
+                        }
+                    }.accessibilityLabel(model.preferences.terminalsExpanded == false ? "Expand terminals" : "Collapse terminals")
+                    Spacer()
+                    Button { model.companions.refresh() } label: { Image(systemName: "arrow.clockwise") }
+                        .accessibilityLabel("Find coding terminals")
+                }.font(.system(size: 11, weight: .medium)).buttonStyle(.plain).foregroundStyle(.white.opacity(0.75))
+                if model.preferences.terminalsExpanded != false {
+                    profileGrid(profiles: Array(terminalProfiles.dropFirst(terminalsPage * capacity).prefix(capacity)), columns: columns, tileWidth: tileWidth)
+                    ProfileGridPagination(model: model, page: $terminalPage, count: terminalProfiles.count, capacity: capacity, terminals: true)
+                    if let error = model.companions.terminalError {
+                        Text(error).font(.system(size: 10)).foregroundStyle(.orange).frame(maxWidth: .infinity, alignment: .leading)
+                    } else if model.liveTerminalProfiles.isEmpty {
+                        Text(model.preferences.discoverTerminals == false ? "Automatic discovery is off in Settings." : "Open Claude Code or Codex in Terminal to see it here.")
+                            .font(.system(size: 10)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
-            if pageCount > 1 {
-                HStack(spacing: 14) {
-                    Button { profilePage = max(0, page - 1) } label: { Image(systemName: "chevron.left") }
-                        .disabled(page == 0).accessibilityLabel("Previous accounts")
-                    Text("\(page * capacity + 1)–\(min((page + 1) * capacity, model.preferences.profiles.count)) of \(model.preferences.profiles.count)")
-                        .font(.system(size: 10)).monospacedDigit().foregroundStyle(.secondary)
-                    Button { profilePage = min(pageCount - 1, page + 1) } label: { Image(systemName: "chevron.right") }
-                        .disabled(page == pageCount - 1).accessibilityLabel("Next accounts")
-                }.buttonStyle(.plain).font(.system(size: 10, weight: .semibold)).frame(height: 20)
             }
-            if model.preferences.profiles.isEmpty { Button("Add your first profile", action: settings).buttonStyle(.borderedProminent) }
-            InsightsDrawer(model: model, store: insights, presentation: presentation)
+            if model.displayedProfiles.isEmpty { Button("Add your first profile", action: settings).buttonStyle(.borderedProminent) }
+            if model.preferences.showInsightsSection != false { InsightsDrawer(model: model, store: insights, presentation: presentation) }
             ProfileMessageNotice(model: model, compact: true)
         }
         }
-        .scrollIndicators(.never)
+        .scrollIndicators(.automatic)
         .padding(.top, notchHeight + 13)
         .padding(.horizontal, 16)
         .padding(.bottom, 14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .environment(\.colorScheme, .dark)
-        .onChange(of: model.preferences.profiles.map(\.id)) { _, _ in profilePage = 0 }
+        .onChange(of: model.displayedProfiles.count) { _, _ in
+            profilePage = min(profilePage, pageCount - 1); terminalPage = min(terminalPage, terminalPageCount - 1)
         }
+        .onChange(of: capacity) { _, _ in profilePage = 0; terminalPage = 0 }
+        }
+    }
+
+    private func profileGrid(profiles: [(offset: Int, element: Profile)], columns: Int, tileWidth: CGFloat) -> some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.fixed(tileWidth), spacing: 10 * model.preferences.scale, alignment: .top), count: columns), alignment: .center, spacing: 10) {
+            ForEach(profiles, id: \.element.id) { index, profile in
+                accountCard(profile, index: index, tileWidth: tileWidth).frame(width: tileWidth)
+                    .modifier(ReorderableProfile(model: model, profile: profile, displayedOnly: true))
+                    .contextMenu {
+                        Button("Move earlier") { model.moveDisplayed(profile.id, by: -1) }.disabled(index == 0)
+                        Button("Move later") { model.moveDisplayed(profile.id, by: 1) }.disabled(index == model.displayedProfiles.count - 1)
+                    }
+            }
+        }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: profiles.map { $0.element.id })
     }
 
     private func accountCard(_ profile: Profile, index: Int, tileWidth: CGFloat) -> some View {
@@ -207,8 +255,8 @@ struct IslandView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("\(profile.name) · \(model.state(profile)) · ⌥⌘\(index + 1)\n" + activityHelp(taskState))
-            .accessibilityLabel("\(profile.name), \(model.state(profile)). " + activityHelp(taskState))
+            .help("\(profile.name) · \(model.state(profile)) · ⌥⌘\(index + 1)\n" + activityHelp(taskState, profile: profile))
+            .accessibilityLabel("\(profile.name), \(model.state(profile)). " + activityHelp(taskState, profile: profile))
             .overlay(alignment: .topTrailing) {
                 if isOpen {
                     Button { model.requestQuit(profile) } label: {
@@ -216,7 +264,7 @@ struct IslandView: View {
                             .frame(width: 20, height: 20).background(Color(white: 0.22), in: Circle())
                             .overlay(Circle().stroke(.black, lineWidth: 2))
                     }.buttonStyle(.plain).disabled(model.closing.contains(profile.id))
-                        .accessibilityLabel("Close \(profile.name)").help("Close the ChatGPT profile \(profile.name)")
+                        .accessibilityLabel("Close \(profile.name)").help("Close \(profile.name)")
                 }
             }
             VStack(alignment: .leading, spacing: 8) {
@@ -227,16 +275,18 @@ struct IslandView: View {
                     Button("Try again") { usage.refresh(profile, force: true) }
                         .font(.system(size: 9)).buttonStyle(.plain).foregroundStyle(.white.opacity(0.75)).help(error.message)
                 } else {
-                    Text(snapshot == nil ? "Loading usage…" : "No usage data")
+                    Text(profile.kind == .codex ? (snapshot == nil ? "Loading usage…" : "No usage data") : (profile.kind == .terminal ? "Terminal window" : "Usage not reported yet"))
                         .font(.system(size: 10)).foregroundStyle(.white.opacity(0.45))
                 }
             }
             .frame(maxWidth: .infinity, minHeight: IslandLayout.usageHeight(rows: snapshot?.windows.count ?? 1), maxHeight: IslandLayout.usageHeight(rows: snapshot?.windows.count ?? 1), alignment: .topLeading)
             .help(snapshot.map { "Updated at \(Self.absoluteDate($0.fetchedAt))." } ?? "Usage for this account.")
+            if profile.kind == .codex {
             ResetInventoryView(snapshot: snapshot, now: usage.now, expanded: presentation.resetDetails.contains(profile.id)) {
                 presentation.toggleResetDetails(profile.id)
             }
             .help(resetHelp(snapshot))
+            } else { Text(profile.kind == .claudeCode ? "Claude Code" : profile.kind.label).font(.system(size: 10)).foregroundStyle(.white.opacity(0.55)).frame(height: 20) }
             if let snapshot, entry?.error != nil || usage.now.timeIntervalSince(snapshot.fetchedAt) > 90 {
                 Text("Updated \(Self.age(snapshot.fetchedAt, now: usage.now)) ago")
                     .font(.system(size: 8)).foregroundStyle(.orange.opacity(0.9))
@@ -261,7 +311,12 @@ struct IslandView: View {
         return nil
     }
 
-    private func activityHelp(_ state: ActivitySummary?) -> String {
+    private func activityHelp(_ state: ActivitySummary?, profile: Profile) -> String {
+        if profile.kind != .codex {
+            if model.terminalAgent(for: profile) == .codex { return "Codex is running in this Terminal tab. Per-tab Codex CLI task activity and usage are not reported by this integration." }
+            if profile.kind == .terminal, state?.working == 0, state?.waiting == 0 { return "This Terminal tab. Claude Code activity appears when connected." }
+            return "Tracks connected local Claude Code sessions. Claude Chat and Cowork activity are not available. " + (state?.liveAvailable == true ? "" : "Connect Claude Code in Profiles to enable activity.")
+        }
         guard let state else { return "Loading task status…" }
         let unread = state.unread.map { "\($0) completed tasks with unread results." } ?? "Unread results unknown."
         let live = state.liveAvailable ? "\(state.working) working, \(state.waiting) waiting for you." : (state.appOpen ? state.connectionIssue?.explanation ?? "Live task status unavailable." : "Desktop profile closed.")

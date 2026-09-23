@@ -22,13 +22,17 @@ public struct ContextProfile: Codable, Identifiable, Equatable, Sendable {
     public let id: String
     public let name: String
     public let alias: String
+    public let provider: ProfileProvider?
+    public let projectPath: String?
+    public var kind: ProfileProvider { provider ?? .codex }
     public init(_ profile: Profile) {
         id = profile.id; name = profile.name
+        provider = profile.provider; projectPath = profile.projectPath
         let value = profile.name.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
             .unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
         alias = "@" + (value.isEmpty ? profile.id : value)
     }
-    public func root(in home: URL) -> URL { home.appendingPathComponent(id == "default" ? ".codex" : ".codex-" + id) }
+    public func root(in home: URL) -> URL { home.appendingPathComponent(kind != .codex ? ".claude" : id == "default" ? ".codex" : ".codex-" + id) }
 }
 
 public struct ContextRegistry: Sendable {
@@ -50,7 +54,7 @@ public struct ContextRegistry: Sendable {
         // Saved profiles can have generated IDs and no launcher registry entry.
         let candidates = saved.profiles + discovered.filter { p in !saved.profiles.contains(where: { $0.id == p.id }) }
         var seen = Set<String>()
-        return candidates.filter { Profile.validID($0.id) && !hidden.contains($0.id) && seen.insert($0.id).inserted && FileManager.default.fileExists(atPath: $0.home(in: home).path) }.map(ContextProfile.init)
+        return candidates.filter { $0.kind != .terminal && Profile.validID($0.id) && !hidden.contains($0.id) && seen.insert($0.id).inserted && FileManager.default.fileExists(atPath: $0.home(in: home).path) }.map(ContextProfile.init)
     }
 
     public func access() throws -> ContextAccess {

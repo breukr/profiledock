@@ -75,7 +75,7 @@ final class IslandController {
         } else { notchWidth = 180 }
         let topInset = screen.frame.maxY - screen.visibleFrame.maxY
         let menuBarHeight = topInset > 0 ? topInset : NSStatusBar.system.thickness
-        return IslandLayout(screen: screen.frame, notchHeight: screen.safeAreaInsets.top, notchWidth: notchWidth, count: model.preferences.profiles.count, scale: model.preferences.scale, hasMessage: model.message != nil, menuBarHeight: menuBarHeight, showsResetDetails: showsResetDetails, placement: model.placement, visibleFrame: screen.visibleFrame, position: position ?? model.floatingPosition(for: positionKey(for: screen)), usageRows: usageRows, showsInsights: showsInsights || model.preferences.insightsExpansion == .always, compactWidth: model.preferences.compactWidth, expandedWidth: model.preferences.expandedWidth)
+        return IslandLayout(screen: screen.frame, notchHeight: screen.safeAreaInsets.top, notchWidth: notchWidth, count: model.displayedProfiles.count, scale: model.preferences.scale, hasMessage: model.message != nil, menuBarHeight: menuBarHeight, showsResetDetails: showsResetDetails, placement: model.placement, visibleFrame: screen.visibleFrame, position: position ?? model.floatingPosition(for: positionKey(for: screen)), usageRows: usageRows, showsInsights: model.preferences.showInsightsSection != false && (showsInsights || model.preferences.insightsExpansion == .always), compactWidth: model.preferences.compactWidth, expandedWidth: model.preferences.expandedWidth, terminalCount: model.preferences.showTerminalsSection == false ? nil : model.preferences.terminalsExpanded == false ? 0 : model.liveTerminalProfiles.count, grid: model.preferences.profileGrid, showsInsightsSection: model.preferences.showInsightsSection != false)
     }
 
     init(screen: NSScreen, model: DockModel, usage: UsageStore, activity: ActivityMonitor? = nil, insights: InsightsStore? = nil, presentWindows: Bool = true,
@@ -209,6 +209,7 @@ final class IslandController {
 
     func pointerMoved(to point: NSPoint) {
         guard dragStart == nil else { return }
+        if model.draggingProfileID != nil { cancelCollapseForInteraction(); return }
         if model.placement != .topCenter { updateLayout() }
         checkHover(at: point)
     }
@@ -299,7 +300,7 @@ final class IslandController {
         ["screen": screen.localizedName, "actualFrame": NSStringFromRect(expanded ? panel.frame : compactPanel.frame),
          "expandedPanelFrame": NSStringFromRect(panel.frame), "contentFrame": NSStringFromRect(surface.bounds),
          "collapsedFrame": NSStringFromRect(layout.collapsed), "expanded": expanded, "animating": animating,
-         "resetDetails": presentation.resetDetails.sorted(), "placement": model.placement.rawValue,
+         "terminalsSection": model.preferences.showTerminalsSection != false, "insightsSection": model.preferences.showInsightsSection != false, "profileColumns": layout.profileColumns, "profileRows": layout.profileRows, "resetDetails": presentation.resetDetails.sorted(), "placement": model.placement.rawValue,
          "alpha": expanded ? panel.alphaValue : compactPanel.alphaValue,
          "maximumScreenFPS": screen.maximumFramesPerSecond, "requestedAnimationFPS": preferredFPS,
          "frameMeasurement": frameMeter.report, "animationCount": animationGeneration]

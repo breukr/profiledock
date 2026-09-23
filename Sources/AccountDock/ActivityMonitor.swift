@@ -5,19 +5,23 @@ import DockCore
 
 @MainActor
 final class ActivityMonitor: ObservableObject {
-    @Published private(set) var entries: [String: ActivitySummary] = [:]
-    @Published private(set) var event: ActivityEvent?
+    @Published var entries: [String: ActivitySummary] = [:]
+    @Published var event: ActivityEvent?
     private var observers: [String: ProfileActivityObserver] = [:]
     private var observerIDs: [String: UUID] = [:]
+    var companionStates: [String: ClaudeSession.State] = [:]
+    private var coverage: [String: String] = [:]
     private let home: URL
     init(home: URL = FileManager.default.homeDirectoryForCurrentUser) { self.home = home }
 
     func configure(_ profiles: [Profile], running: Set<String>) {
         let ids = Set(profiles.map(\.id))
+        entries = entries.filter { ids.contains($0.key) }
+        coverage = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0.kind == .codex ? "local Work/Codex tasks" : "connected local Claude Code sessions") })
         for id in Set(observers.keys).subtracting(ids) {
             observers.removeValue(forKey: id)?.stop(); observerIDs.removeValue(forKey: id); entries.removeValue(forKey: id)
         }
-        for profile in profiles {
+        for profile in profiles where profile.kind == .codex {
             if observers[profile.id] == nil {
                 let observerID = UUID()
                 observerIDs[profile.id] = observerID
@@ -39,10 +43,10 @@ final class ActivityMonitor: ObservableObject {
     }
     func shutdown() { observers.values.forEach { $0.stop() }; observers.removeAll(); observerIDs.removeAll() }
     var diagnostics: [String: Any] {
-        entries.mapValues { value -> [String: Any] in
-            ["unreadFinished": value.unread as Any? ?? NSNull(), "working": value.working, "waiting": value.waiting,
-             "liveAvailable": value.liveAvailable, "appOpen": value.appOpen, "connectionIssue": value.connectionIssue?.rawValue as Any? ?? NSNull(), "coverage": "local Work/Codex tasks"]
-        }
+        Dictionary(uniqueKeysWithValues: entries.map { id, value in
+            (id, ["unreadFinished": value.unread as Any? ?? NSNull(), "working": value.working, "waiting": value.waiting,
+             "liveAvailable": value.liveAvailable, "appOpen": value.appOpen, "connectionIssue": value.connectionIssue?.rawValue as Any? ?? NSNull(), "coverage": coverage[id] ?? "unavailable"] as [String: Any])
+        })
     }
 }
 

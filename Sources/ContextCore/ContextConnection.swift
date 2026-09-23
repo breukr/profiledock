@@ -30,6 +30,15 @@ public struct ContextConnection: Sendable {
         return arguments
     }
     private func entry(_ profile: ContextProfile) throws -> [String: Any]? {
+        if profile.kind != .codex {
+            guard profile.kind == .claude else { throw ContextError.message("Connect through your Claude Desktop entry. Claude Code shares one user configuration across Terminal and Desktop.") }
+            let config = registry.home.appendingPathComponent(".claude.json")
+            guard FileManager.default.fileExists(atPath: config.path) else { return nil }
+            guard let json = try JSONSerialization.jsonObject(with: Data(contentsOf: config)) as? [String: Any] else { throw ContextError.message("Claude configuration could not be read.") }
+            guard let server = (json["mcpServers"] as? [String: [String: Any]])?[Self.serverName] else { return nil }
+            var transport = server; transport["type"] = server["type"] ?? "stdio"
+            return ["transport": transport, "enabled": true]
+        }
         let response = try run(codex, ["mcp", "get", Self.serverName, "--json"], environment(profile))
         if response.status != 0 {
             if response.error.contains("No MCP server named") { return nil }
@@ -71,8 +80,10 @@ public struct ContextConnection: Sendable {
         }
         try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data(skill.utf8).write(to: target, options: [.atomic])
-        let response = try run(codex, ["mcp", "add", Self.serverName, "--", registry.helperURL.path] + launchArguments(profile), environment(profile))
-        guard response.status == 0, try isConnected(profile) else { throw ContextError.message("The helper was prepared, but the profile connection could not be verified. Try Connect again.") }
+        let success: Bool
+        if profile.kind == .claude { try updateClaude(profile, enabled: true); success = true }
+        else { success = try run(codex, ["mcp", "add", Self.serverName, "--", registry.helperURL.path] + launchArguments(profile), environment(profile)).status == 0 }
+        guard success, try isConnected(profile) else { throw ContextError.message("The helper was prepared, but the profile connection could not be verified. Try Connect again.") }
         try ContextMentions(registry: registry).synchronize(profile)
     }
     public func disconnect(_ profile: ContextProfile) throws {
@@ -81,11 +92,39 @@ public struct ContextConnection: Sendable {
         try ContextMentions(registry: registry).remove(profile)
         if let entry = try entry(profile) {
             guard owns(entry, profile) else { throw ContextError.message("Sharing was disabled. An unrelated connection with the same name was left unchanged.") }
-            let response = try run(codex, ["mcp", "remove", Self.serverName], environment(profile))
-            guard response.status == 0 else { throw ContextError.message("Sharing is disabled, but the saved connection could not be removed.") }
+            if profile.kind == .claude { try updateClaude(profile, enabled: false) }
+            else {
+                let response = try run(codex, ["mcp", "remove", Self.serverName], environment(profile))
+                guard response.status == 0 else { throw ContextError.message("Sharing is disabled, but the saved connection could not be removed.") }
+            }
         }
         let skill = skillURL(profile)
         if let text = try? String(contentsOf: skill, encoding: .utf8), text.contains(Self.skillMarker) { try FileManager.default.removeItem(at: skill) }
+    }
+
+    private func updateClaude(_ profile: ContextProfile, enabled: Bool) throws {
+        let url = registry.home.appendingPathComponent(".claude.json"), fm = FileManager.default
+        guard url.resolvingSymlinksInPath() == url.standardizedFileURL else { throw ContextError.message("Linked Claude configuration was left unchanged.") }
+        let original = fm.fileExists(atPath: url.path) ? try Data(contentsOf: url) : nil
+        var json: [String: Any] = [:]
+        if let original {
+            guard let parsed = try JSONSerialization.jsonObject(with: original) as? [String: Any] else { throw ContextError.message("Claude configuration could not be read.") }
+            json = parsed
+        }
+        guard json["mcpServers"] == nil || json["mcpServers"] is [String: Any] else { throw ContextError.message("Claude MCP configuration has an unexpected format.") }
+        var servers = json["mcpServers"] as? [String: Any] ?? [:]
+        if enabled { servers[Self.serverName] = ["type": "stdio", "command": registry.helperURL.path, "args": launchArguments(profile)] }
+        else { servers.removeValue(forKey: Self.serverName) }
+        json["mcpServers"] = servers
+        let current = fm.fileExists(atPath: url.path) ? try Data(contentsOf: url) : nil
+        guard current == original else { throw ContextError.message("Claude configuration changed. Try again to preserve those changes.") }
+        if let original {
+            let backup = registry.directory.appendingPathComponent("claude-config-backup-" + UUID().uuidString + ".json")
+            try original.write(to: backup, options: .withoutOverwriting)
+            try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: backup.path)
+        }
+        try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]).write(to: url, options: .atomic)
+        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
     public static func runCommand(_ executable: URL, _ arguments: [String], _ environment: [String: String]) throws -> ContextCommandResult {

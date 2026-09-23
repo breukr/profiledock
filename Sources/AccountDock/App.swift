@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private var globalMouseMonitor: Any?
     private var localMouseMonitor: Any?
     private var mouseEvents = 0
+    private var displayedProfileIDs: [String] = []
 
     override init() {
         let contextPreview = Bundle.main.object(forInfoDictionaryKey: "ProfileDockContextPreview") as? Bool == true
@@ -54,8 +55,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         usage.configure(previewMode ? [] : model.preferences.profiles)
         insights.prepare(profiles: model.preferences.profiles, home: model.home)
         if !previewMode { usage.refreshAll() }
-        activity.configure(previewMode ? [] : model.preferences.profiles, running: Set(model.running.keys))
+        activity.configure(previewMode ? [] : model.activityProfiles, running: Set(model.running.keys))
         if !previewMode { rebuildIslands(); startMouseMonitoring() }
+        else if CommandLine.arguments.contains("--preview-strip") { rebuildIslands(); startMouseMonitoring() }
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         status.button?.image = BrandArtwork.template(size: 16)
         status.button?.toolTip = "ProfileDock"
@@ -77,7 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             guard let self else { return }
             self.usage.configure(self.previewMode ? [] : self.model.preferences.profiles)
             self.insights.prepare(profiles: self.model.preferences.profiles, home: self.model.home)
-            self.activity.configure(self.previewMode ? [] : self.model.preferences.profiles, running: Set(self.model.running.keys))
+            self.activity.configure(self.previewMode ? [] : self.model.activityProfiles, running: Set(self.model.running.keys))
             if !self.previewMode, self.islands.first?.layout.placement != self.model.placement { self.cues.dismiss(); self.rebuildIslands() }
             else { self.islands.forEach { $0.updateLayout() } }
             self.applyVisibility()
@@ -88,11 +90,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         DistributedNotificationCenter.default().addObserver(self, selector: #selector(writeDiagnostics), name: Notification.Name("nl.breukr.account-dock.diagnostics"), object: nil)
         DistributedNotificationCenter.default().addObserver(self, selector: #selector(measureAnimations(_:)), name: Notification.Name("nl.breukr.account-dock.measure"), object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(screenChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        model.$companionRevision.dropFirst().sink { [weak self] _ in
+            guard let self else { return }
+            self.activity.updateCompanions(model: self.model)
+            self.usage.updateCompanions(model: self.model)
+            let ids = self.model.displayedProfiles.map(\.id)
+            if ids != self.displayedProfileIDs {
+                self.displayedProfileIDs = ids
+                self.islands.forEach { $0.updateLayout() }
+                self.configureMenu(); if !self.previewMode { self.registerHotKeys() }
+            }
+        }.store(in: &subscriptions)
         model.$message.dropFirst().sink { [weak self] _ in DispatchQueue.main.async { self?.islands.forEach { $0.updateLayout() } } }.store(in: &subscriptions)
         model.$running.dropFirst().sink { [weak self] running in
             guard let self else { return }
-            self.activity.configure(self.previewMode ? [] : self.model.preferences.profiles, running: Set(running.keys))
+            self.activity.configure(self.previewMode ? [] : self.model.activityProfiles, running: Set(running.keys))
         }.store(in: &subscriptions)
+        if !previewMode { model.companions.start() }
     }
 
     private var subscriptions = Set<AnyCancellable>()
@@ -123,6 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         usage.shutdown()
         insights.shutdown()
         activity.shutdown()
+        model.companions.stop()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -148,7 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc func writeDiagnostics(_ notification: Notification) {
         let destination = model.settingsURL.deletingLastPathComponent().appendingPathComponent("live-diagnostics.json")
         loginItem.refresh()
-        let output: [String: Any] = ["requestID": notification.object as? String ?? "", "islands": islands.map(\.diagnostics), "usage": usage.diagnostics, "activity": activity.diagnostics, "mouseEvents": mouseEvents, "globalMouseMonitor": globalMouseMonitor != nil, "localMouseMonitor": localMouseMonitor != nil, "profileRefreshes": model.refreshCount, "loginItem": loginItem.statusName, "menuBarItem": status.isVisible, "pid": ProcessInfo.processInfo.processIdentifier, "iconAppearance": (model.preferences.appIconAppearance ?? .auto).rawValue]
+        let output: [String: Any] = ["companions": ["codingTerminals": model.liveTerminalProfiles.count, "terminalTabs": model.companions.windows.count, "terminalError": model.companions.terminalError as Any? ?? NSNull(), "terminalsExpanded": model.preferences.terminalsExpanded != false, "discoveryEnabled": model.preferences.discoverTerminals != false], "requestID": notification.object as? String ?? "", "islands": islands.map(\.diagnostics), "usage": usage.diagnostics, "activity": activity.diagnostics, "mouseEvents": mouseEvents, "globalMouseMonitor": globalMouseMonitor != nil, "localMouseMonitor": localMouseMonitor != nil, "profileRefreshes": model.refreshCount, "loginItem": loginItem.statusName, "menuBarItem": status.isVisible, "pid": ProcessInfo.processInfo.processIdentifier, "iconAppearance": (model.preferences.appIconAppearance ?? .auto).rawValue]
         if let data = try? JSONSerialization.data(withJSONObject: output, options: [.prettyPrinted, .sortedKeys]) {
             try? FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? data.write(to: destination, options: .atomic)
@@ -180,7 +195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         menu.delegate = self
         menu.addItem(.sectionHeader(title: "Switch Profile"))
         if model.preferences.profiles.isEmpty { menu.addItem(withTitle: "No profiles yet", action: nil, keyEquivalent: "") }
-        for (index, profile) in model.preferences.profiles.enumerated() {
+        for (index, profile) in model.displayedProfiles.enumerated() {
             let item = NSMenuItem(title: profile.name, action: #selector(menuSelect(_:)), keyEquivalent: index < 9 ? String(index + 1) : "")
             item.keyEquivalentModifierMask = [.command, .option]
             item.representedObject = profile.id
@@ -338,13 +353,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 let delegate = Unmanaged<AppDelegate>.fromOpaque(pointer).takeUnretainedValue()
                 MainActor.assumeIsolated {
                     let index = Int(id.id) - 1
-                    if delegate.model.preferences.profiles.indices.contains(index) { delegate.model.select(delegate.model.preferences.profiles[index]) }
+                    if delegate.model.displayedProfiles.indices.contains(index) { delegate.model.select(delegate.model.displayedProfiles[index]) }
                 }
                 return noErr
             }, 1, &event, Unmanaged.passUnretained(self).toOpaque(), &eventHandler)
         }
         let codes = [kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3, kVK_ANSI_4, kVK_ANSI_5, kVK_ANSI_6, kVK_ANSI_7, kVK_ANSI_8, kVK_ANSI_9]
-        for index in 0..<min(model.preferences.profiles.count, codes.count) {
+        for index in 0..<min(model.displayedProfiles.count, codes.count) {
             var reference: EventHotKeyRef?
             let status = RegisterEventHotKey(UInt32(codes[index]), UInt32(cmdKey | optionKey), EventHotKeyID(signature: 0x41444F43, id: UInt32(index + 1)), GetApplicationEventTarget(), 0, &reference)
             if status == noErr, let reference { hotKeys.append(reference) }

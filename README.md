@@ -10,6 +10,8 @@
 
 ProfileDock puts your ChatGPT and Codex profiles within reach on every screen. Switch accounts, search local conversations, check usage, and see which tasks need your attention.
 
+ProfileDock also supports **Claude Desktop, Claude Code projects and Apple Terminal tabs**. Drag the handles in the strip or profile list to save a new order. See [Claude and Terminal setup, scope and provider differences](docs/CLAUDE-TERMINAL.md).
+
 **Free. Open source. Mac-native. Made by [Breukr](https://github.com/breukr).**
 
 - **One home for your accounts.** Create profiles and Finder launchers; switch with a click or ⌥⌘1–9.
@@ -23,7 +25,7 @@ ProfileDock puts your ChatGPT and Codex profiles within reach on every screen. S
 - **Saved resets, explained.** Expand the resets row for an oldest-first expiry countdown.
 - **See your activity over time.** Expand Usage insights for tokens, API-equivalent estimates, and session activity. Compare Today, 7 days, or 30 days for one account or all local profiles.
 
-**New in [1.4.0](docs/RELEASE-NOTES-1.4.0.md):** a redesigned settings window, local chat search and context access, optional native Dock identities, and an animated Usage Insights drawer. Support and About have separate sidebar pages. Warnings include working recovery actions, and Dock-copy setup shows its progress.
+**New in [1.5.0](docs/RELEASE-NOTES-1.5.0.md):** Claude Desktop and automatic coding-terminal discovery, clearer drag-to-reorder feedback, configurable grid columns and rows, and independent switches for the Terminals and Usage Insights sections. Choose any combination of 1–12 columns and rows from the notch grid menu or Appearance settings.
 
 Requires **macOS 14+**, an **Apple Silicon Mac (M1 or newer)**, and the **current [ChatGPT desktop app](https://chatgpt.com/download/)**. ChatGPT Classic is not supported. ProfileDock does not include or redistribute ChatGPT. Intel Macs can use the older v1.0.1 release; new releases target Apple Silicon.
 

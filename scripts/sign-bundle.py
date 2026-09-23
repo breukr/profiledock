@@ -28,5 +28,6 @@ for path in bundle.rglob("*"):
 
 nested = [p for p in bundle.rglob("*") if p.is_dir() and not p.is_symlink() and p.suffix in (".framework", ".app", ".xpc")]
 for path in sorted(set(machos + nested), key=lambda p: len(p.parts), reverse=True) + [bundle]:
-    subprocess.run(["codesign", "--force", "--preserve-metadata=entitlements", *options, "--sign", identity, str(path)], check=True)
+    entitlements = ["--entitlements", str(Path(__file__).resolve().parent.parent / "Resources/ProfileDock.entitlements")] if path == bundle else ["--preserve-metadata=entitlements"]
+    subprocess.run(["codesign", "--force", *entitlements, *options, "--sign", identity, str(path)], check=True)
 subprocess.run(["codesign", "--verify", "--deep", "--strict", str(bundle)], check=True)

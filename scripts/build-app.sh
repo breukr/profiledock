@@ -15,6 +15,7 @@ mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 swift build -c release --arch arm64 -Xswiftc -file-prefix-map -Xswiftc "$project_dir=/Source/ProfileDock" -Xswiftc -debug-prefix-map -Xswiftc "$project_dir=/Source/ProfileDock"
 binary_dir="$(swift build -c release --arch arm64 --show-bin-path)"
 cp "$binary_dir/AccountDock" "$bundle/Contents/MacOS/AccountDock"
+cp "$binary_dir/ProfileDockClaude" "$bundle/Contents/MacOS/ProfileDockClaude"
 cp "$binary_dir/ProfileDockShim" "$bundle/Contents/Resources/ProfileDockShim"
 cp "$binary_dir/ProfileDockContext" "$bundle/Contents/MacOS/ProfileDockContext"
 ditto Resources/profiledock-context "$bundle/Contents/Resources/ContextPlugin"
@@ -25,6 +26,7 @@ cp "$sparkle/LICENSE" "$bundle/Contents/Resources/Sparkle-LICENSE.txt"
 ditto Resources/Sounds "$bundle/Contents/Resources/Sounds"
 ditto Resources/Brand "$bundle/Contents/Resources/Brand"
 strip -S "$bundle/Contents/MacOS/AccountDock"
+strip -S "$bundle/Contents/MacOS/ProfileDockClaude"
 strip -S "$bundle/Contents/MacOS/ProfileDockContext"
 strip -S "$bundle/Contents/Resources/ProfileDockShim"
 cp THIRD_PARTY_NOTICES.md "$bundle/Contents/Resources/ThirdPartyNotices.txt"
@@ -37,8 +39,8 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <key>CFBundleDisplayName</key><string>ProfileDock</string>
 <key>CFBundleExecutable</key><string>AccountDock</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleVersion</key><string>150</string>
-<key>CFBundleShortVersionString</key><string>1.4.0</string>
+<key>CFBundleVersion</key><string>156</string>
+<key>CFBundleShortVersionString</key><string>1.5.0</string>
 <key>CFBundleIconFile</key><string>ProfileDock</string>
 <key>CFBundleIconName</key><string>ProfileDock</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
@@ -53,12 +55,17 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <key>SUVerifyUpdateBeforeExtraction</key><true/>
 <key>SURequireSignedFeed</key><true/>
 <key>LSUIElement</key><true/>
+<key>NSAppleEventsUsageDescription</key><string>ProfileDock opens and selects the Terminal window you choose.</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSPrincipalClass</key><string>NSApplication</string>
 </dict></plist>
 PLIST
 if [[ "${PROFILEDOCK_CONTEXT_PREVIEW:-0}" == "1" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $bundle_id" -c "Set :CFBundleName $bundle_name" -c "Set :CFBundleDisplayName $bundle_name" -c "Set :CFBundleVersion 150" -c "Set :CFBundleShortVersionString 1.4.0-preview.11" -c "Add :ProfileDockContextPreview bool true" "$bundle/Contents/Info.plist"
+fi
+if [[ -n "${PROFILEDOCK_VERSION:-}" || -n "${PROFILEDOCK_BUILD_NUMBER:-}" ]]; then
+    [[ "${PROFILEDOCK_VERSION:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][a-zA-Z0-9.]+)?$ && "${PROFILEDOCK_BUILD_NUMBER:-}" =~ ^[0-9]+$ ]] || { echo "Supply a valid version and numeric build number." >&2; exit 1; }
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $PROFILEDOCK_VERSION" -c "Set :CFBundleVersion $PROFILEDOCK_BUILD_NUMBER" "$bundle/Contents/Info.plist"
 fi
 # Compile the layered monochrome icon; macOS selects light/dark/tinted/clear.
 xcrun actool "$project_dir/Resources/ProfileDock.icon" --compile "$bundle/Contents/Resources" --output-format human-readable-text --output-partial-info-plist "$stage_dir/icon-info.plist" --app-icon ProfileDock --enable-on-demand-resources NO --target-device mac --minimum-deployment-target 14.0 --platform macosx --bundle-identifier nl.breukr.account-dock

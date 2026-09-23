@@ -29,3 +29,20 @@ public enum WidgetSizing {
         return min(range.upperBound, max(range.lowerBound, value))
     }
 }
+
+/// Explicit page dimensions; nil in preferences retains automatic sizing.
+public struct ProfileGrid: Codable, Equatable, Sendable {
+    public let columns: Int
+    public let rows: Int
+    public init(columns: Int, rows: Int) {
+        self.columns = min(12, max(1, columns)); self.rows = min(12, max(1, rows))
+    }
+    private enum CodingKeys: String, CodingKey { case columns, rows }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(columns: try values.decode(Int.self, forKey: .columns), rows: try values.decode(Int.self, forKey: .rows))
+    }
+    public var capacity: Int { columns * rows }
+    public var label: String { "\(columns) × \(rows)" }
+    public static let presets = [ProfileGrid(columns: 2, rows: 2), ProfileGrid(columns: 3, rows: 3), ProfileGrid(columns: 6, rows: 1), ProfileGrid(columns: 1, rows: 6)]
+}

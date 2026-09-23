@@ -1,6 +1,6 @@
 ---
 name: profiledock-context
-description: Retrieve earlier local Work/Codex conversations from other ProfileDock profiles when the user names a source profile, uses an @profile alias, or asks to check previous discussions across profiles. Use the ProfileDock context MCP tools and retain source attribution.
+description: Retrieve earlier local Work/Codex and Claude Code conversations from other ProfileDock profiles when the user names a source profile, uses an @profile alias, or asks to check previous discussions across profiles. Use the ProfileDock context MCP tools and retain source attribution.
 ---
 
 <!-- ProfileDock managed context skill v1 -->
@@ -31,8 +31,9 @@ the current conversation. Do not import system prompts, reasoning, credentials,
 or tool traces. Do not fabricate missing attachment contents.
 
 Report `partial` or `unavailable` coverage explicitly. An unreadable source does
-not mean no conversations exist. This version covers locally stored Work/Codex
-text, not ordinary ChatGPT/cloud-only history, attachments, or voice-only records.
+not mean no conversations exist. This version covers locally stored Work/Codex and Claude Code text. Ordinary
+ChatGPT/Claude Chat, Cowork, cloud-only history, attachments and voice-only records
+are not covered. Claude Code project entries are scoped to their saved folder.
 
 If no sources are enabled, explain that the user can select them in
 **ProfileDock → Settings → Context access**. If the tools are missing, use **Connect** there and
