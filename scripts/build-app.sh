@@ -26,6 +26,7 @@ cp "$sparkle/LICENSE" "$bundle/Contents/Resources/Sparkle-LICENSE.txt"
 ditto Resources/Sounds "$bundle/Contents/Resources/Sounds"
 ditto Resources/Brand "$bundle/Contents/Resources/Brand"
 strip -S "$bundle/Contents/MacOS/AccountDock"
+strip -S "$bundle/Contents/MacOS/ProfileDockClaude"
 strip -S "$bundle/Contents/MacOS/ProfileDockContext"
 strip -S "$bundle/Contents/Resources/ProfileDockShim"
 cp THIRD_PARTY_NOTICES.md "$bundle/Contents/Resources/ThirdPartyNotices.txt"
@@ -38,8 +39,8 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <key>CFBundleDisplayName</key><string>ProfileDock</string>
 <key>CFBundleExecutable</key><string>AccountDock</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleVersion</key><string>150</string>
-<key>CFBundleShortVersionString</key><string>1.4.0</string>
+<key>CFBundleVersion</key><string>155</string>
+<key>CFBundleShortVersionString</key><string>1.5.0</string>
 <key>CFBundleIconFile</key><string>ProfileDock</string>
 <key>CFBundleIconName</key><string>ProfileDock</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
