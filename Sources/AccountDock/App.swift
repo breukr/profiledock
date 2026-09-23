@@ -54,7 +54,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         applyVisibility()
         usage.configure(previewMode ? [] : model.preferences.profiles)
         insights.prepare(profiles: model.preferences.profiles, home: model.home)
-        if !previewMode { usage.refreshAll() }
+        if !previewMode {
+            usage.refreshAll()
+            NotificationCenter.default.publisher(for: ClaudeResetConnection.changed).sink { [weak self] _ in
+                self?.usage.claudeConnectionChanged()
+            }.store(in: &subscriptions)
+            NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification).sink { [weak self] _ in
+                self?.usage.refreshAll()
+            }.store(in: &subscriptions)
+        }
         activity.configure(previewMode ? [] : model.activityProfiles, running: Set(model.running.keys))
         if !previewMode { rebuildIslands(); startMouseMonitoring() }
         else if CommandLine.arguments.contains("--preview-strip") { rebuildIslands(); startMouseMonitoring() }

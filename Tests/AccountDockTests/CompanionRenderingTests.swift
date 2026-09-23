@@ -37,7 +37,7 @@ final class CompanionRenderingTests: XCTestCase {
                 try await render(view, size: CGSize(width: width, height: height), to: directory.appendingPathComponent("strip-\(Int(width))-\(scale).png"))
             }
         }
-        try await render(ActivityConnectionsView(model: model, activity: activity).padding(20).background(Color(nsColor: .windowBackgroundColor)), size: CGSize(width: 600, height: 620), to: directory.appendingPathComponent("connectors.png"))
+        try await render(ActivityConnectionsView(model: model, activity: activity).padding(20).background(Color(nsColor: .windowBackgroundColor)), size: CGSize(width: 600, height: 940), to: directory.appendingPathComponent("connectors.png"))
         model.preferences.terminalsExpanded = false
         let collapsedPresentation = IslandPresentation(expanded: true)
         collapsedPresentation.profileColumns = 4
