@@ -56,8 +56,8 @@ public struct ContextService: Sendable {
         let deadline = Date().addingTimeInterval(24)
         for profile in profiles {
             try Task.checkCancellation()
-            let history = ContextHistory(root: profile.root(in: registry.home), deadline: min(deadline, Date().addingTimeInterval(8)))
-            var status = ContextCoverage(profile: profile, status: "available", conversationsRead: 0, detail: "Local Work/Codex conversations only.")
+            let history = ContextHistory(root: profile.root(in: registry.home), deadline: min(deadline, Date().addingTimeInterval(8)), claude: profile.kind != .codex, project: profile.kind == .claudeCode ? profile.projectPath : nil)
+            var status = ContextCoverage(profile: profile, status: "available", conversationsRead: 0, detail: profile.kind == .codex ? "Local Work/Codex conversations only." : "Local Claude Code transcripts only. Cloud Chat and Cowork are not included.")
             do {
                 let (threads, more) = try history.threads(since: since, includeArchived: includeArchived)
                 if more { status.status = "partial"; status.detail = "Only the 500 most recently updated conversations were searched. Narrow the date range." }
@@ -102,7 +102,7 @@ public struct ContextService: Sendable {
         let after: Int64
         if let cursor { guard let value = Int64(cursor), value >= -1 else { throw ContextError.message("Invalid conversation cursor.") }; after = value } else { after = -1 }
         let profile = try registry.authorized(caller: caller, sources: [source])[0]
-        let history = ContextHistory(root: profile.root(in: registry.home), deadline: Date().addingTimeInterval(8))
+        let history = ContextHistory(root: profile.root(in: registry.home), deadline: Date().addingTimeInterval(8), claude: profile.kind != .codex, project: profile.kind == .claudeCode ? profile.projectPath : nil)
         guard let thread = try history.threads(since: nil, includeArchived: true, threadID: threadID).0.first else { throw ContextError.message("This local conversation is unavailable or excluded from context sharing.") }
         guard cursor == nil || messageID == nil else { throw ContextError.message("Use either a cursor or a message to focus on.") }
         var read = try history.messages(thread: thread, after: after, limit: messageID == nil ? limit : ContextHistory.maximumItems)

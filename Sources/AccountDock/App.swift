@@ -55,7 +55,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         insights.prepare(profiles: model.preferences.profiles, home: model.home)
         if !previewMode { usage.refreshAll() }
         activity.configure(previewMode ? [] : model.preferences.profiles, running: Set(model.running.keys))
-        if !previewMode { rebuildIslands(); startMouseMonitoring() }
+        if !previewMode { rebuildIslands(); startMouseMonitoring(); model.companions.start() }
+        else if CommandLine.arguments.contains("--preview-strip") { rebuildIslands(); startMouseMonitoring() }
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         status.button?.image = BrandArtwork.template(size: 16)
         status.button?.toolTip = "ProfileDock"
@@ -88,6 +89,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         DistributedNotificationCenter.default().addObserver(self, selector: #selector(writeDiagnostics), name: Notification.Name("nl.breukr.account-dock.diagnostics"), object: nil)
         DistributedNotificationCenter.default().addObserver(self, selector: #selector(measureAnimations(_:)), name: Notification.Name("nl.breukr.account-dock.measure"), object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(screenChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        model.$companionRevision.dropFirst().sink { [weak self] _ in
+            guard let self else { return }
+            self.activity.updateCompanions(model: self.model)
+            self.usage.updateCompanions(model: self.model)
+        }.store(in: &subscriptions)
         model.$message.dropFirst().sink { [weak self] _ in DispatchQueue.main.async { self?.islands.forEach { $0.updateLayout() } } }.store(in: &subscriptions)
         model.$running.dropFirst().sink { [weak self] running in
             guard let self else { return }
@@ -123,6 +129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         usage.shutdown()
         insights.shutdown()
         activity.shutdown()
+        model.companions.stop()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

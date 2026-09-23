@@ -20,7 +20,7 @@ enum AppFiles {
                 _ = try run("/usr/bin/ditto", ["--norsrc", "--noextattr", frameworks.path, contents.appendingPathComponent("Frameworks").path])
             }
             if let icon, FileManager.default.fileExists(atPath: icon.path) { try FileManager.default.copyItem(at: icon, to: contents.appendingPathComponent("Resources/AppIcon.icns")) }
-            let plist: [String: Any] = ["CFBundleIdentifier": "nl.breukr.profiledock.launcher.\(profile.id)", "CFBundleName": "ChatGPT \(profile.name)", "CFBundleExecutable": "ProfileLauncher", "CFBundlePackageType": "APPL", "CFBundleVersion": "1", "CFBundleIconFile": "AppIcon", "LSUIElement": true, "LSMinimumSystemVersion": "14.0", "ProfileDockProfileID": profile.id]
+            let plist: [String: Any] = ["CFBundleIdentifier": "nl.breukr.profiledock.launcher.\(profile.id)", "CFBundleName": "\(profile.kind == .codex ? "ChatGPT" : profile.kind.label) \(profile.name)", "CFBundleExecutable": "ProfileLauncher", "CFBundlePackageType": "APPL", "CFBundleVersion": "1", "CFBundleIconFile": "AppIcon", "LSUIElement": true, "LSMinimumSystemVersion": "14.0", "ProfileDockProfileID": profile.id, "NSAppleEventsUsageDescription": "This shortcut opens and selects its Terminal tab."]
             try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0).write(to: contents.appendingPathComponent("Info.plist"))
             _ = try run("/usr/bin/codesign", ["--force", "--sign", "-", destination.path])
             _ = try run("/usr/bin/codesign", ["--verify", "--strict", destination.path])
@@ -75,6 +75,7 @@ extension DockModel {
     var managedAppsDirectory: URL { home.appendingPathComponent("Applications/ProfileDock Apps", isDirectory: true) }
 
     func applicationURL(for profile: Profile) -> URL? {
+        if profile.kind != .codex { return NSWorkspace.shared.urlForApplication(withBundleIdentifier: profile.kind.bundleIdentifier) }
         if let path = profile.applicationPath {
             let url = URL(fileURLWithPath: path)
             return Bundle(url: url)?.bundleIdentifier == "com.openai.codex" ? url : nil
@@ -125,7 +126,7 @@ extension DockModel {
 
     func createFinderLauncher(for profile: Profile) async throws {
         guard let executable = Bundle.main.executableURL else { throw CocoaError(.fileNoSuchFile) }
-        let destination = home.appendingPathComponent("Applications/ProfileDock Launchers").appendingPathComponent("ChatGPT \(profile.name.replacingOccurrences(of: "/", with: "-")) \(profile.id.suffix(6)).app")
+        let destination = home.appendingPathComponent("Applications/ProfileDock Launchers").appendingPathComponent("\(profile.kind == .codex ? "ChatGPT" : profile.kind.label) \(profile.name.replacingOccurrences(of: "/", with: "-")) \(profile.id.suffix(6)).app")
         let icon = Bundle.main.resourceURL?.appendingPathComponent("AppIcon.icns")
         try await Task.detached { try AppFiles.createLauncher(profile: profile, executable: executable, icon: icon, destination: destination) }.value
         var updated = profile; updated.launcherPath = destination.path; update(updated)

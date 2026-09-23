@@ -15,6 +15,7 @@ mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 swift build -c release --arch arm64 -Xswiftc -file-prefix-map -Xswiftc "$project_dir=/Source/ProfileDock" -Xswiftc -debug-prefix-map -Xswiftc "$project_dir=/Source/ProfileDock"
 binary_dir="$(swift build -c release --arch arm64 --show-bin-path)"
 cp "$binary_dir/AccountDock" "$bundle/Contents/MacOS/AccountDock"
+cp "$binary_dir/ProfileDockClaude" "$bundle/Contents/MacOS/ProfileDockClaude"
 cp "$binary_dir/ProfileDockShim" "$bundle/Contents/Resources/ProfileDockShim"
 cp "$binary_dir/ProfileDockContext" "$bundle/Contents/MacOS/ProfileDockContext"
 ditto Resources/profiledock-context "$bundle/Contents/Resources/ContextPlugin"
@@ -53,6 +54,7 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <key>SUVerifyUpdateBeforeExtraction</key><true/>
 <key>SURequireSignedFeed</key><true/>
 <key>LSUIElement</key><true/>
+<key>NSAppleEventsUsageDescription</key><string>ProfileDock opens and selects the Terminal window you choose.</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSPrincipalClass</key><string>NSApplication</string>
 </dict></plist>

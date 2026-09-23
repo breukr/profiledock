@@ -1,4 +1,5 @@
 import Foundation
+import DockCore
 
 public struct ContextMessage: Codable, Identifiable, Equatable, Sendable {
     public let id: String
@@ -38,12 +39,15 @@ final class ContextHistory {
     let root: URL
     let deadline: Date
     private var historyDatabase: ContextDatabase?
-    init(root: URL, deadline: Date) { self.root = root; self.deadline = deadline }
+    let claude: Bool
+    let claudeProject: String?
+    init(root: URL, deadline: Date, claude: Bool = false, project: String? = nil) { self.root = root; self.deadline = deadline; self.claude = claude; self.claudeProject = project }
     static let maximumThreads = 500
     static let maximumItems = 4000
     static let maximumBytes = 24 * 1024 * 1024
 
     func threads(since: Double?, includeArchived: Bool, threadID: String? = nil) throws -> ([ContextThread], Bool) {
+        if claude { return try claudeThreads(since: since, threadID: threadID) }
         let db = try ContextDatabase(root.appendingPathComponent("state_5.sqlite"), deadline: deadline)
         let columns = try db.columns("threads")
         guard Set(["id", "title", "updated_at", "archived", "source", "rollout_path"]).isSubset(of: columns) else { throw ContextError.message("Unsupported conversation catalog. Update ProfileDock.") }
@@ -64,6 +68,7 @@ final class ContextHistory {
     }
 
     func messages(thread: ContextThread, after: Int64 = -1, limit: Int = maximumItems) throws -> HistoryRead {
+        if claude { return try claudeMessages(thread: thread, after: after, limit: limit) }
         switch thread.historyMode {
         case "paginated": return try paginated(thread: thread, after: after, limit: limit)
         case "legacy": return try legacy(thread: thread, after: after, limit: limit)
@@ -154,7 +159,7 @@ enum ContextText {
             text = text.replacingOccurrences(of: "(?s)<\(tag)\\b[^>]*>.*?</\(tag)>", with: "", options: .regularExpression)
         }
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let injected = ["# AGENTS.md", "<environment_context>", "<permissions", "<recommended_plugins>", "<system", "<developer", "You are Codex", "You are an AI", "<INSTRUCTIONS>", "[Automated", "<collaboration_mode>"]
+        let injected = ["# AGENTS.md", "<environment_context>", "<permissions", "<recommended_plugins>", "<system", "<developer", "You are Codex", "You are an AI", "<INSTRUCTIONS>", "[Automated", "<collaboration_mode>", "<local-command", "<command-name>", "<system-reminder>", "<task-notification>"]
         if injected.contains(where: { text.hasPrefix($0) }) { return "" }
         return redact(text)
     }

@@ -100,7 +100,7 @@ struct CompactIslandView: View {
         HStack(spacing: 7) {
             if model.placement == .free { DockDragHandle(drag: drag).frame(width: 22).help("Drag to move ProfileDock") }
             BrandMark(size: 11).foregroundStyle(.white.opacity(0.85))
-            Text("Accounts").font(.system(size: 10, weight: .medium)).foregroundStyle(.white.opacity(0.9))
+            Text("Apps").font(.system(size: 10, weight: .medium)).foregroundStyle(.white.opacity(0.9))
             HStack(spacing: 5) {
                 ForEach(Array(model.preferences.profiles.prefix(visible))) { profile in
                     ActivityDot(state: ProfileActivityState(summary: activity.entries[profile.id], isOpen: model.running[profile.id]?.isEmpty == false), visible: !presentation.expanded)
@@ -158,16 +158,23 @@ struct IslandView: View {
             LazyVGrid(columns: Array(repeating: GridItem(.fixed(tileWidth), spacing: 10 * model.preferences.scale, alignment: .top), count: columns), alignment: .center, spacing: 10) {
                 ForEach(Array(model.preferences.profiles.enumerated().dropFirst(page * capacity).prefix(capacity)), id: \.element.id) { index, profile in
                     accountCard(profile, index: index, tileWidth: tileWidth).frame(width: tileWidth)
+                        .modifier(ReorderableProfile(model: model, profile: profile))
+                        .contextMenu {
+                            Button("Move earlier") { model.move(profile.id, by: -1) }.disabled(index == 0)
+                            Button("Move later") { model.move(profile.id, by: 1) }.disabled(index == model.preferences.profiles.count - 1)
+                        }
                 }
             }
             if pageCount > 1 {
                 HStack(spacing: 14) {
                     Button { profilePage = max(0, page - 1) } label: { Image(systemName: "chevron.left") }
                         .disabled(page == 0).accessibilityLabel("Previous accounts")
+                        .overlay { ProfileDropTarget(model: model, entered: { profilePage = max(0, page - 1) }, targeted: .constant(false)) }
                     Text("\(page * capacity + 1)–\(min((page + 1) * capacity, model.preferences.profiles.count)) of \(model.preferences.profiles.count)")
                         .font(.system(size: 10)).monospacedDigit().foregroundStyle(.secondary)
                     Button { profilePage = min(pageCount - 1, page + 1) } label: { Image(systemName: "chevron.right") }
                         .disabled(page == pageCount - 1).accessibilityLabel("Next accounts")
+                        .overlay { ProfileDropTarget(model: model, entered: { profilePage = min(pageCount - 1, page + 1) }, targeted: .constant(false)) }
                 }.buttonStyle(.plain).font(.system(size: 10, weight: .semibold)).frame(height: 20)
             }
             if model.preferences.profiles.isEmpty { Button("Add your first profile", action: settings).buttonStyle(.borderedProminent) }
@@ -181,7 +188,7 @@ struct IslandView: View {
         .padding(.bottom, 14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .environment(\.colorScheme, .dark)
-        .onChange(of: model.preferences.profiles.map(\.id)) { _, _ in profilePage = 0 }
+        .onChange(of: model.preferences.profiles.count) { _, _ in profilePage = min(profilePage, pageCount - 1) }
         }
     }
 
@@ -207,8 +214,8 @@ struct IslandView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("\(profile.name) · \(model.state(profile)) · ⌥⌘\(index + 1)\n" + activityHelp(taskState))
-            .accessibilityLabel("\(profile.name), \(model.state(profile)). " + activityHelp(taskState))
+            .help("\(profile.name) · \(model.state(profile)) · ⌥⌘\(index + 1)\n" + activityHelp(taskState, profile: profile))
+            .accessibilityLabel("\(profile.name), \(model.state(profile)). " + activityHelp(taskState, profile: profile))
             .overlay(alignment: .topTrailing) {
                 if isOpen {
                     Button { model.requestQuit(profile) } label: {
@@ -216,7 +223,7 @@ struct IslandView: View {
                             .frame(width: 20, height: 20).background(Color(white: 0.22), in: Circle())
                             .overlay(Circle().stroke(.black, lineWidth: 2))
                     }.buttonStyle(.plain).disabled(model.closing.contains(profile.id))
-                        .accessibilityLabel("Close \(profile.name)").help("Close the ChatGPT profile \(profile.name)")
+                        .accessibilityLabel("Close \(profile.name)").help("Close \(profile.name)")
                 }
             }
             VStack(alignment: .leading, spacing: 8) {
@@ -227,16 +234,18 @@ struct IslandView: View {
                     Button("Try again") { usage.refresh(profile, force: true) }
                         .font(.system(size: 9)).buttonStyle(.plain).foregroundStyle(.white.opacity(0.75)).help(error.message)
                 } else {
-                    Text(snapshot == nil ? "Loading usage…" : "No usage data")
+                    Text(profile.kind == .codex ? (snapshot == nil ? "Loading usage…" : "No usage data") : (profile.kind == .terminal ? "Terminal window" : "Usage not reported yet"))
                         .font(.system(size: 10)).foregroundStyle(.white.opacity(0.45))
                 }
             }
             .frame(maxWidth: .infinity, minHeight: IslandLayout.usageHeight(rows: snapshot?.windows.count ?? 1), maxHeight: IslandLayout.usageHeight(rows: snapshot?.windows.count ?? 1), alignment: .topLeading)
             .help(snapshot.map { "Updated at \(Self.absoluteDate($0.fetchedAt))." } ?? "Usage for this account.")
+            if profile.kind == .codex {
             ResetInventoryView(snapshot: snapshot, now: usage.now, expanded: presentation.resetDetails.contains(profile.id)) {
                 presentation.toggleResetDetails(profile.id)
             }
             .help(resetHelp(snapshot))
+            } else { Text(profile.kind == .claudeCode ? "Claude Code" : profile.kind.label).font(.system(size: 10)).foregroundStyle(.white.opacity(0.55)).frame(height: 20) }
             if let snapshot, entry?.error != nil || usage.now.timeIntervalSince(snapshot.fetchedAt) > 90 {
                 Text("Updated \(Self.age(snapshot.fetchedAt, now: usage.now)) ago")
                     .font(.system(size: 8)).foregroundStyle(.orange.opacity(0.9))
@@ -261,7 +270,11 @@ struct IslandView: View {
         return nil
     }
 
-    private func activityHelp(_ state: ActivitySummary?) -> String {
+    private func activityHelp(_ state: ActivitySummary?, profile: Profile) -> String {
+        if profile.kind != .codex {
+            if profile.kind == .terminal, state?.working == 0, state?.waiting == 0 { return "This Terminal tab. Claude Code activity appears when connected." }
+            return "Tracks connected local Claude Code sessions. Claude Chat and Cowork activity are not available. " + (state?.liveAvailable == true ? "" : "Connect Claude Code in Profiles to enable activity.")
+        }
         guard let state else { return "Loading task status…" }
         let unread = state.unread.map { "\($0) completed tasks with unread results." } ?? "Unread results unknown."
         let live = state.liveAvailable ? "\(state.working) working, \(state.waiting) waiting for you." : (state.appOpen ? state.connectionIssue?.explanation ?? "Live task status unavailable." : "Desktop profile closed.")

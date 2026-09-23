@@ -66,7 +66,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 18) {
                 Text("Remove \(profile.name)?").font(.title2.weight(.semibold))
                 Text("The profile will disappear from ProfileDock. Its chats and sign-in data stay on this Mac unless you choose to move them to the Trash.")
-                if profile.id.hasPrefix("profile-") { Toggle("Also move this profile's data and managed app copy to the Trash", isOn: $trashData) }
+                if profile.kind == .codex && profile.id.hasPrefix("profile-") { Toggle("Also move this profile's data and managed app copy to the Trash", isOn: $trashData) }
                 HStack { Spacer(); Button("Cancel") { removing = nil }.keyboardShortcut(.cancelAction)
                     Button("Remove", role: .destructive) {
                         do { try model.removeProfile(profile, trashData: trashData); removing = nil }
@@ -238,18 +238,20 @@ struct SettingsView: View {
                     VStack(spacing: 0) {
                         ForEach(Array(model.preferences.profiles.enumerated()), id: \.element.id) { index, profile in
                             profileRow(profile, index: index)
+                                .modifier(ReorderableProfile(model: model, profile: profile, handle: false))
                             if index < model.preferences.profiles.count - 1 { Divider().padding(.leading, 72) }
                         }
                     }
                 }
             }
+            SettingsCard { ClaudeConnectionView(model: model).padding(16) }
             if copying || !model.nativeDockOperations.isEmpty { ProgressView("Preparing your profile…").controlSize(.small) }
             HStack {
                 Button { model.restoreImportedProfiles() } label: { Label("Import or Restore Profiles…", systemImage: "square.and.arrow.down") }
                     .buttonStyle(.borderless)
                 Spacer()
             }
-            Text("Each profile keeps its own sign-in, chats and settings. Click its name to edit it.")
+            Text("Drag the handles to change the order here or in the strip. Click a name to edit its icon and settings.")
                 .font(.caption).foregroundStyle(.secondary)
         }.disabled(updates.busy || copying || !model.nativeDockOperations.isEmpty)
     }
@@ -257,6 +259,7 @@ struct SettingsView: View {
     private func profileRow(_ profile: Profile, index: Int) -> some View {
         let isOpen = model.running[profile.id]?.isEmpty == false
         return HStack(spacing: 12) {
+            ProfileDragHandle(model: model, profile: profile).frame(width: 18, height: 22)
             Button { editing = profile } label: {
                 HStack(spacing: 12) {
                     ProfileBadge(model: model, profile: profile, size: 40, showStatus: false)
@@ -266,7 +269,7 @@ struct SettingsView: View {
                             Circle().fill(isOpen ? Color.green : Color.secondary.opacity(0.5)).frame(width: 5, height: 5)
                             Text(model.state(profile))
                             Text("·")
-                            Text(profile.dockApplicationPath != nil ? "Custom Dock icon" : profile.applicationPath == nil ? "Shared app" : "Separate app")
+                            Text(profile.kind != .codex ? profile.kind.label : profile.dockApplicationPath != nil ? "Custom Dock icon" : profile.applicationPath == nil ? "Shared app" : "Separate app")
                         }.font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }.contentShape(Rectangle())
@@ -291,7 +294,7 @@ struct SettingsView: View {
 
         Section {
             Button("Profile settings…", systemImage: "slider.horizontal.3") { editing = profile }
-            Button("Context tagging…", systemImage: "at") { manageContext(for: profile.id) }
+            if profile.kind != .terminal { Button("Context tagging…", systemImage: "at") { manageContext(for: profile.id) } }
         }
         Section("Window") {
             Button("Open profile", systemImage: "arrow.up.forward.app") { model.select(profile) }
@@ -626,6 +629,11 @@ private struct AddProfileSheet: View {
     @Environment(\.dismiss) var dismiss
     @State private var name = ""
     @FocusState private var nameFocused: Bool
+    @State private var kind: ProfileProvider = .codex
+    @State private var project: URL?
+    @State private var terminalWindows: [TerminalWindow] = []
+    @State private var terminalSelection = ""
+    @State private var loadingWindows = false
     @State private var separate = false
     @State private var source: URL?
     @State private var creating = false
@@ -633,12 +641,16 @@ private struct AddProfileSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Add Profile").font(.title2.weight(.semibold))
-            Text("A profile is a separate sign-in, conversation history and settings. Give it a name, then sign in when it opens.").foregroundStyle(.secondary)
+            Picker("App", selection: $kind) {
+                ForEach(ProfileProvider.allCases, id: \.self) { Text($0.label).tag($0) }
+            }
+            Text(kind == .codex ? "Create a separate Codex sign-in, history and settings." : kind == .claude ? "Add your existing Claude Desktop app and sign-in to the strip." : "Pin a project or an existing Terminal tab to the strip.").foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 6) {
                 Text("Profile name").font(.subheadline.weight(.medium))
                 TextField("For example, Personal or Work", text: $name).textFieldStyle(.roundedBorder)
                     .focused($nameFocused).accessibilityLabel("Profile name")
             }
+            if kind == .codex {
             Picker("Application", selection: $separate) {
                 Text("Shared installation · recommended").tag(false)
                 Text("Separate installation").tag(true)
@@ -653,6 +665,30 @@ private struct AddProfileSheet: View {
                     panel.begin { response in if response == .OK { source = panel.url } }
                 }
             }
+            } else if kind.usesTerminal {
+                HStack {
+                    Text(project?.path ?? model.home.path).font(.caption).lineLimit(2)
+                    Spacer()
+                    Button("Choose folder…") {
+                        let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true
+                        panel.begin { if $0 == .OK { project = panel.url } }
+                    }
+                }
+                Button("Choose an open Terminal tab…") {
+                    loadingWindows = true; error = nil
+                    Task {
+                        defer { loadingWindows = false }
+                        do { terminalWindows = try await TerminalClient.shared.windows(); if terminalWindows.isEmpty { error = "No open Terminal tabs. Create a project entry instead." } }
+                        catch { self.error = error.localizedDescription }
+                    }
+                }.disabled(loadingWindows)
+                if !terminalWindows.isEmpty {
+                    Picker("Tab", selection: $terminalSelection) {
+                        Text("New tab when opened").tag("")
+                        ForEach(terminalWindows) { Text($0.title + " · " + $0.tty).tag($0.id) }
+                    }
+                }
+            }
             if let error { Text(error).font(.callout).foregroundStyle(.orange) }
             if creating { ProgressView("Creating your profile…").controlSize(.small) }
             HStack {
@@ -661,7 +697,11 @@ private struct AddProfileSheet: View {
                 Button("Create profile") {
                     creating = true; error = nil
                     Task {
-                        do { try await model.createProfile(name: name, separateApp: separate, source: source); dismiss() }
+                        do {
+                            if kind == .codex { try await model.createProfile(name: name, separateApp: separate, source: source) }
+                            else { try model.createCompanion(kind: kind, name: name, project: project, window: terminalWindows.first { $0.id == terminalSelection }) }
+                            model.companions.refresh(); dismiss()
+                        }
                         catch { self.error = error.localizedDescription }
                         creating = false
                     }

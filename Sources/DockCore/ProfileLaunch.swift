@@ -21,7 +21,7 @@ public struct AppUpdateGroup: Identifiable, Equatable, Sendable {
     public let profiles: [Profile]
 
     public static func make(profiles: [Profile], defaultApplication: URL?) -> [AppUpdateGroup] {
-        let pairs = profiles.compactMap { profile -> (String, Profile)? in
+        let pairs = profiles.filter { $0.kind == .codex }.compactMap { profile -> (String, Profile)? in
             guard let path = profile.applicationPath ?? defaultApplication?.path else { return nil }
             return (URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path, profile)
         }

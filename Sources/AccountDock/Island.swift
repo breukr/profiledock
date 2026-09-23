@@ -209,6 +209,7 @@ final class IslandController {
 
     func pointerMoved(to point: NSPoint) {
         guard dragStart == nil else { return }
+        if model.draggingProfileID != nil { cancelCollapseForInteraction(); return }
         if model.placement != .topCenter { updateLayout() }
         checkHover(at: point)
     }

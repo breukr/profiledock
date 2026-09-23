@@ -7,6 +7,13 @@ public struct Profile: Identifiable, Codable, Equatable, Sendable {
     public var iconFilename: String?
     public var iconIsTile: Bool?
     public var applicationPath: String?
+    public var provider: ProfileProvider?
+    public var projectPath: String?
+    public var terminalTTY: String?
+    public var terminalWindowID: Int?
+    public var terminalProcessStarted: Double?
+    public var claudeSessionID: String?
+    public var kind: ProfileProvider { provider ?? .codex }
     public var launcherPath: String?
     /// Opt-in, locally re-signed app. applicationPath continues to identify the signed source.
     public var dockApplicationPath: String?
@@ -39,7 +46,8 @@ public struct Profile: Identifiable, Codable, Equatable, Sendable {
     }
 
     public func home(in userHome: URL) -> URL {
-        userHome.appendingPathComponent(id == "default" ? ".codex" : ".codex-\(id)")
+        if kind != .codex { return userHome.appendingPathComponent("Library/Application Support/Account Dock/Companions/\(id)") }
+        return userHome.appendingPathComponent(id == "default" ? ".codex" : ".codex-\(id)")
     }
 
     public static func validID(_ id: String) -> Bool {

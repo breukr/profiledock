@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 
 struct Preferences: Codable {
     var profiles: [Profile] = []
+    var claudeReadAt: [String: Date]? = [:]
     var scale: Double = 1
     var iconSetVersion: Int?
     var hiddenProfileIDs: [String]?
@@ -66,6 +67,9 @@ final class DockModel: ObservableObject {
     private var readinessAttempts = 0
     private(set) var refreshCount = 0
     private var launches: [String: Process] = [:]
+    lazy var companions = CompanionMonitor(model: self)
+    @Published var companionRevision = 0
+    @Published var draggingProfileID: String?
     var settingsURL: URL { home.appendingPathComponent("Library/Application Support/Account Dock/preferences.json") }
     var onPreferencesChanged: (() -> Void)?
     lazy var contextSettings = ContextSettingsStore(home: home)
@@ -86,7 +90,7 @@ final class DockModel: ObservableObject {
     func artwork(for profile: Profile, style: DockIconStyle? = nil, margin: CGFloat = 0.1) -> NSImage {
         var value = profile
         if let style { value.dockIconStyle = style }
-        let source = applicationURL(for: value)
+        let source = value.kind == .claudeCode ? (NSWorkspace.shared.urlForApplication(withBundleIdentifier: ProfileProvider.claude.bundleIdentifier) ?? applicationURL(for: value)) : applicationURL(for: value)
         let version = source.flatMap { Bundle(url: $0)?.object(forInfoDictionaryKey: "CFBundleVersion") as? String } ?? ""
         let sourceKey = (source?.path ?? "") + ":" + version
         let key = "\(profile.id):\(value.profileIconStyle.rawValue):\(margin)"
@@ -164,17 +168,21 @@ final class DockModel: ObservableObject {
 
     @objc private func workspaceChanged(_ notification: Notification) {
         if notification.name == NSWorkspace.didActivateApplicationNotification {
+            companions.refresh()
             refreshActiveProfile()
             return
         }
         guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-              app.bundleIdentifier == "com.openai.codex" || app.bundleIdentifier?.hasPrefix(NativeDock.prefix) == true else { return }
+              ["com.openai.codex", "com.anthropic.claudefordesktop", "com.apple.Terminal"].contains(app.bundleIdentifier ?? "") || app.bundleIdentifier?.hasPrefix(NativeDock.prefix) == true else { return }
         readinessAttempts = 0
         refresh()
     }
 
     private func refreshActiveProfile() {
-        let active = running.first(where: { $0.value.contains(where: \.isActive) })?.key
+        let active = preferences.profiles.first(where: { profile in
+            guard running[profile.id]?.contains(where: \.isActive) == true else { return false }
+            return !profile.kind.usesTerminal || companions.window(for: profile).map { $0.selected && $0.front } == true
+        })?.id
         if activeProfile != active { activeProfile = active }
     }
 
@@ -225,6 +233,7 @@ final class DockModel: ObservableObject {
             guard let id else { continue }
             result[id, default: []].append(app)
         }
+        result.merge(companionApplications(applications ?? NSWorkspace.shared.runningApplications)) { _, new in new }
         // Avoid invalidating every SwiftUI view when only an unrelated application activates.
         if running.mapValues({ $0.map(\.processIdentifier).sorted() }) != result.mapValues({ $0.map(\.processIdentifier).sorted() }) { running = result }
         if unreadableProcesses != unreadable { unreadableProcesses = unreadable }
@@ -274,6 +283,7 @@ final class DockModel: ObservableObject {
     }
 
     func requestQuit(_ profile: Profile) {
+        if profile.kind != .codex { closeCompanion(profile); return }
         refresh()
         guard !closing.contains(profile.id), let apps = running[profile.id], !apps.isEmpty else { return }
         closing.insert(profile.id)
@@ -294,6 +304,7 @@ final class DockModel: ObservableObject {
     }
 
     func select(_ profile: Profile) {
+        if profile.kind != .codex { selectCompanion(profile); return }
         guard !nativeDockOperations.contains(profile.id) else {
             showProfileMessage("This profile’s Dock app is still being prepared. Wait for it to finish, then try again.", for: profile)
             return
@@ -418,6 +429,7 @@ final class DockModel: ObservableObject {
     func state(_ profile: Profile) -> String {
         if closing.contains(profile.id) { return "Closing…" }
         if opening.contains(profile.id) { return "Opening…" }
+        if profile.kind.usesTerminal, companions.terminalError != nil { return "Status unavailable" }
         if activeProfile == profile.id { return "Active" }
         return running[profile.id]?.isEmpty == false ? "Open" : "Closed"
     }

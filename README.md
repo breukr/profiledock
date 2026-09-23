@@ -10,6 +10,8 @@
 
 ProfileDock puts your ChatGPT and Codex profiles within reach on every screen. Switch accounts, search local conversations, check usage, and see which tasks need your attention.
 
+The development version also supports **Claude Desktop, Claude Code projects and Apple Terminal tabs**. Drag the handles in the strip or profile list to save a new order. See [Claude and Terminal setup, scope and provider differences](docs/CLAUDE-TERMINAL.md).
+
 **Free. Open source. Mac-native. Made by [Breukr](https://github.com/breukr).**
 
 - **One home for your accounts.** Create profiles and Finder launchers; switch with a click or ⌥⌘1–9.

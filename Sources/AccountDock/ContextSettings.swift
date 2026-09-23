@@ -70,6 +70,7 @@ import ContextCore
         selectedHit = nil; conversation = nil; messages = []; readError = nil
     }
     private func codexURL() throws -> URL {
+        if caller?.kind != .codex { return URL(fileURLWithPath: "/usr/bin/true") }
         // Use the binary shipped with an installed OpenAI app, without a shell or PATH lookup.
         let candidates = ["/Applications/ChatGPT.app/Contents/Resources/codex", "/Applications/Codex.app/Contents/Resources/codex", "/opt/homebrew/bin/codex", "/usr/local/bin/codex"]
         guard let path = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { throw ContextError.message("Install the ChatGPT desktop app or Codex CLI to connect this profile.") }
@@ -109,7 +110,7 @@ import ContextCore
                 do {
                     try await Task.detached(priority: .utility) { try connection.connect(caller, helper: helper, skill: skill) }.value
                     connected = true; connectionChecked = true
-                    status = "Connected. In a new task in \(caller.name), type @ and choose a profile mention."
+                    status = caller.kind == .codex ? "Connected. In a new task in \(caller.name), type @ and choose a profile mention." : "Connected. Start a new Claude Code session and ask ProfileDock for context from an enabled source."
                 } catch { self.error = error.localizedDescription }
             }
         } catch { self.error = error.localizedDescription }

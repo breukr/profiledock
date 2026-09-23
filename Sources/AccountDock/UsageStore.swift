@@ -30,7 +30,7 @@ final class UsageStore: ObservableObject {
         let ids = Set(profiles.map(\.id))
         for id in tasks.keys.filter({ !ids.contains($0) }) { tasks.removeValue(forKey: id)?.cancel(); generation[id] = nil }
         entries = entries.filter { ids.contains($0.key) }
-        for profile in profiles where entries[profile.id] == nil { entries[profile.id] = UsageEntry() }
+        for profile in profiles where entries[profile.id] == nil { entries[profile.id] = UsageEntry(validatingIdentity: profile.kind == .codex) }
     }
 
     func setVisible(_ visible: Bool, screen: String) {
@@ -54,7 +54,7 @@ final class UsageStore: ObservableObject {
     }
 
     func refresh(_ profile: Profile, force: Bool = false) {
-        guard tasks[profile.id] == nil else { return }
+        guard profile.kind == .codex, tasks[profile.id] == nil else { return }
         let id = profile.id
         let token = UUID()
         generation[id] = token
@@ -92,6 +92,16 @@ final class UsageStore: ObservableObject {
                 self.entries[id]?.isRefreshing = false
                 self.entries[id]?.error = failure
             }
+        }
+    }
+
+    func updateCompanions(model: DockModel) {
+        now = Date()
+        for profile in profiles where profile.kind != .codex {
+            let session = model.companions.sessions(for: profile).filter { $0.usageAt != nil }.max { ($0.usageAt ?? .distantPast) < ($1.usageAt ?? .distantPast) }
+            let identity = "claude-session:" + (session?.id ?? profile.id)
+            let value = UsageEntry(snapshot: session?.snapshot(identity: identity, now: now), identity: identity, validatingIdentity: false)
+            if entries[profile.id] != value { entries[profile.id] = value }
         }
     }
 
