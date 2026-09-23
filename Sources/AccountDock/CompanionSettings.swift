@@ -2,6 +2,45 @@ import AppKit
 import SwiftUI
 import DockCore
 
+struct ActivityConnectionsView: View {
+    @ObservedObject var model: DockModel
+    @ObservedObject var activity: ActivityMonitor
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                Label("Codex activity connector", systemImage: "waveform.path").font(.headline)
+                Spacer()
+                Button(model.preferences.codexActivityEnabled != false ? "Disconnect" : "Connect Codex") {
+                    model.preferences.codexActivityEnabled = model.preferences.codexActivityEnabled == false
+                    model.save(); model.refresh()
+                }
+            }
+            let connected = model.preferences.profiles.filter { $0.kind == .codex && activity.entries[$0.id]?.liveAvailable == true }.count
+            Text(model.preferences.codexActivityEnabled == false ? "Disconnected. Your profiles remain available." : "Connected automatically to saved Codex / ChatGPT profiles. \(connected) live now.")
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text("Tracks local Work and Codex tasks. Ordinary ChatGPT conversations and Codex terminal activity are not reported by this connector.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Divider()
+            ClaudeConnectionView(model: model)
+            Divider()
+            HStack {
+                Label("Terminal connector", systemImage: "terminal").font(.headline)
+                Spacer()
+                Button("Refresh") { model.companions.refresh() }
+            }
+            Toggle("Automatically find coding terminals", isOn: Binding(get: { model.preferences.discoverTerminals != false }, set: {
+                model.preferences.discoverTerminals = $0; model.save(); model.companions.refresh()
+            }))
+            Toggle("Expand terminals in the strip", isOn: Binding(get: { model.preferences.terminalsExpanded != false }, set: model.setTerminalsExpanded))
+            Text("\(model.liveTerminalProfiles.count) coding terminals found. Open Terminal.app tabs appear automatically while Claude Code or Codex is running. Closed sessions disappear.")
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text("Allow Terminal access if macOS asks. Other terminal apps, SSH and background sessions are not included.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if let error = model.companions.terminalError { Text(error).font(.caption).foregroundStyle(.orange) }
+        }
+    }
+}
+
 struct ClaudeConnectionView: View {
     @ObservedObject var model: DockModel
     @State private var enabled = false
@@ -10,19 +49,19 @@ struct ClaudeConnectionView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label("Claude Code activity", systemImage: "waveform.path").font(.headline)
+                Label("Claude Code activity connector", systemImage: "waveform.path").font(.headline)
                 Spacer()
                 Button(enabled ? "Disconnect" : "Connect Claude Code") { connect(!enabled) }.disabled(busy)
             }
             Text("Show working, needs-input and completed states for local Code sessions in Claude Desktop and Terminal. Start a new Claude Code session after connecting.")
-                .font(.callout).foregroundStyle(.secondary)
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Text("Connection adds local hooks to Claude settings and keeps a backup. Prompts, responses and credentials are not collected. Claude Chat and Cowork status are unavailable.")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if model.claudeBridge.hasCustomStatusline {
-                Text("Your existing status line keeps its output. ProfileDock passes its input through while collecting usage counters.").font(.caption).foregroundStyle(.secondary)
+                Text("Your existing status line keeps its output. ProfileDock passes its input through while collecting usage counters.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             if busy { ProgressView().controlSize(.small) }
-            if let message { Text(message).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
+            if let message { Text(message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) }
         }.onAppear { enabled = model.claudeBridge.enabled }
     }
     private func connect(_ value: Bool) {
@@ -33,7 +72,13 @@ struct ClaudeConnectionView: View {
             defer { busy = false; enabled = bridge.enabled }
             do {
                 try await Task.detached { try bridge.setEnabled(value, bundledHelper: helper) }.value
-                message = value ? "Connected. New Claude Code sessions will report activity here." : "Disconnected. Your other Claude settings are kept."
+                if value {
+                    let application = NSRunningApplication.runningApplications(withBundleIdentifier: ProfileProvider.claude.bundleIdentifier).first?.bundleURL
+                        ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: ProfileProvider.claude.bundleIdentifier)
+                    let recognized = try model.recognizeClaudeDesktop(application: application)
+                    model.preferences.discoverTerminals = true; model.preferences.terminalsExpanded = true; model.save()
+                    message = (recognized ? "Claude Desktop recognized and added. " : "Claude Code connected. ") + "Open coding terminals appear automatically. Start a new Claude Code session to receive activity updates."
+                } else { message = "Disconnected. Your other Claude settings are kept." }
                 model.companions.refresh()
             } catch { message = error.localizedDescription }
         }
@@ -71,9 +116,9 @@ struct CompanionDetails: View {
                         Text("\(input.formatted()) input · \(output.formatted()) output tokens").font(.caption)
                     }
                     if let cost = latest.costUSD { Text("Session API-equivalent cost: \(cost, format: .currency(code: "USD"))").font(.caption) }
-                    Text("Reported \(latest.updatedAt.formatted(date: .abbreviated, time: .shortened)). This is not your subscription bill.").font(.caption).foregroundStyle(.secondary)
+                    Text("Reported \(latest.updatedAt.formatted(date: .abbreviated, time: .shortened)). This is not your subscription bill.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
-            }.font(.callout).foregroundStyle(.secondary).padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            }.font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).padding(10).frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

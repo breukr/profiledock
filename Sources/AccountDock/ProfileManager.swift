@@ -67,10 +67,13 @@ enum AppFiles {
 
 @MainActor
 extension DockModel {
-    var defaultApplication: URL? {
-        ["/Applications/ChatGPT.app", "/Applications/Codex.app", home.appendingPathComponent("Applications/ChatGPT.app").path, home.appendingPathComponent("Applications/Codex.app").path]
-            .map { URL(fileURLWithPath: $0) }.first { Bundle(url: $0)?.bundleIdentifier == "com.openai.codex" }
+    var installedApplications: [URL] {
+        let candidates = ["/Applications/ChatGPT.app", "/Applications/Codex.app", home.appendingPathComponent("Applications/ChatGPT.app").path, home.appendingPathComponent("Applications/Codex.app").path]
+            .map { URL(fileURLWithPath: $0) } + NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex").compactMap(\.bundleURL)
+        var seen = Set<String>()
+        return candidates.filter { Bundle(url: $0)?.bundleIdentifier == "com.openai.codex" && seen.insert($0.standardizedFileURL.path).inserted }
     }
+    var defaultApplication: URL? { installedApplications.first }
 
     var managedAppsDirectory: URL { home.appendingPathComponent("Applications/ProfileDock Apps", isDirectory: true) }
 

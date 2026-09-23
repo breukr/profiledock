@@ -48,7 +48,7 @@ public struct IslandLayout: Equatable, Sendable {
     }
     public static func usageHeight(rows: Int) -> Double { Double(max(1, rows)) * 46 + Double(max(0, rows - 1)) * 10 }
 
-    public init(screen: CGRect, notchHeight: Double, notchWidth: Double, count: Int, scale: Double, hasMessage: Bool, menuBarHeight: Double = 24, showsResetDetails: Bool = false, placement: DockPlacement = .topCenter, visibleFrame: CGRect? = nil, position: FloatingPosition = FloatingPosition(), usageRows: Int = 2, showsInsights: Bool = false, compactWidth preferredCompact: Double? = nil, expandedWidth preferredExpanded: Double? = nil) {
+    public init(screen: CGRect, notchHeight: Double, notchWidth: Double, count: Int, scale: Double, hasMessage: Bool, menuBarHeight: Double = 24, showsResetDetails: Bool = false, placement: DockPlacement = .topCenter, visibleFrame: CGRect? = nil, position: FloatingPosition = FloatingPosition(), usageRows: Int = 2, showsInsights: Bool = false, compactWidth preferredCompact: Double? = nil, expandedWidth preferredExpanded: Double? = nil, terminalCount: Int? = nil) {
         self.screen = screen
         self.placement = placement
         self.notchHeight = placement == .topCenter ? max(0, notchHeight) : 0
@@ -59,13 +59,16 @@ public struct IslandLayout: Equatable, Sendable {
         let singleRowHeight = 325 + 32 * scale + Self.usageHeight(rows: usageRows) - 104 + (hasMessage ? Self.messageHeight : 0) + (showsResetDetails ? Self.resetDetailsHeight : 0) + 34
         let cardHeight = singleRowHeight - 110 - (hasMessage ? Self.messageHeight : 0)
         profileColumns = WidgetSizing.columns(count: count, available: expandedWidth - 32, scale: scale)
-        let desiredRows = (max(1, count) + profileColumns - 1) / profileColumns
+        let desiredRows: Int
+        if let terminalCount, terminalCount > 0 {
+            desiredRows = max(1, (max(0, count - terminalCount) + profileColumns - 1) / profileColumns + (terminalCount + profileColumns - 1) / profileColumns)
+        } else { desiredRows = (max(1, count) + profileColumns - 1) / profileColumns }
         // Keep row count stable when reset details open, so the clicked account cannot disappear onto another page.
         let resetReserve = showsResetDetails ? 0 : Self.resetDetailsHeight
         let extraRows = max(0, Int((availableHeight - singleRowHeight - resetReserve - insightsHeight - 28) / (cardHeight + resetReserve + 10)))
         profileRows = min(desiredRows, min(2, 1 + extraRows))
         let paged = count > profileRows * profileColumns
-        let contentHeight = singleRowHeight + Double(profileRows - 1) * (cardHeight + 10) + insightsHeight + (paged ? 28 : 0)
+        let contentHeight = (terminalCount == nil ? 0 : 56) + singleRowHeight + Double(profileRows - 1) * (cardHeight + 10) + insightsHeight + (paged ? 28 : 0)
         if placement != .topCenter {
             let compactWidth = min(WidgetSizing.compact(count: count, preferred: preferredCompact), available.width)
             let expandedHeight = min(available.height, contentHeight)

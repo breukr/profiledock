@@ -244,7 +244,7 @@ struct SettingsView: View {
                     }
                 }
             }
-            SettingsCard { ClaudeConnectionView(model: model).padding(16) }
+            SettingsCard { ActivityConnectionsView(model: model, activity: activity).padding(16) }
             if copying || !model.nativeDockOperations.isEmpty { ProgressView("Preparing your profile…").controlSize(.small) }
             HStack {
                 Button { model.restoreImportedProfiles() } label: { Label("Import or Restore Profiles…", systemImage: "square.and.arrow.down") }
@@ -658,13 +658,25 @@ private struct AddProfileSheet: View {
             Text(separate ? "Copies the ChatGPT app so you can update this profile independently. Uses more disk space. It does not create another account or subscription." : "Uses your existing ChatGPT installation. Your sign-in, chats and settings are still separate; only the app files and update schedule are shared.")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
-                Text((source ?? model.defaultApplication)?.lastPathComponent ?? "ChatGPT is not installed").font(.caption).foregroundStyle(.secondary)
+                Menu {
+                    ForEach(model.installedApplications, id: \.path) { application in
+                        Button { source = application } label: {
+                            Label(application.lastPathComponent, systemImage: source == application || (source == nil && model.defaultApplication == application) ? "checkmark" : "app")
+                        }
+                    }
+                    Divider()
+                    Button("Browse Applications…") {
+                        let panel = NSOpenPanel(); panel.allowedContentTypes = [.applicationBundle]
+                        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+                        panel.canChooseDirectories = false
+                        panel.begin { response in if response == .OK { source = panel.url } }
+                    }
+                } label: {
+                    Label((source ?? model.defaultApplication)?.lastPathComponent ?? "Choose App…", systemImage: "app")
+                }.accessibilityLabel("Choose App")
                 Spacer()
-                Button("Choose app…") {
-                    let panel = NSOpenPanel(); panel.allowedContentTypes = [.applicationBundle]; panel.canChooseDirectories = false
-                    panel.begin { response in if response == .OK { source = panel.url } }
-                }
             }
+
             } else if kind.usesTerminal {
                 HStack {
                     Text(project?.path ?? model.home.path).font(.caption).lineLimit(2)

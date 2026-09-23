@@ -4,6 +4,78 @@ import DockCore
 @testable import AccountDock
 
 final class CompanionIntegrationTests: XCTestCase {
+    @MainActor func testDiscoveryWithoutSavedTerminalsDeduplicatesPersistsAndPrunes() throws {
+        let model = DockModel(home: try temporaryHome())
+        let desktop = Profile(id: "default", name: "Personal", color: "123456")
+        model.preferences.profiles = [desktop]
+        model.companions.terminalStarted = 42
+        let first = TerminalWindow(windowID: 1, tty: "/dev/ttys001", title: "Fixture", selected: true, front: true, agent: .claude)
+        let second = TerminalWindow(windowID: 2, tty: "/dev/ttys002", title: "Fixture", selected: true, front: false, agent: .codex)
+        let shell = TerminalWindow(windowID: 3, tty: "/dev/ttys003", title: "claude", selected: true, front: false)
+        model.companions.windows = [first, second, shell]
+        model.reconcileDiscoveredTerminals()
+        let terminals = model.liveTerminalProfiles
+        XCTAssertEqual(terminals.count, 2)
+        XCTAssertEqual(model.displayedProfiles.count, 3)
+        XCTAssertTrue(terminals.allSatisfy { $0.discoveredTerminal == true })
+        model.move(terminals[1].id, to: terminals[0].id)
+        model.reconcileDiscoveredTerminals()
+        XCTAssertEqual(model.liveTerminalProfiles.map(\.id), terminals.reversed().map(\.id))
+        XCTAssertEqual(DockModel(home: model.home).preferences.profiles.filter { $0.kind.usesTerminal }.map(\.id), terminals.reversed().map(\.id))
+        model.preferences.terminalsExpanded = false; model.save()
+        XCTAssertEqual(model.displayedProfiles.map(\.id), [desktop.id])
+        XCTAssertEqual(model.liveTerminalProfiles.count, 2)
+        XCTAssertEqual(DockModel(home: model.home).preferences.terminalsExpanded, false)
+        model.preferences.terminalsExpanded = true
+        var saved = terminals[0]; saved.discoveredTerminal = nil
+        model.update(saved)
+        model.companions.windows = []
+        model.reconcileDiscoveredTerminals()
+        XCTAssertEqual(model.preferences.profiles.map(\.id), [desktop.id, saved.id])
+        XCTAssertEqual(model.liveTerminalProfiles.count, 0)
+    }
+    @MainActor func testDiscoveryOptOutAndTerminalRestartDoNotReuseOldIdentity() throws {
+        let model = DockModel(home: try temporaryHome())
+        model.companions.terminalStarted = 42
+        model.companions.windows = [TerminalWindow(windowID: 1, tty: "/dev/ttys001", title: "Fixture", selected: true, front: true, agent: .codex)]
+        model.preferences.discoverTerminals = false
+        model.reconcileDiscoveredTerminals()
+        XCTAssertTrue(model.preferences.profiles.isEmpty)
+        model.preferences.discoverTerminals = true
+        model.reconcileDiscoveredTerminals()
+        let old = try XCTUnwrap(model.preferences.profiles.first)
+        model.companions.terminalStarted = 43
+        model.reconcileDiscoveredTerminals()
+        XCTAssertEqual(model.preferences.profiles.count, 1)
+        XCTAssertNotEqual(model.preferences.profiles[0].id, old.id)
+        let current = model.preferences.profiles[0]
+        try model.removeProfile(current, trashData: false)
+        model.reconcileDiscoveredTerminals()
+        XCTAssertTrue(model.preferences.profiles.isEmpty)
+    }
+    @MainActor func testClaudeRecognitionAddsInstalledAppOnceWithoutLaunchingIt() throws {
+        let model = DockModel(home: try temporaryHome())
+        let app = model.home.appendingPathComponent("Claude.app")
+        try FileManager.default.createDirectory(at: app.appendingPathComponent("Contents"), withIntermediateDirectories: true)
+        let info = try PropertyListSerialization.data(fromPropertyList: ["CFBundleIdentifier": "com.anthropic.claudefordesktop"], format: .xml, options: 0)
+        try info.write(to: app.appendingPathComponent("Contents/Info.plist"))
+        XCTAssertFalse(try model.recognizeClaudeDesktop(application: nil))
+        XCTAssertTrue(try model.recognizeClaudeDesktop(application: app))
+        XCTAssertTrue(try model.recognizeClaudeDesktop(application: app))
+        XCTAssertEqual(model.preferences.profiles.filter { $0.kind == .claude }.count, 1)
+        XCTAssertTrue(model.opening.isEmpty)
+    }
+    @MainActor func testCodexConnectorCanDisconnectWithoutRemovingProfiles() throws {
+        let model = DockModel(home: try temporaryHome())
+        model.preferences.profiles = [Profile(id: "default", name: "Personal", color: "123456")]
+        try model.createCompanion(kind: .claude, name: "Claude", project: nil)
+        XCTAssertEqual(model.activityProfiles.count, 2)
+        model.preferences.codexActivityEnabled = false
+        XCTAssertEqual(model.activityProfiles.map(\.kind), [.claude])
+        XCTAssertEqual(model.preferences.profiles.count, 2)
+        model.preferences.codexActivityEnabled = true
+        XCTAssertEqual(model.activityProfiles.count, 2)
+    }
     func testLiveTerminalRoundTrip() async throws {
         guard ProcessInfo.processInfo.environment["PROFILEDOCK_TEST_TERMINAL"] == "1" else { throw XCTSkip("Opt-in Terminal window test") }
         let client = TerminalClient.shared
@@ -127,6 +199,25 @@ final class CompanionIntegrationTests: XCTestCase {
         island.pointerMoved(to: CGPoint(x: -999, y: -999))
         try await Task.sleep(for: .milliseconds(600))
         XCTAssertFalse(island.expanded)
+    }
+    @MainActor func testDragPreviewFollowsPointerAndCleansUpOnCancel() throws {
+        _ = NSApplication.shared
+        let model = DockModel(home: try temporaryHome())
+        try model.createCompanion(kind: .claude, name: "Fixture", project: nil)
+        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 400, height: 300), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.orderFront(nil)
+        defer { window.close() }
+        let session = ProfileDragSession(model: model, profileID: model.preferences.profiles[0].id, window: window)
+        let preview = try XCTUnwrap(window.childWindows?.first)
+        XCTAssertTrue(preview.ignoresMouseEvents)
+        session.move(to: NSPoint(x: 300, y: 300))
+        let firstFrame = preview.frame
+        session.move(to: NSPoint(x: 340, y: 340))
+        XCTAssertNotEqual(preview.frame.origin, firstFrame.origin)
+        session.finish(commit: false)
+        XCTAssertTrue(window.childWindows?.isEmpty != false)
+        XCTAssertFalse(preview.isVisible)
+        XCTAssertNil(model.draggingProfileID)
     }
     @MainActor func testPointerReorderingCommitsBothDirectionsAndCancelsOutside() throws {
         _ = NSApplication.shared

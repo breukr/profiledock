@@ -143,12 +143,14 @@ struct IslandView: View {
     let settings: () -> Void
     let drag: (DockDragPhase, CGPoint) -> Void
     @State private var profilePage = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { geometry in
         let columns = presentation.profileColumns
         let capacity = max(1, columns * presentation.profileRows)
-        let pageCount = max(1, (model.displayedProfiles.count + capacity - 1) / capacity)
+        let desktopProfiles = Array(model.displayedProfiles.enumerated()).filter { !$0.element.kind.usesTerminal }
+        let pageCount = max(1, (desktopProfiles.count + capacity - 1) / capacity)
         let page = min(profilePage, pageCount - 1)
         let tileWidth = WidgetSizing.tile(count: columns, available: geometry.size.width - 32, scale: model.preferences.scale)
         ScrollView(.vertical) {
@@ -158,21 +160,36 @@ struct IslandView: View {
                 Text("ProfileDock").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.85))
                 Spacer()
                 Text(usage.isRefreshing ? "Refreshing…" : "Remaining").font(.system(size: 10)).foregroundStyle(.white.opacity(0.55))
-                Button { usage.refreshAll(force: true) } label: {
+                Button { usage.refreshAll(force: true); model.companions.refresh() } label: {
                     Image(systemName: "arrow.clockwise").frame(width: 20, height: 20)
-                }.disabled(usage.isRefreshing).accessibilityLabel("Refresh usage for all accounts").help("Refresh usage and saved resets")
+                }.accessibilityLabel("Refresh apps, terminals and usage").help("Find open coding terminals and refresh usage")
                 Button(action: settings) {
                     Image(systemName: "slider.horizontal.3").frame(width: 22, height: 20)
                 }.accessibilityLabel("Settings").help("Profiles, apps, and settings")
             }.buttonStyle(.plain).foregroundStyle(.white.opacity(0.65))
-            LazyVGrid(columns: Array(repeating: GridItem(.fixed(tileWidth), spacing: 10 * model.preferences.scale, alignment: .top), count: columns), alignment: .center, spacing: 10) {
-                ForEach(Array(model.displayedProfiles.enumerated().dropFirst(page * capacity).prefix(capacity)), id: \.element.id) { index, profile in
-                    accountCard(profile, index: index, tileWidth: tileWidth).frame(width: tileWidth)
-                        .modifier(ReorderableProfile(model: model, profile: profile, displayedOnly: true))
-                        .contextMenu {
-                            Button("Move earlier") { model.moveDisplayed(profile.id, by: -1) }.disabled(index == 0)
-                            Button("Move later") { model.moveDisplayed(profile.id, by: 1) }.disabled(index == model.displayedProfiles.count - 1)
+            profileGrid(profiles: Array(desktopProfiles.dropFirst(page * capacity).prefix(capacity)), columns: columns, tileWidth: tileWidth)
+            VStack(spacing: 10) {
+                HStack {
+                    Button { model.setTerminalsExpanded(model.preferences.terminalsExpanded == false) } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: model.preferences.terminalsExpanded == false ? "chevron.right" : "chevron.down")
+                            Image(systemName: "terminal")
+                            Text("Terminals")
+                            Text("\(model.liveTerminalProfiles.count)").monospacedDigit().foregroundStyle(.secondary)
                         }
+                    }.accessibilityLabel(model.preferences.terminalsExpanded == false ? "Expand terminals" : "Collapse terminals")
+                    Spacer()
+                    Button { model.companions.refresh() } label: { Image(systemName: "arrow.clockwise") }
+                        .accessibilityLabel("Find coding terminals")
+                }.font(.system(size: 11, weight: .medium)).buttonStyle(.plain).foregroundStyle(.white.opacity(0.75))
+                if model.preferences.terminalsExpanded != false {
+                    profileGrid(profiles: Array(model.displayedProfiles.enumerated()).filter { $0.element.kind.usesTerminal }, columns: columns, tileWidth: tileWidth)
+                    if let error = model.companions.terminalError {
+                        Text(error).font(.system(size: 10)).foregroundStyle(.orange).frame(maxWidth: .infinity, alignment: .leading)
+                    } else if model.liveTerminalProfiles.isEmpty {
+                        Text(model.preferences.discoverTerminals == false ? "Automatic discovery is off in Settings." : "Open Claude Code or Codex in Terminal to see it here.")
+                            .font(.system(size: 10)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
             if pageCount > 1 {
@@ -180,7 +197,7 @@ struct IslandView: View {
                     Button { profilePage = max(0, page - 1) } label: { Image(systemName: "chevron.left") }
                         .disabled(page == 0).accessibilityLabel("Previous accounts")
                         .overlay { ProfileDropTarget(model: model, entered: { profilePage = max(0, page - 1) }, targeted: .constant(false)) }
-                    Text("\(page * capacity + 1)–\(min((page + 1) * capacity, model.displayedProfiles.count)) of \(model.displayedProfiles.count)")
+                    Text("\(page * capacity + 1)–\(min((page + 1) * capacity, desktopProfiles.count)) of \(desktopProfiles.count)")
                         .font(.system(size: 10)).monospacedDigit().foregroundStyle(.secondary)
                     Button { profilePage = min(pageCount - 1, page + 1) } label: { Image(systemName: "chevron.right") }
                         .disabled(page == pageCount - 1).accessibilityLabel("Next accounts")
@@ -200,6 +217,20 @@ struct IslandView: View {
         .environment(\.colorScheme, .dark)
         .onChange(of: model.displayedProfiles.count) { _, _ in profilePage = min(profilePage, pageCount - 1) }
         }
+    }
+
+    private func profileGrid(profiles: [(offset: Int, element: Profile)], columns: Int, tileWidth: CGFloat) -> some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.fixed(tileWidth), spacing: 10 * model.preferences.scale, alignment: .top), count: columns), alignment: .center, spacing: 10) {
+            ForEach(profiles, id: \.element.id) { index, profile in
+                accountCard(profile, index: index, tileWidth: tileWidth).frame(width: tileWidth)
+                    .modifier(ReorderableProfile(model: model, profile: profile, displayedOnly: true))
+                    .contextMenu {
+                        Button("Move earlier") { model.moveDisplayed(profile.id, by: -1) }.disabled(index == 0)
+                        Button("Move later") { model.moveDisplayed(profile.id, by: 1) }.disabled(index == model.displayedProfiles.count - 1)
+                    }
+            }
+        }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: profiles.map { $0.element.id })
     }
 
     private func accountCard(_ profile: Profile, index: Int, tileWidth: CGFloat) -> some View {

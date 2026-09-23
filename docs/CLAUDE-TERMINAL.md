@@ -1,12 +1,14 @@
 # Claude and Terminal
 
+Coding terminals are discovered automatically, even before any terminal profile has been saved. The strip has a collapsible **Terminals** section with a refresh button. **Profiles → Terminal connector** controls automatic discovery and expansion. Only detected entries disappear when their sessions close; manually saved projects remain available in settings.
+
 Add Claude Desktop, a Claude Code project, or an Apple Terminal tab from **Profiles → Add Profile → App**. These entries share the strip, colors, custom artwork, keyboard shortcuts, Finder shortcuts and ordering with Codex profiles.
 
 Only open Terminal tabs with a foreground Claude Code or Codex process appear in the strip or terminal suggestions. Idle shells, stopped/background agents and closed tabs are excluded. A small circular agent logo on the upper-right corner of the Terminal icon identifies the active tool, including when it changes in the same tab. Detection reads process executable names, TTYs and foreground state, never command arguments or terminal contents. The picker refreshes while open and revalidates a selection before saving it.
 
 Saved projects remain in Profiles settings so they can be reopened. Hidden terminals do not consume strip space or keyboard shortcuts. Order is stored independently of visibility. Codex terminal support covers detection, branding and window control; per-tab Codex CLI activity/usage is unavailable rather than borrowed from an unrelated desktop account.
 
-Drag the dotted handle on a tile or profile row to reorder it. The highlighted tile is the destination. The new order is saved when you drop; cancelling or dropping outside keeps the old order. Hover over the page arrows while dragging to reach another page. Move earlier/later actions remain available through the tile menu and accessibility actions.
+Drag the dotted handle on a tile or profile row to reorder it. A floating card follows the pointer, the original fades, and an insertion line indicates before/after the highlighted destination. Escape cancels. Reduced Motion disables movement animations. The new order is saved when you drop; cancelling or dropping outside keeps the old order. Hover over the page arrows while dragging to reach another page. Move earlier/later actions remain available through the tile menu and accessibility actions.
 
 ## Windows
 
@@ -20,7 +22,9 @@ macOS asks permission for ProfileDock to control Terminal. If access is denied, 
 
 ## Activity and subscription usage
 
-Choose **Connect Claude Code** in Profiles. This adds ProfileDock-owned command hooks to `~/.claude/settings.json` and installs a local helper. Existing hooks and other settings are preserved, with a private backup before changes. Disconnect removes only ProfileDock's hooks and restores the previous status line if ProfileDock still owns it.
+Profiles includes separate Codex, Claude Code and Terminal connectors. Codex activity connects automatically to saved profiles and can be disconnected independently. Add Profile lists supported installed Codex and ChatGPT apps directly, with a browse fallback.
+
+Choose **Connect Claude Code** in Profiles. It recognizes the running or installed Claude Desktop app, adds it once, and enables coding-terminal discovery. Existing sessions become visible immediately, but detailed activity requires new sessions with the installed hooks. This adds ProfileDock-owned command hooks to `~/.claude/settings.json` and installs a local helper. Existing hooks and other settings are preserved, with a private backup before changes. Disconnect removes only ProfileDock's hooks and restores the previous status line if ProfileDock still owns it.
 
 Start a new local Claude Code session after connecting. Hook events report working, waiting, failed and completed states. The strip uses its existing dots, pulses, unread badges, completion cues and optional chimes. Startup snapshots stay quiet. Process identity is checked before an old session can be shown as working. Clicking an entry acknowledges its completed results.
 

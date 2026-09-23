@@ -9,6 +9,7 @@ public struct Profile: Identifiable, Codable, Equatable, Sendable {
     public var applicationPath: String?
     public var provider: ProfileProvider?
     public var projectPath: String?
+    public var discoveredTerminal: Bool?
     public var terminalTTY: String?
     public var terminalWindowID: Int?
     public var terminalProcessStarted: Double?

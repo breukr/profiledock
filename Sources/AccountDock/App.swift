@@ -55,8 +55,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         usage.configure(previewMode ? [] : model.preferences.profiles)
         insights.prepare(profiles: model.preferences.profiles, home: model.home)
         if !previewMode { usage.refreshAll() }
-        activity.configure(previewMode ? [] : model.preferences.profiles, running: Set(model.running.keys))
-        if !previewMode { rebuildIslands(); startMouseMonitoring(); model.companions.start() }
+        activity.configure(previewMode ? [] : model.activityProfiles, running: Set(model.running.keys))
+        if !previewMode { rebuildIslands(); startMouseMonitoring() }
         else if CommandLine.arguments.contains("--preview-strip") { rebuildIslands(); startMouseMonitoring() }
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         status.button?.image = BrandArtwork.template(size: 16)
@@ -79,7 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             guard let self else { return }
             self.usage.configure(self.previewMode ? [] : self.model.preferences.profiles)
             self.insights.prepare(profiles: self.model.preferences.profiles, home: self.model.home)
-            self.activity.configure(self.previewMode ? [] : self.model.preferences.profiles, running: Set(self.model.running.keys))
+            self.activity.configure(self.previewMode ? [] : self.model.activityProfiles, running: Set(self.model.running.keys))
             if !self.previewMode, self.islands.first?.layout.placement != self.model.placement { self.cues.dismiss(); self.rebuildIslands() }
             else { self.islands.forEach { $0.updateLayout() } }
             self.applyVisibility()
@@ -104,8 +104,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         model.$message.dropFirst().sink { [weak self] _ in DispatchQueue.main.async { self?.islands.forEach { $0.updateLayout() } } }.store(in: &subscriptions)
         model.$running.dropFirst().sink { [weak self] running in
             guard let self else { return }
-            self.activity.configure(self.previewMode ? [] : self.model.preferences.profiles, running: Set(running.keys))
+            self.activity.configure(self.previewMode ? [] : self.model.activityProfiles, running: Set(running.keys))
         }.store(in: &subscriptions)
+        if !previewMode { model.companions.start() }
     }
 
     private var subscriptions = Set<AnyCancellable>()
@@ -162,7 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc func writeDiagnostics(_ notification: Notification) {
         let destination = model.settingsURL.deletingLastPathComponent().appendingPathComponent("live-diagnostics.json")
         loginItem.refresh()
-        let output: [String: Any] = ["requestID": notification.object as? String ?? "", "islands": islands.map(\.diagnostics), "usage": usage.diagnostics, "activity": activity.diagnostics, "mouseEvents": mouseEvents, "globalMouseMonitor": globalMouseMonitor != nil, "localMouseMonitor": localMouseMonitor != nil, "profileRefreshes": model.refreshCount, "loginItem": loginItem.statusName, "menuBarItem": status.isVisible, "pid": ProcessInfo.processInfo.processIdentifier, "iconAppearance": (model.preferences.appIconAppearance ?? .auto).rawValue]
+        let output: [String: Any] = ["companions": ["codingTerminals": model.liveTerminalProfiles.count, "terminalTabs": model.companions.windows.count, "terminalError": model.companions.terminalError as Any? ?? NSNull(), "terminalsExpanded": model.preferences.terminalsExpanded != false, "discoveryEnabled": model.preferences.discoverTerminals != false], "requestID": notification.object as? String ?? "", "islands": islands.map(\.diagnostics), "usage": usage.diagnostics, "activity": activity.diagnostics, "mouseEvents": mouseEvents, "globalMouseMonitor": globalMouseMonitor != nil, "localMouseMonitor": localMouseMonitor != nil, "profileRefreshes": model.refreshCount, "loginItem": loginItem.statusName, "menuBarItem": status.isVisible, "pid": ProcessInfo.processInfo.processIdentifier, "iconAppearance": (model.preferences.appIconAppearance ?? .auto).rawValue]
         if let data = try? JSONSerialization.data(withJSONObject: output, options: [.prettyPrinted, .sortedKeys]) {
             try? FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? data.write(to: destination, options: .atomic)

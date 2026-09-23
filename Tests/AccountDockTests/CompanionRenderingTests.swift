@@ -31,19 +31,24 @@ final class CompanionRenderingTests: XCTestCase {
                 model.preferences.scale = scale
                 let presentation = IslandPresentation(expanded: true)
                 presentation.profileColumns = width < 500 ? 2 : 4; presentation.profileRows = width < 500 ? 2 : 1
-                let height = width < 500 ? 660.0 : 410.0
+                let height = width < 500 ? 800.0 : 720.0
                 let view = IslandView(model: model, usage: usage, activity: activity, insights: insights, presentation: presentation,
                                       notchHeight: 0, settings: {}, drag: { _, _ in }).background(.black)
                 try await render(view, size: CGSize(width: width, height: height), to: directory.appendingPathComponent("strip-\(Int(width))-\(scale).png"))
             }
         }
+        try await render(ActivityConnectionsView(model: model, activity: activity).padding(20).background(Color(nsColor: .windowBackgroundColor)), size: CGSize(width: 600, height: 620), to: directory.appendingPathComponent("connectors.png"))
+        model.preferences.terminalsExpanded = false
+        let collapsedPresentation = IslandPresentation(expanded: true)
+        collapsedPresentation.profileColumns = 4
+        try await render(IslandView(model: model, usage: usage, activity: activity, insights: insights, presentation: collapsedPresentation, notchHeight: 0, settings: {}, drag: { _, _ in }).background(.black), size: CGSize(width: 680, height: 440), to: directory.appendingPathComponent("terminals-collapsed.png"))
         for size in [CGSize(width: 760, height: 560), CGSize(width: 920, height: 700), CGSize(width: 1280, height: 800)] {
             let view = SettingsView(model: model, loginItem: LoginItemModel(), activity: activity, updates: AppUpdates(), selfUpdates: ProfileDockUpdates(), insights: insights, cues: ActivityCues(), chooseImage: { _ in })
             try await render(view, size: size, to: directory.appendingPathComponent("settings-\(Int(size.width)).png"))
         }
     }
     @MainActor private func render<V: View>(_ view: V, size: CGSize, to url: URL) async throws {
-        let host = NSHostingView(rootView: view.environment(\.colorScheme, .dark))
+        let host = NSHostingView(rootView: view.environment(\.colorScheme, .dark).frame(width: size.width, height: size.height, alignment: .topLeading))
         let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.contentView = host; host.frame = CGRect(origin: .zero, size: size)
         host.layoutSubtreeIfNeeded(); try await Task.sleep(for: .milliseconds(100)); host.layoutSubtreeIfNeeded()

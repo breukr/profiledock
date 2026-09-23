@@ -7,6 +7,9 @@ import UniformTypeIdentifiers
 
 struct Preferences: Codable {
     var profiles: [Profile] = []
+    var discoverTerminals: Bool?
+    var terminalsExpanded: Bool?
+    var codexActivityEnabled: Bool?
     var claudeReadAt: [String: Date]? = [:]
     var scale: Double = 1
     var iconSetVersion: Int?
@@ -160,7 +163,7 @@ final class DockModel: ObservableObject {
             if FileManager.default.fileExists(atPath: settingsURL.path) {
                 preferences = try JSONDecoder().decode(Preferences.self, from: Data(contentsOf: settingsURL))
             }
-            let saved = preferences.profiles.filter { Profile.validID($0.id) && FileManager.default.fileExists(atPath: $0.home(in: home).path) }
+            let saved = preferences.profiles.filter { Profile.validID($0.id) && ($0.discoveredTerminal == true || FileManager.default.fileExists(atPath: $0.home(in: home).path)) }
             let discovered = try ProfileCatalog.discover(home: home).filter { !(preferences.hiddenProfileIDs ?? []).contains($0.id) }
             preferences.profiles = ProfileCatalog.merge(discovered: discovered + saved.filter { item in !discovered.contains(where: { $0.id == item.id }) }, saved: saved)
             preferences.scale = min(1.3, max(0.85, preferences.scale))

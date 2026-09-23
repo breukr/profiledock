@@ -12,6 +12,12 @@ import DockCore
     init(model: DockModel) { self.model = model }
     func start() {
         guard timer == nil else { return }
+        if let model, model.claudeBridge.enabled,
+           !(model.preferences.removedProfiles ?? []).contains(where: { $0.kind == .claude }) {
+            let application = NSRunningApplication.runningApplications(withBundleIdentifier: ProfileProvider.claude.bundleIdentifier).first?.bundleURL
+                ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: ProfileProvider.claude.bundleIdentifier)
+            _ = try? model.recognizeClaudeDesktop(application: application)
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
@@ -20,9 +26,9 @@ import DockCore
     }
     func stop() { timer?.invalidate(); timer = nil; task?.cancel(); task = nil }
     func refresh() {
-        guard task == nil, let model, model.preferences.profiles.contains(where: { $0.kind != .codex }) else { return }
+        guard task == nil, let model else { return }
         let home = model.home
-        let terminals = model.preferences.profiles.contains { $0.kind.usesTerminal }
+        let terminals = model.preferences.discoverTerminals != false || model.preferences.profiles.contains { $0.kind.usesTerminal && $0.discoveredTerminal != true }
         task = Task { [weak self, weak model] in
             guard let self, let model else { return }
             defer { self.task = nil }
@@ -38,6 +44,7 @@ import DockCore
                 } catch { self.windows = []; self.terminalError = error.localizedDescription }
             } else { self.windows = []; self.terminalStarted = nil; self.terminalError = nil }
             guard !Task.isCancelled else { return }
+            if self.terminalError == nil { model.reconcileDiscoveredTerminals() }
             model.rememberCompanionSessions()
             model.refresh()
             model.companionRevision += 1
@@ -57,11 +64,46 @@ import DockCore
 
 @MainActor extension DockModel {
     var displayedProfiles: [Profile] {
-        preferences.profiles.filter { !$0.kind.usesTerminal || companions.window(for: $0)?.agent != nil }
+        preferences.profiles.filter { !$0.kind.usesTerminal } + (preferences.terminalsExpanded == false ? [] : liveTerminalProfiles)
+    }
+    var liveTerminalProfiles: [Profile] {
+        preferences.profiles.filter { $0.kind.usesTerminal && companions.window(for: $0)?.agent != nil && ($0.discoveredTerminal != true || preferences.discoverTerminals != false) }
+    }
+    var activityProfiles: [Profile] {
+        preferences.profiles.filter { $0.kind != .codex || preferences.codexActivityEnabled != false }
+    }
+    func setTerminalsExpanded(_ expanded: Bool) {
+        preferences.terminalsExpanded = expanded; save(); companions.refresh()
+    }
+    /// Only an authoritative scan removes automatically discovered entries. Saved projects stay intact.
+    func reconcileDiscoveredTerminals() {
+        var profiles = preferences.profiles
+        profiles.removeAll { $0.discoveredTerminal == true && companions.window(for: $0)?.agent == nil }
+        if preferences.discoverTerminals != false, let started = companions.terminalStarted {
+            for window in companions.windows where window.agent != nil {
+                guard !profiles.contains(where: { window.matches($0, processStarted: started) }) else { continue }
+                let id = "terminal-\(Int(started))-\(window.windowID)-\(window.tty.split(separator: "/").last ?? "tab")"
+                guard !(preferences.hiddenProfileIDs ?? []).contains(id) else { continue }
+                var profile = Profile(id: id, name: "\(window.agent!.label) · \(window.tty.replacingOccurrences(of: "/dev/ttys", with: ""))", color: "546E7A")
+                profile.provider = .terminal; profile.discoveredTerminal = true; profile.dockIconStyle = .chatgpt
+                profile.terminalTTY = window.tty; profile.terminalWindowID = window.windowID
+                profile.terminalProcessStarted = started; profile.terminalAgent = window.agent
+                profiles.append(profile)
+            }
+        }
+        if profiles != preferences.profiles { preferences.profiles = profiles; save() }
+    }
+    @discardableResult func recognizeClaudeDesktop(application: URL?) throws -> Bool {
+        guard let application, Bundle(url: application)?.bundleIdentifier == ProfileProvider.claude.bundleIdentifier else { return false }
+        if !preferences.profiles.contains(where: { $0.kind == .claude }) {
+            try createCompanion(kind: .claude, name: "Claude", project: nil)
+        }
+        return true
     }
     func terminalAgent(for profile: Profile) -> TerminalAgent? { companions.window(for: profile)?.agent }
     func moveDisplayed(_ id: String, by delta: Int) {
-        let shown = displayedProfiles
+        guard let profile = preferences.profiles.first(where: { $0.id == id }) else { return }
+        let shown = displayedProfiles.filter { $0.kind.usesTerminal == profile.kind.usesTerminal }
         guard let index = shown.firstIndex(where: { $0.id == id }), shown.indices.contains(index + delta) else { return }
         move(id, to: shown[index + delta].id)
     }
