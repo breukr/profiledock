@@ -4,6 +4,40 @@ import DockCore
 @testable import AccountDock
 
 final class CompanionIntegrationTests: XCTestCase {
+    @MainActor func testCustomGridPersistsAndAutomaticRestoresPreviousWidth() throws {
+        let model = DockModel(home: try temporaryHome())
+        model.preferences.expandedWidth = 640
+        model.preferences.profileGrid = ProfileGrid(columns: 6, rows: 1); model.save()
+        let restored = DockModel(home: model.home)
+        XCTAssertEqual(restored.preferences.profileGrid, ProfileGrid(columns: 6, rows: 1))
+        restored.preferences.profileGrid = nil; restored.save()
+        let automatic = DockModel(home: model.home)
+        XCTAssertNil(automatic.preferences.profileGrid)
+        XCTAssertEqual(automatic.preferences.expandedWidth, 640)
+    }
+    @MainActor func testSectionVisibilityPersistsWithoutRemovingProfilesOrExpansionChoices() throws {
+        let model = DockModel(home: try temporaryHome())
+        model.companions.terminalStarted = 42
+        model.companions.windows = [TerminalWindow(windowID: 1, tty: "/dev/ttys001", title: "Fixture", selected: true, front: true, agent: .codex)]
+        model.reconcileDiscoveredTerminals()
+        let saved = model.preferences.profiles
+        XCTAssertEqual(model.displayedProfiles.count, 1)
+        model.preferences.showTerminalsSection = false
+        model.preferences.showInsightsSection = false
+        model.preferences.terminalsExpanded = true
+        model.preferences.insightsExpansion = .always
+        model.save()
+        XCTAssertTrue(model.displayedProfiles.isEmpty)
+        XCTAssertEqual(model.liveTerminalProfiles.count, 1)
+        XCTAssertEqual(model.preferences.profiles, saved)
+        let restored = DockModel(home: model.home)
+        XCTAssertEqual(restored.preferences.showTerminalsSection, false)
+        XCTAssertEqual(restored.preferences.showInsightsSection, false)
+        XCTAssertEqual(restored.preferences.terminalsExpanded, true)
+        XCTAssertEqual(restored.preferences.insightsExpansion, .always)
+        model.preferences.showTerminalsSection = true
+        XCTAssertEqual(model.displayedProfiles.count, 1)
+    }
     @MainActor func testDiscoveryWithoutSavedTerminalsDeduplicatesPersistsAndPrunes() throws {
         let model = DockModel(home: try temporaryHome())
         let desktop = Profile(id: "default", name: "Personal", color: "123456")

@@ -47,6 +47,37 @@ final class CompanionRenderingTests: XCTestCase {
             try await render(view, size: size, to: directory.appendingPathComponent("settings-\(Int(size.width)).png"))
         }
     }
+    @MainActor func testCustomGridDesktopLayouts() async throws {
+        guard let path = ProcessInfo.processInfo.environment["PROFILEDOCK_RENDER_GRIDS"] else { throw XCTSkip("Opt-in grid previews") }
+        let directory = URL(fileURLWithPath: path)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let model = DockModel(home: home), usage = UsageStore(), activity = ActivityMonitor(home: home), insights = InsightsStore()
+        defer { usage.shutdown(); activity.shutdown(); insights.shutdown() }
+        model.preferences.profiles = (1...9).map { index in
+            var profile = Profile(id: "fixture-\(index)", name: "Profile \(index)", color: "377CF6")
+            profile.dockIconStyle = .chatgpt
+            return profile
+        }
+        for grid in ProfileGrid.presets {
+            model.preferences.profileGrid = grid
+            for scale in [0.85, 1.0, 1.3] {
+                model.preferences.scale = scale
+                let layout = IslandLayout(screen: CGRect(x: 0, y: 0, width: 1512, height: 982), notchHeight: 0, notchWidth: 0, count: 9, scale: scale, hasMessage: false, terminalCount: 0, grid: grid)
+                let presentation = IslandPresentation(expanded: true)
+                presentation.profileColumns = layout.profileColumns; presentation.profileRows = layout.profileRows
+                let view = IslandView(model: model, usage: usage, activity: activity, insights: insights, presentation: presentation, notchHeight: 0, settings: {}, drag: { _, _ in }).background(.black)
+                try await render(view, size: layout.expanded.size, to: directory.appendingPathComponent("grid-\(grid.columns)x\(grid.rows)-\(scale).png"))
+            }
+            try await render(ProfileGridSettings(model: model).padding(20).background(Color(nsColor: .windowBackgroundColor)), size: CGSize(width: 540, height: 320), to: directory.appendingPathComponent("settings-\(grid.columns)x\(grid.rows).png"))
+        }
+        model.preferences.showTerminalsSection = false; model.preferences.showInsightsSection = false
+        model.preferences.scale = 1
+        let presentation = IslandPresentation(expanded: true)
+        presentation.profileColumns = 3; presentation.profileRows = 2
+        try await render(IslandView(model: model, usage: usage, activity: activity, insights: insights, presentation: presentation, notchHeight: 0, settings: {}, drag: { _, _ in }).background(.black), size: CGSize(width: 460, height: 670), to: directory.appendingPathComponent("sections-hidden.png"))
+    }
     @MainActor private func render<V: View>(_ view: V, size: CGSize, to url: URL) async throws {
         let host = NSHostingView(rootView: view.environment(\.colorScheme, .dark).frame(width: size.width, height: size.height, alignment: .topLeading))
         let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)

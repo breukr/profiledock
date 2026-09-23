@@ -10,6 +10,14 @@ Saved projects remain in Profiles settings so they can be reopened. Hidden termi
 
 Drag the dotted handle on a tile or profile row to reorder it. A floating card follows the pointer, the original fades, and an insertion line indicates before/after the highlighted destination. Escape cancels. Reduced Motion disables movement animations. The new order is saved when you drop; cancelling or dropping outside keeps the old order. Hover over the page arrows while dragging to reach another page. Move earlier/later actions remain available through the tile menu and accessibility actions.
 
+## Grid layout
+
+Use the grid icon in the expanded strip to choose Automatic, 2 × 2, 3 × 3, 6 × 1, 1 × 6, or custom Columns and Rows. **Settings → Appearance → Grid layout** exposes the same controls with a visual preview. Dimensions mean columns × rows per page, with 1–12 of each. The choice persists across restarts and applies to both the apps and terminal sections, which have independent page controls.
+
+The same grid menu and Appearance settings include independent **Terminals** and **Usage Insights** switches. Turning a section off removes its heading, content and reserved space from the notch; it keeps connection settings, analytics history and saved expansion choices. Hidden terminals do not consume notch shortcuts.
+
+Custom layouts size the panel width from the column count. Tall pages scroll inside the screen; small displays reduce the effective column count so tiles stay readable. Extra profiles are paged, and empty rows are not reserved when fewer profiles are present. Returning to Automatic restores the saved automatic-width settings. Reordering and keyboard shortcuts keep profile identity through layout changes.
+
 ## Windows
 
 - Claude Desktop uses the existing installed app and sign-in. Opening it restores its window.

@@ -500,9 +500,19 @@ struct SettingsView: View {
                         }.labelsHidden().pickerStyle(.segmented).frame(width: 210)
                     }
                     Divider().padding(.leading, 16)
+                    ProfileGridSettings(model: model).padding(16)
+                    Divider().padding(.leading, 16)
+                    SettingsRow(title: "Terminals section", detail: "Show coding terminals in the notch menu.") {
+                        Toggle("Show terminals section", isOn: Binding(get: { model.preferences.showTerminalsSection != false }, set: { model.preferences.showTerminalsSection = $0; model.save() })).labelsHidden().toggleStyle(.switch)
+                    }
+                    Divider().padding(.leading, 16)
+                    SettingsRow(title: "Usage Insights section", detail: "Show usage analytics in the notch menu.") {
+                        Toggle("Show Usage Insights section", isOn: Binding(get: { model.preferences.showInsightsSection != false }, set: { model.preferences.showInsightsSection = $0; model.save() })).labelsHidden().toggleStyle(.switch)
+                    }
+                    Divider().padding(.leading, 16)
                     VStack(spacing: 18) {
                         widthControl("Compact width", value: Binding(get: { model.preferences.compactWidth }, set: { model.preferences.compactWidth = $0; model.save() }), range: 160...480, automatic: WidgetSizing.compact(count: model.preferences.profiles.count, preferred: nil))
-                        widthControl("Expanded width", value: Binding(get: { model.preferences.expandedWidth }, set: { model.preferences.expandedWidth = $0; model.save() }), range: 320...1400, automatic: WidgetSizing.expanded(count: model.preferences.profiles.count, scale: model.preferences.scale, preferred: nil, insights: false))
+                        if model.preferences.profileGrid == nil { widthControl("Expanded width", value: Binding(get: { model.preferences.expandedWidth }, set: { model.preferences.expandedWidth = $0; model.save() }), range: 320...1400, automatic: WidgetSizing.expanded(count: model.preferences.profiles.count, scale: model.preferences.scale, preferred: nil, insights: false)) }
                     }.padding(16)
                     if model.placement == .free {
                         Divider().padding(.leading, 16)

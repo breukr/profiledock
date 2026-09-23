@@ -52,7 +52,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .search: return "history conversations tasks find"
         case .insights: return "analytics tokens cost activity"
         case .general: return "startup login launch menu bar dock visibility"
-        case .appearance: return "strip position size width sound volume notifications cues"
+        case .appearance: return "strip position size width grid layout columns rows sections terminals analytics usage insights sound volume notifications cues"
         case .icons: return "custom color colour image initials native experimental dock"
         case .access: return "permissions privacy sharing tagging mentions context"
         case .updates: return "versions software install download repair"

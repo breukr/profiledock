@@ -64,7 +64,7 @@ import DockCore
 
 @MainActor extension DockModel {
     var displayedProfiles: [Profile] {
-        preferences.profiles.filter { !$0.kind.usesTerminal } + (preferences.terminalsExpanded == false ? [] : liveTerminalProfiles)
+        preferences.profiles.filter { !$0.kind.usesTerminal } + (preferences.showTerminalsSection == false || preferences.terminalsExpanded == false ? [] : liveTerminalProfiles)
     }
     var liveTerminalProfiles: [Profile] {
         preferences.profiles.filter { $0.kind.usesTerminal && companions.window(for: $0)?.agent != nil && ($0.discoveredTerminal != true || preferences.discoverTerminals != false) }

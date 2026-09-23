@@ -143,6 +143,7 @@ struct IslandView: View {
     let settings: () -> Void
     let drag: (DockDragPhase, CGPoint) -> Void
     @State private var profilePage = 0
+    @State private var terminalPage = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -150,6 +151,9 @@ struct IslandView: View {
         let columns = presentation.profileColumns
         let capacity = max(1, columns * presentation.profileRows)
         let desktopProfiles = Array(model.displayedProfiles.enumerated()).filter { !$0.element.kind.usesTerminal }
+        let terminalProfiles = Array(model.displayedProfiles.enumerated()).filter { $0.element.kind.usesTerminal }
+        let terminalPageCount = max(1, (terminalProfiles.count + capacity - 1) / capacity)
+        let terminalsPage = min(terminalPage, terminalPageCount - 1)
         let pageCount = max(1, (desktopProfiles.count + capacity - 1) / capacity)
         let page = min(profilePage, pageCount - 1)
         let tileWidth = WidgetSizing.tile(count: columns, available: geometry.size.width - 32, scale: model.preferences.scale)
@@ -163,11 +167,14 @@ struct IslandView: View {
                 Button { usage.refreshAll(force: true); model.companions.refresh() } label: {
                     Image(systemName: "arrow.clockwise").frame(width: 20, height: 20)
                 }.accessibilityLabel("Refresh apps, terminals and usage").help("Find open coding terminals and refresh usage")
+                ProfileGridMenu(model: model, columns: columns, rows: presentation.profileRows)
                 Button(action: settings) {
                     Image(systemName: "slider.horizontal.3").frame(width: 22, height: 20)
                 }.accessibilityLabel("Settings").help("Profiles, apps, and settings")
             }.buttonStyle(.plain).foregroundStyle(.white.opacity(0.65))
             profileGrid(profiles: Array(desktopProfiles.dropFirst(page * capacity).prefix(capacity)), columns: columns, tileWidth: tileWidth)
+            ProfileGridPagination(model: model, page: $profilePage, count: desktopProfiles.count, capacity: capacity, terminals: false)
+            if model.preferences.showTerminalsSection != false {
             VStack(spacing: 10) {
                 HStack {
                     Button { model.setTerminalsExpanded(model.preferences.terminalsExpanded == false) } label: {
@@ -183,7 +190,8 @@ struct IslandView: View {
                         .accessibilityLabel("Find coding terminals")
                 }.font(.system(size: 11, weight: .medium)).buttonStyle(.plain).foregroundStyle(.white.opacity(0.75))
                 if model.preferences.terminalsExpanded != false {
-                    profileGrid(profiles: Array(model.displayedProfiles.enumerated()).filter { $0.element.kind.usesTerminal }, columns: columns, tileWidth: tileWidth)
+                    profileGrid(profiles: Array(terminalProfiles.dropFirst(terminalsPage * capacity).prefix(capacity)), columns: columns, tileWidth: tileWidth)
+                    ProfileGridPagination(model: model, page: $terminalPage, count: terminalProfiles.count, capacity: capacity, terminals: true)
                     if let error = model.companions.terminalError {
                         Text(error).font(.system(size: 10)).foregroundStyle(.orange).frame(maxWidth: .infinity, alignment: .leading)
                     } else if model.liveTerminalProfiles.isEmpty {
@@ -192,30 +200,22 @@ struct IslandView: View {
                     }
                 }
             }
-            if pageCount > 1 {
-                HStack(spacing: 14) {
-                    Button { profilePage = max(0, page - 1) } label: { Image(systemName: "chevron.left") }
-                        .disabled(page == 0).accessibilityLabel("Previous accounts")
-                        .overlay { ProfileDropTarget(model: model, entered: { profilePage = max(0, page - 1) }, targeted: .constant(false)) }
-                    Text("\(page * capacity + 1)–\(min((page + 1) * capacity, desktopProfiles.count)) of \(desktopProfiles.count)")
-                        .font(.system(size: 10)).monospacedDigit().foregroundStyle(.secondary)
-                    Button { profilePage = min(pageCount - 1, page + 1) } label: { Image(systemName: "chevron.right") }
-                        .disabled(page == pageCount - 1).accessibilityLabel("Next accounts")
-                        .overlay { ProfileDropTarget(model: model, entered: { profilePage = min(pageCount - 1, page + 1) }, targeted: .constant(false)) }
-                }.buttonStyle(.plain).font(.system(size: 10, weight: .semibold)).frame(height: 20)
             }
             if model.displayedProfiles.isEmpty { Button("Add your first profile", action: settings).buttonStyle(.borderedProminent) }
-            InsightsDrawer(model: model, store: insights, presentation: presentation)
+            if model.preferences.showInsightsSection != false { InsightsDrawer(model: model, store: insights, presentation: presentation) }
             ProfileMessageNotice(model: model, compact: true)
         }
         }
-        .scrollIndicators(.never)
+        .scrollIndicators(.automatic)
         .padding(.top, notchHeight + 13)
         .padding(.horizontal, 16)
         .padding(.bottom, 14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .environment(\.colorScheme, .dark)
-        .onChange(of: model.displayedProfiles.count) { _, _ in profilePage = min(profilePage, pageCount - 1) }
+        .onChange(of: model.displayedProfiles.count) { _, _ in
+            profilePage = min(profilePage, pageCount - 1); terminalPage = min(terminalPage, terminalPageCount - 1)
+        }
+        .onChange(of: capacity) { _, _ in profilePage = 0; terminalPage = 0 }
         }
     }
 

@@ -29,6 +29,9 @@ struct Preferences: Codable {
     var insightsMetric: String?
     var compactWidth: Double?
     var expandedWidth: Double?
+    var profileGrid: ProfileGrid?
+    var showTerminalsSection: Bool?
+    var showInsightsSection: Bool?
 }
 
 struct ProfileMessageRecovery: Equatable {
