@@ -12,7 +12,7 @@ public enum TerminalAgent: String, Codable, Sendable {
             guard fields.count == 3, fields[1].contains("+"), !fields[1].contains("T"), !fields[1].contains("Z") else { continue }
             let tty = "/dev/" + fields[0]
             guard ClaudeSession.validTTY(tty) else { continue }
-            let executable = URL(fileURLWithPath: String(fields[2])).lastPathComponent.lowercased()
+            let executable = URL(fileURLWithPath: String(fields[2]).trimmingCharacters(in: .whitespaces)).lastPathComponent.lowercased()
             guard let agent = TerminalAgent(rawValue: executable) else { continue }
             result[tty] = agent
         }

@@ -13,8 +13,11 @@ final class CompanionTests: XCTestCase {
         ttys006 S+ /opt/bin/not-claude
         ttys007 Z+ /opt/bin/claude
         ttys008 S+ /Users/fixture/Folder With Spaces/claude
+        ttys009  S+   claude
+        ttys010  R+   codex
+        ttys011  S+   node
         """
-        XCTAssertEqual(TerminalAgent.processes(table), ["/dev/ttys001": .claude, "/dev/ttys002": .codex, "/dev/ttys008": .claude])
+        XCTAssertEqual(TerminalAgent.processes(table), ["/dev/ttys001": .claude, "/dev/ttys002": .codex, "/dev/ttys008": .claude, "/dev/ttys009": .claude, "/dev/ttys010": .codex])
     }
     func testExistingProfilesDecodeAsCodexAndKeepTheirHome() throws {
         let profile = try JSONDecoder().decode(Profile.self, from: Data(#"{"id":"default","name":"Personal","color":"abcdef"}"#.utf8))
