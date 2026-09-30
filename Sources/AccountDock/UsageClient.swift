@@ -3,10 +3,12 @@ import CryptoKit
 import DockCore
 
 enum UsageLoadError: Error, Equatable {
-    case notSignedIn, authorizationRequired, accountChanged, wrongAccount, invalidResponse, network, http(Int)
+    case notSignedIn, authorizationRequired, claudeSignInRequired, accountChanged, wrongAccount, invalidResponse, network, http(Int), rateLimited(Date)
     var message: String {
         switch self {
         case .notSignedIn, .authorizationRequired: return "Open this profile and check that you are signed in."
+        case .claudeSignInRequired: return "Open Claude Code and sign in to refresh account usage."
+        case .rateLimited: return "Claude requested a pause. Usage will retry automatically."
         case .accountChanged: return "Account changed. Refresh usage again."
         case .wrongAccount: return "The response belongs to a different account."
         case .invalidResponse: return "Usage data could not be read."
@@ -16,16 +18,19 @@ enum UsageLoadError: Error, Equatable {
     }
     var clearsSnapshot: Bool {
         switch self {
-        case .notSignedIn, .authorizationRequired, .accountChanged, .wrongAccount: return true
+        case .notSignedIn, .authorizationRequired, .claudeSignInRequired, .accountChanged, .wrongAccount: return true
         default: return false
         }
     }
 }
 
 protocol UsageFetching: Sendable {
+    func invalidate() async
     func identity(for profile: Profile) async throws -> String
     func fetch(_ profile: Profile, expectedIdentity: String) async throws -> UsageSnapshot
 }
+
+extension UsageFetching { func invalidate() async {} }
 
 struct UsageCredentials: Sendable {
     let accessToken: String
@@ -65,7 +70,7 @@ struct UsageCredentials: Sendable {
     }
 }
 
-private final class NoUsageRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+final class NoUsageRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
         // A credential-bearing request never follows a redirect to any other location.
         completionHandler(nil)

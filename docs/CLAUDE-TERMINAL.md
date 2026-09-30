@@ -36,7 +36,13 @@ Choose **Connect Claude Code** in Profiles. It recognizes the running or install
 
 Start a new local Claude Code session after connecting. Hook events report working, waiting, failed and completed states. The strip uses its existing dots, pulses, unread badges, completion cues and optional chimes. Startup snapshots stay quiet. Process identity is checked before an old session can be shown as working. Clicking an entry acknowledges its completed results.
 
-The status-line input supplies five-hour and weekly subscription windows and reset times when Claude reports them. An existing custom status-line command receives the original input and keeps its output. Missing or expired windows are unavailable, never represented as unused capacity. Usage is a session report, not an independently refreshed account endpoint; timestamps remain visible. Older Claude Code versions or non-subscription sessions may omit these fields.
+Claude subscription usage comes directly from the signed-in Claude Code account, independently of terminal status-line reports. ProfileDock refreshes at startup, after wake, every minute while the strip is open, and every five minutes while it is closed. Refresh also requests current data; requests for tiles sharing an account are combined. Rate limits pause retries. Account changes clear previous readings, and network failures retain the last reading with a stale marker.
+
+All Claude tiles show the local Claude Code account's shared five-hour and weekly limits. If Claude Desktop uses a different account, these are still the Code account's limits. An expired or missing Code sign-in is reported explicitly; ProfileDock never refreshes or rewrites Claude's credentials itself.
+
+Saved resets are separate from quota reset times. Choose **Connect saved resets** in a Claude tile or **Profiles → Claude usage connector**, then sign in to Claude. ProfileDock keeps its own WebKit session and checks that it can access the organization verified through Claude Code. It imports no cookies from browsers or Claude Desktop. Available grants, remaining counts and expiry dates are read automatically. Unsupported, signed-out or malformed inventory is unknown, never zero. A saved reset can be banked even if Claude will only allow its use after reaching a limit. ProfileDock does not consume resets. Disconnect removes its web session and stops this check.
+
+The optional status-line bridge still records local counters for session insights. An existing custom status-line command receives the original input and keeps its output; these reports never replace independently refreshed account usage.
 
 ## History and context
 
@@ -56,15 +62,15 @@ Common launch, focus, ordering, profile artwork, activity, search and insights c
 | --- | --- | --- |
 | Separate account containers | Existing profile homes | Existing Claude sign-in; project/window entries |
 | Live task activity | Local Work/Codex | Connected local Claude Code |
-| Subscription windows | Account endpoint | Latest Claude Code status-line report |
-| Saved reset credits | When supplied by Codex | Not applicable |
+| Subscription windows | Account endpoint | Claude Code account endpoint |
+| Saved reset credits | When supplied by Codex | Claude web connection, when supplied |
 | App updates | ProfileDock-managed OpenAI app groups | Claude and macOS manage their own updates |
 | Custom native running Dock copies | Existing experimental option | Not provided; notch and Finder artwork remain configurable |
 | Conversation retrieval | Local Work/Codex | Local Claude Code text |
 
 ## Stored data
 
-Claude hook state is saved under `~/Library/Application Support/Account Dock/ClaudeSessions` with private permissions. It contains session identifiers, working directory, terminal/process identity, timestamps, state and usage counters. Hook prompts, tool inputs, responses and credentials are discarded. The bridge helper and saved original status-line configuration live in the adjacent `ClaudeBridge` directory. Nothing is uploaded by this integration.
+Claude hook state is saved under `~/Library/Application Support/Account Dock/ClaudeSessions` with private permissions. It contains session identifiers, working directory, terminal/process identity, timestamps, state and usage counters. Hook prompts, tool inputs, responses and credentials are discarded. The bridge helper and saved original status-line configuration live in the adjacent `ClaudeBridge` directory. Hook records are not uploaded. Usage requests go directly to Anthropic.
 
 Claude interfaces: [hooks](https://code.claude.com/docs/en/hooks), [status line](https://code.claude.com/docs/en/statusline), [shared Desktop configuration](https://code.claude.com/docs/en/desktop#shared-configuration).
 

@@ -39,8 +39,8 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
 <key>CFBundleDisplayName</key><string>ProfileDock</string>
 <key>CFBundleExecutable</key><string>AccountDock</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleVersion</key><string>156</string>
-<key>CFBundleShortVersionString</key><string>1.5.0</string>
+<key>CFBundleVersion</key><string>157</string>
+<key>CFBundleShortVersionString</key><string>1.5.1</string>
 <key>CFBundleIconFile</key><string>ProfileDock</string>
 <key>CFBundleIconName</key><string>ProfileDock</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>

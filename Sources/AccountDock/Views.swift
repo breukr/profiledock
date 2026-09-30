@@ -275,19 +275,23 @@ struct IslandView: View {
                     Button("Try again") { usage.refresh(profile, force: true) }
                         .font(.system(size: 9)).buttonStyle(.plain).foregroundStyle(.white.opacity(0.75)).help(error.message)
                 } else {
-                    Text(profile.kind == .codex ? (snapshot == nil ? "Loading usage…" : "No usage data") : (profile.kind == .terminal ? "Terminal window" : "Usage not reported yet"))
+                    Text((profile.kind == .codex || profile.usesClaudeAccountUsage) ? (snapshot == nil ? "Loading usage…" : "No usage data") : (profile.kind == .terminal ? "Terminal window" : "Usage not reported yet"))
                         .font(.system(size: 10)).foregroundStyle(.white.opacity(0.45))
                 }
             }
             .frame(maxWidth: .infinity, minHeight: IslandLayout.usageHeight(rows: snapshot?.windows.count ?? 1), maxHeight: IslandLayout.usageHeight(rows: snapshot?.windows.count ?? 1), alignment: .topLeading)
-            .help(snapshot.map { "Updated at \(Self.absoluteDate($0.fetchedAt))." } ?? "Usage for this account.")
-            if profile.kind == .codex {
+            .help((profile.usesClaudeAccountUsage ? "Claude Code account usage, shared by Claude tiles. " : "") + (snapshot.map { "Updated at \(Self.absoluteDate($0.fetchedAt))." } ?? "Usage for this account."))
+            if profile.usesClaudeAccountUsage && snapshot?.bankedResets == nil {
+                Button("Connect saved resets…") { ClaudeResetConnection.shared.connect() }
+                    .font(.system(size: 10)).buttonStyle(.plain).foregroundStyle(.white.opacity(0.65)).frame(height: 20)
+                    .help("Sign in to Claude once to refresh saved resets automatically. No reset is consumed.")
+            } else if profile.kind == .codex || profile.usesClaudeAccountUsage {
             ResetInventoryView(snapshot: snapshot, now: usage.now, expanded: presentation.resetDetails.contains(profile.id)) {
                 presentation.toggleResetDetails(profile.id)
             }
             .help(resetHelp(snapshot))
             } else { Text(profile.kind == .claudeCode ? "Claude Code" : profile.kind.label).font(.system(size: 10)).foregroundStyle(.white.opacity(0.55)).frame(height: 20) }
-            if let snapshot, entry?.error != nil || usage.now.timeIntervalSince(snapshot.fetchedAt) > 90 {
+            if let snapshot, entry?.error != nil || usage.now.timeIntervalSince(snapshot.fetchedAt) > (profile.usesClaudeAccountUsage ? 360 : 90) {
                 Text("Updated \(Self.age(snapshot.fetchedAt, now: usage.now)) ago")
                     .font(.system(size: 8)).foregroundStyle(.orange.opacity(0.9))
                     .help(entry?.error?.message ?? "Refreshing usage data.")

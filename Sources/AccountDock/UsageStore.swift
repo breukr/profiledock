@@ -16,6 +16,8 @@ final class UsageStore: ObservableObject {
     var cardUsageRows: Int { max(1, entries.values.compactMap { $0.snapshot?.windows.count }.max() ?? 2) }
     @Published private(set) var now = Date()
     private let client: any UsageFetching
+    private let claudeClient: any UsageFetching
+    private let backgroundInterval: TimeInterval
     private var profiles: [Profile] = []
     private var tasks: [String: Task<Void, Never>] = [:]
     private var generation: [String: UUID] = [:]
@@ -23,26 +25,39 @@ final class UsageStore: ObservableObject {
     private var visibleScreens: Set<String> = []
     private var timer: Timer?
 
-    init(client: any UsageFetching = UsageClient()) { self.client = client }
+    init(client: any UsageFetching = UsageClient(), claudeClient: any UsageFetching = ClaudeUsageClient(), backgroundInterval: TimeInterval = 300) {
+        self.client = client; self.claudeClient = claudeClient; self.backgroundInterval = backgroundInterval
+    }
 
     func configure(_ profiles: [Profile]) {
         self.profiles = profiles
         let ids = Set(profiles.map(\.id))
         for id in tasks.keys.filter({ !ids.contains($0) }) { tasks.removeValue(forKey: id)?.cancel(); generation[id] = nil }
         entries = entries.filter { ids.contains($0.key) }
-        for profile in profiles where entries[profile.id] == nil { entries[profile.id] = UsageEntry(validatingIdentity: profile.kind == .codex) }
+        for profile in profiles where entries[profile.id] == nil { entries[profile.id] = UsageEntry(validatingIdentity: profile.kind == .codex || profile.usesClaudeAccountUsage) }
+        scheduleRefresh()
     }
 
     func setVisible(_ visible: Bool, screen: String) {
         if visible { visibleScreens.insert(screen) } else { visibleScreens.remove(screen) }
         if visible { refreshAll() }
+        scheduleRefresh()
+    }
+
+    private func scheduleRefresh() {
         timer?.invalidate()
         timer = nil
-        if !visibleScreens.isEmpty {
-            let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated { self?.refreshAll() }
+        if !profiles.isEmpty {
+            let timer = Timer(timeInterval: visibleScreens.isEmpty ? backgroundInterval : 60, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if self.visibleScreens.isEmpty {
+                        self.now = Date()
+                        for profile in self.profiles where profile.usesClaudeAccountUsage { self.refresh(profile) }
+                    } else { self.refreshAll() }
+                }
             }
-            timer.tolerance = 5
+            timer.tolerance = min(5, backgroundInterval / 10)
             RunLoop.main.add(timer, forMode: .common)
             self.timer = timer
         }
@@ -54,7 +69,8 @@ final class UsageStore: ObservableObject {
     }
 
     func refresh(_ profile: Profile, force: Bool = false) {
-        guard profile.kind == .codex, tasks[profile.id] == nil else { return }
+        guard profile.kind == .codex || profile.usesClaudeAccountUsage, tasks[profile.id] == nil else { return }
+        let client = profile.usesClaudeAccountUsage ? claudeClient : self.client
         let id = profile.id
         let token = UUID()
         generation[id] = token
@@ -95,9 +111,20 @@ final class UsageStore: ObservableObject {
         }
     }
 
+    func claudeConnectionChanged() {
+        for profile in profiles where profile.usesClaudeAccountUsage {
+            tasks.removeValue(forKey: profile.id)?.cancel(); generation[profile.id] = nil
+            entries[profile.id] = UsageEntry()
+        }
+        Task {
+            await claudeClient.invalidate()
+            for profile in profiles where profile.usesClaudeAccountUsage { refresh(profile, force: true) }
+        }
+    }
+
     func updateCompanions(model: DockModel) {
         now = Date()
-        for profile in profiles where profile.kind != .codex {
+        for profile in profiles where profile.kind != .codex && !profile.usesClaudeAccountUsage {
             let session = model.companions.sessions(for: profile).filter { $0.usageAt != nil }.max { ($0.usageAt ?? .distantPast) < ($1.usageAt ?? .distantPast) }
             let identity = "claude-session:" + (session?.id ?? profile.id)
             let value = UsageEntry(snapshot: session?.snapshot(identity: identity, now: now), identity: identity, validatingIdentity: false)
