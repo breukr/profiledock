@@ -106,7 +106,7 @@ struct ClaudeAccountConnectionView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("Claude usage connector", systemImage: "chart.bar").font(.headline)
-            Text("Account usage and reset times refresh automatically from your Claude Code sign-in, every minute while the strip is open and every five minutes in the background. All Claude tiles share that account.")
+            Text("Account usage and reset times refresh automatically from your Claude Code sign-in, every minute while the strip is open and every five minutes in the background. If sign-in expires, ProfileDock nudges you with a Reconnect link. All Claude tiles share that account.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Text("Saved resets need a separate Claude web sign-in. ProfileDock only reads your balance and expiry dates; it never uses a reset.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)

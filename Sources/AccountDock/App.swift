@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     let appUpdates = AppUpdates()
     let selfUpdates = ProfileDockUpdates()
     let cues = ActivityCues()
+    let connectionNotice = AccountConnectionNotice()
     var islands: [IslandController] = []
     let iconAppearance = AppIconController()
     var status: NSStatusItem!
@@ -74,6 +75,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         status.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         applyVisibility()
         configureMenu()
+        if !previewMode {
+            usage.onConnectionLost = { [weak self] _ in
+                guard let self else { return }
+                self.connectionNotice.show(usage: self.usage, home: self.model.home)
+            }
+            usage.$entries.receive(on: RunLoop.main).map { [weak self] _ in self?.usage.disconnectedProfiles.map(\.id) ?? [] }.removeDuplicates().sink { [weak self] _ in
+                guard let self else { return }
+                self.configureMenu()
+                if self.usage.disconnectedProfiles.isEmpty { self.connectionNotice.dismiss() }
+            }.store(in: &subscriptions)
+            usage.$reconnecting.dropFirst().receive(on: RunLoop.main).sink { [weak self] keys in
+                guard let self, !keys.isEmpty else { return }
+                self.connectionNotice.show(usage: self.usage, home: self.model.home)
+            }.store(in: &subscriptions)
+        }
         iconAppearance.update(model.preferences.appIconAppearance ?? .auto)
         selfUpdates.mayUpdate = { [weak self] in self?.appUpdates.busy == false && self?.model.nativeDockOperations.isEmpty == true }
         if !previewMode { selfUpdates.start() }
@@ -143,6 +159,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if let localMouseMonitor { NSEvent.removeMonitor(localMouseMonitor) }
         islands.forEach { $0.shutdown() }
         usage.shutdown()
+        connectionNotice.dismiss()
         insights.shutdown()
         activity.shutdown()
         model.companions.stop()
@@ -190,6 +207,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func menuWillOpen(_ menu: NSMenu) {
         model.refresh()
         for item in menu.items {
+            if item.action == #selector(reconnectAccount(_:)) { item.toolTip = "Sign in again to restore account usage"; continue }
             guard let id = item.representedObject as? String,
                   let profile = model.preferences.profiles.first(where: { $0.id == id }) else { continue }
             item.state = model.activeProfile == id ? .on : .off
@@ -216,6 +234,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             menu.addItem(item)
         }
         menu.addItem(.separator())
+        if !usage.disconnectedProfiles.isEmpty {
+            menu.addItem(.sectionHeader(title: "Sign-in needed"))
+            for profile in usage.disconnectedProfiles {
+                let title = profile.usesClaudeAccountUsage ? "Reconnect Claude account…" : "Reconnect \(profile.name)…"
+                let item = menu.addItem(withTitle: title, action: #selector(reconnectAccount(_:)), keyEquivalent: "")
+                item.target = self; item.representedObject = profile.id
+            }
+            menu.addItem(.separator())
+        }
         menu.addItem(withTitle: "Open ProfileDock…", action: #selector(showProfiles), keyEquivalent: "0").target = self
         menu.addItem(withTitle: "Add Profile…", action: #selector(addProfile), keyEquivalent: "n").target = self
         menu.addItem(withTitle: "Search Chats…", action: #selector(showSearch), keyEquivalent: "f").target = self
@@ -280,6 +307,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(checkProfileDockUpdates) { return selfUpdates.canCheck && !appUpdates.busy && model.nativeDockOperations.isEmpty }
         return true
+    }
+    @objc func reconnectAccount(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let profile = model.preferences.profiles.first(where: { $0.id == id }) else { return }
+        connectionNotice.show(usage: usage, home: model.home)
+        usage.reconnect(profile, home: model.home)
     }
     @objc func about() { showDestination(.profileDockShowAbout) }
     private func showDestination(_ notification: Notification.Name) {

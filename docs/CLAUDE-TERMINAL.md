@@ -85,3 +85,20 @@ Fictional profiles, with no live usage data:
 Run `swift test`, `./scripts/build-app.sh`, and both packaged smoke scripts. `PROFILEDOCK_TEST_TERMINAL=1 swift test --filter CompanionIntegrationTests.testLiveTerminalRoundTrip` additionally opens, selects and closes a disposable empty Terminal window, checking that existing tabs remain. `PROFILEDOCK_RENDER_COMPANIONS=/tmp/profiledock-renders swift test --filter CompanionRenderingTests` renders desktop layouts at three widths and three scale settings.
 
 Live Max usage and activity in newly connected Claude sessions still require acceptance testing. The fixture tests establish hook parsing and storage behavior; they do not establish provider-side delivery. Context connection and activity connection are separate opt-in actions.
+# Reconnecting subscription limits
+
+ProfileDock checks Claude and Codex connections every five minutes in the background
+and every minute while the strip is open. Expired or missing sign-in produces one
+nonactivating nudge per disconnected account, plus a persistent **Sign-in needed**
+label and **Reconnect** action in the tile and menu. Network failures and provider
+rate limits continue using normal retries without a sign-in nudge.
+
+Reconnect runs the installed provider's official subscription login and opens its
+browser sign-in. Finish with the account belonging to that profile; ProfileDock then
+refreshes its limits automatically. Codex login uses only the selected profile's
+home and writes the same local credential file used by the usage reader. Claude
+tiles share one Claude Code account and one reconnection flow. Only one Codex login
+can run at a time because its browser callback uses a shared local port. Cancellation
+and a ten-minute timeout stop only the login subprocess. No credential, login URL
+or authorization code is logged. This flow does not connect saved resets, which
+retain their separate web sign-in.
