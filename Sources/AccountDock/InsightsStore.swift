@@ -154,6 +154,7 @@ struct InsightsScan: Codable, Sendable {
     var warnings: [String: String] = [:]
     var files = 0
     var bytesRead: UInt64 = 0
+    var historyPending = false
 }
 
 actor InsightsScanner {
@@ -171,6 +172,7 @@ actor InsightsScanner {
     private var cache: [String: CachedFile] = [:]
     private var loadedHome: URL?
     private var claudeSamples: [InsightSample] = []
+    private let claudeScanner = ClaudeInsightsScanner()
     private var savedAt: Date?
     private var savedWarnings: [String: String] = [:]
 
@@ -185,12 +187,14 @@ actor InsightsScanner {
             return left == right ? $0.key < $1.key : left < right
         }.map(\.value.parser).filter { ids.contains($0.checkpoint.profileID) }
         let samples = (parsers.flatMap(\.samples) + claudeSamples.filter { ids.contains($0.profileID) }).filter { $0.date >= cutoff && $0.date <= now }
-        return (report(samples: samples, parsers: parsers, warnings: savedWarnings.filter { ids.contains($0.key) }, files: parsers.count), savedAt)
+        var snapshot = report(samples: samples, parsers: parsers, warnings: savedWarnings.filter { ids.contains($0.key) }, files: parsers.count)
+        snapshot.historyPending = snapshot.warnings.values.contains { $0.contains("still loading") }
+        return (snapshot, savedAt)
     }
 
     private func restore(home: URL, now: Date) {
         guard loadedHome != home else { return }
-        loadedHome = home; cache.removeAll(); savedAt = nil; savedWarnings = [:]
+        loadedHome = home; cache.removeAll(); claudeScanner.records.removeAll(); claudeSamples = []; savedAt = nil; savedWarnings = [:]
         guard let saved = InsightsDiskCache.load(home: home, now: now) else { return }
         let cutoff = InsightsPeriod.month.start(now: now, calendar: .current)
         for (key, record) in saved.files {
@@ -198,7 +202,9 @@ actor InsightsScanner {
             file.offset = record.offset; file.size = record.size; file.fingerprint = record.fingerprint
             cache[key] = file
         }
-        claudeSamples = saved.claudePricing == ClaudePricing.checkedOn ? saved.claudeSamples ?? [] : []
+        claudeSamples = saved.claudePricing == ClaudePricing.checkedOn
+            ? saved.claudeFiles.map { Array($0.values.flatMap { $0.samples.values }) } ?? saved.claudeSamples ?? [] : []
+        claudeScanner.records = saved.claudePricing == ClaudePricing.checkedOn ? saved.claudeFiles ?? [:] : [:]
         savedAt = saved.updated; savedWarnings = saved.warnings
     }
 
@@ -265,19 +271,26 @@ actor InsightsScanner {
             }
         }
         do {
-            let claude = try ClaudeInsights.scan(profiles: profiles, home: home, cutoff: cutoff)
+            let claude = try claudeScanner.scan(profiles: profiles, home: home, cutoff: cutoff)
             claudeSamples = claude.samples
-            result.samples += claude.samples; result.files += claude.files
+            result.samples += claude.samples; result.files += claude.files; result.bytesRead += claude.bytesRead
+            result.historyPending = claude.historyPending
             result.warnings.merge(claude.warnings) { _, new in new }
         } catch is CancellationError { throw CancellationError() }
-        catch { for profile in profiles where profile.kind != .codex { result.warnings[profile.id] = "Claude history could not be read. " + error.localizedDescription } }
+        catch {
+            let ids = Set(profiles.filter { $0.kind != .codex }.map(\.id))
+            result.samples += claudeSamples.filter { ids.contains($0.profileID) && $0.date >= cutoff }
+            for id in ids { result.warnings[id] = "Claude history could not be read. Previous token totals are retained. " + error.localizedDescription }
+        }
         cache = cache.filter { paths.contains($0.key) }
+        let historyPending = result.historyPending
         result = report(samples: result.samples, parsers: parsers, warnings: result.warnings, files: result.files, bytesRead: result.bytesRead)
+        result.historyPending = historyPending
         try Task.checkCancellation()
         let records = cache.mapValues { entry in
             InsightsDiskCache.Record(inode: entry.inode, modified: entry.modified, offset: entry.offset, size: entry.size, fingerprint: entry.fingerprint, parser: entry.parser.checkpoint)
         }
-        try? InsightsDiskCache.save(InsightsDiskCache(updated: now, warnings: result.warnings, files: records, claudeSamples: claudeSamples, claudePricing: ClaudePricing.checkedOn), home: home)
+        try? InsightsDiskCache.save(InsightsDiskCache(updated: now, warnings: result.warnings, files: records, claudeSamples: nil, claudePricing: ClaudePricing.checkedOn, claudeFiles: claudeScanner.records), home: home)
         savedAt = now; savedWarnings = result.warnings
         return result
     }
