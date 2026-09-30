@@ -31,4 +31,13 @@ final class UsageCredentialsTests: XCTestCase {
         XCTAssertThrowsError(try UsageCredentials.parse(data: auth(mode: "apikey"), source: path))
         XCTAssertThrowsError(try UsageCredentials.parse(data: auth(account: "account\r\nInjected: value"), source: path))
     }
+
+    func testExpiredAccessTokenRequiresReconnectBeforeAnyRequest() throws {
+        let body = try JSONSerialization.data(withJSONObject: ["sub": "fixture-user", "exp": Date().timeIntervalSince1970 - 60]).base64EncodedString().replacingOccurrences(of: "=", with: "")
+        XCTAssertThrowsError(try UsageCredentials.parse(data: auth(access: "e30.\(body).fixture"), source: URL(fileURLWithPath: "/fixture/auth.json"))) { error in
+            XCTAssertEqual(error as? UsageLoadError, .authorizationRequired)
+        }
+        let future = try JSONSerialization.data(withJSONObject: ["sub": "fixture-user", "exp": Date().timeIntervalSince1970 + 3600]).base64EncodedString().replacingOccurrences(of: "=", with: "")
+        XCTAssertNoThrow(try UsageCredentials.parse(data: auth(access: "e30.\(future).fixture"), source: URL(fileURLWithPath: "/fixture/auth.json")))
+    }
 }

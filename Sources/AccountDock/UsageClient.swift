@@ -4,6 +4,12 @@ import DockCore
 
 enum UsageLoadError: Error, Equatable {
     case notSignedIn, authorizationRequired, claudeSignInRequired, accountChanged, wrongAccount, invalidResponse, network, http(Int), rateLimited(Date)
+    var needsSignIn: Bool {
+        switch self {
+        case .notSignedIn, .authorizationRequired, .claudeSignInRequired: return true
+        default: return false
+        }
+    }
     var message: String {
         switch self {
         case .notSignedIn, .authorizationRequired: return "Open this profile and check that you are signed in."
@@ -53,6 +59,9 @@ struct UsageCredentials: Sendable {
               let account = tokens["account_id"] as? String, !account.isEmpty,
               token.rangeOfCharacter(from: .controlCharacters) == nil,
               account.rangeOfCharacter(from: .controlCharacters) == nil else { throw UsageLoadError.notSignedIn }
+        if let expiry = jwtClaims(token)?["exp"] as? Double, !expiry.isFinite || expiry <= Date().timeIntervalSince1970 {
+            throw UsageLoadError.authorizationRequired
+        }
         let claims = [tokens["id_token"] as? String, token].compactMap { $0 }.compactMap(jwtClaims)
         guard let subject = claims.compactMap({ $0["sub"] as? String }).first(where: { !$0.isEmpty }) else { throw UsageLoadError.notSignedIn }
         let key = source.standardizedFileURL.path + "\n" + account + "\n" + subject

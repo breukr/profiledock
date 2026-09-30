@@ -271,9 +271,16 @@ struct IslandView: View {
                 if let snapshot, !snapshot.windows.isEmpty {
                     ForEach(snapshot.windows) { window in UsageWindowView(window: window, now: usage.now) }
                 } else if let error = entry?.error {
-                    Text("Unavailable").font(.system(size: 10)).foregroundStyle(.white.opacity(0.5))
-                    Button("Try again") { usage.refresh(profile, force: true) }
-                        .font(.system(size: 9)).buttonStyle(.plain).foregroundStyle(.white.opacity(0.75)).help(error.message)
+                    Text(error.needsSignIn ? "Sign-in needed" : "Unavailable").font(.system(size: 10)).foregroundStyle(error.needsSignIn ? .orange : .white.opacity(0.5))
+                    if error.needsSignIn {
+                        Button(usage.isReconnecting(profile) ? "Finish in browser…" : "Reconnect") { usage.reconnect(profile, home: model.home) }
+                            .font(.system(size: 9, weight: .medium)).buttonStyle(.plain).foregroundStyle(.orange)
+                            .disabled(usage.isReconnecting(profile)).accessibilityLabel("Reconnect \(profile.name)")
+                            .help(usage.reconnectionMessages[usage.connectionKey(profile)] ?? "Open sign-in for this account. Usage refreshes automatically when you finish.")
+                    } else {
+                        Button("Try again") { usage.refresh(profile, force: true) }
+                            .font(.system(size: 9)).buttonStyle(.plain).foregroundStyle(.white.opacity(0.75)).help(error.message)
+                    }
                 } else {
                     Text((profile.kind == .codex || profile.usesClaudeAccountUsage) ? (snapshot == nil ? "Loading usage…" : "No usage data") : (profile.kind == .terminal ? "Terminal window" : "Usage not reported yet"))
                         .font(.system(size: 10)).foregroundStyle(.white.opacity(0.45))

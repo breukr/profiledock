@@ -2,6 +2,13 @@ import XCTest
 import DockCore
 @testable import AccountDock
 
+actor FixtureSignInRunner: AccountSigningIn {
+    private(set) var calls = 0
+    var action: @Sendable () async throws -> Void = {}
+    func setAction(_ action: @escaping @Sendable () async throws -> Void) { self.action = action }
+    func signIn(_ command: AccountSignInCommand) async throws { calls += 1; try await action() }
+}
+
 actor FixtureUsageClient: UsageFetching {
     var identities: [String: String] = [:]
     var failure: UsageLoadError?
@@ -32,6 +39,9 @@ actor FixtureUsageClient: UsageFetching {
 final class UsageStoreTests: XCTestCase {
     private let a = Profile(id: "a", name: "Account A", color: "377CF6")
     private let b = Profile(id: "b", name: "Account B", color: "377CF6")
+    private let signInCommand: (Profile, URL) throws -> AccountSignInCommand = { _, _ in
+        AccountSignInCommand(executable: URL(fileURLWithPath: "/usr/bin/true"), arguments: [], environment: [:])
+    }
 
     private func eventually(_ condition: () async -> Bool, file: StaticString = #filePath, line: UInt = #line) async throws {
         let deadline = Date().addingTimeInterval(2)
@@ -154,6 +164,101 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertNotNil(expected)
         store.updateCompanions(model: model)
         XCTAssertEqual(store.entries[profile.id]?.snapshot, expected)
+    }
+
+    func testNudgeOncePerAuthFailureEpisodeAndNotForNetworkErrors() async throws {
+        let client = FixtureUsageClient()
+        let store = UsageStore(client: client)
+        defer { store.shutdown() }
+        var nudges: [String] = []
+        store.onConnectionLost = { nudges.append($0.id) }
+        store.configure([a])
+        await client.setFailure(.network); store.refreshAll(force: true)
+        try await eventually { !store.isRefreshing }
+        XCTAssertTrue(nudges.isEmpty)
+        await client.setFailure(.authorizationRequired); store.refreshAll(force: true)
+        try await eventually { !store.isRefreshing }
+        store.refreshAll(force: true); try await eventually { !store.isRefreshing }
+        XCTAssertEqual(nudges, [a.id])
+        XCTAssertEqual(store.disconnectedProfiles.map(\.id), [a.id])
+        await client.setFailure(nil); store.refreshAll(force: true)
+        try await eventually { !store.isRefreshing }
+        XCTAssertTrue(store.disconnectedProfiles.isEmpty)
+        await client.setFailure(.notSignedIn); store.refreshAll(force: true)
+        try await eventually { !store.isRefreshing }
+        XCTAssertEqual(nudges, [a.id, a.id])
+    }
+
+    func testClaudeNudgeAndReconnectAreSharedAndRestoreAllTiles() async throws {
+        let client = FixtureUsageClient(), runner = FixtureSignInRunner()
+        var first = a, second = b; first.provider = .claude; second.provider = .claude
+        let store = UsageStore(claudeClient: client, signInRunner: runner, signInCommand: signInCommand)
+        defer { store.shutdown() }
+        var nudges = 0
+        store.onConnectionLost = { _ in nudges += 1 }
+        store.configure([first, second]); await client.setFailure(.claudeSignInRequired)
+        store.refreshAll(force: true); try await eventually { !store.isRefreshing }
+        XCTAssertEqual(nudges, 1)
+        XCTAssertEqual(store.disconnectedProfiles.count, 1)
+        await runner.setAction { try await Task.sleep(for: .milliseconds(20)); await client.setFailure(nil) }
+        store.reconnect(first, home: URL(fileURLWithPath: "/tmp")); store.reconnect(second, home: URL(fileURLWithPath: "/tmp"))
+        try await eventually { store.reconnecting.isEmpty && store.entries[first.id]?.snapshot != nil && store.entries[second.id]?.snapshot != nil }
+        let calls = await runner.calls
+        XCTAssertEqual(calls, 1)
+        XCTAssertTrue(store.disconnectedProfiles.isEmpty)
+    }
+
+    func testReconnectionFailureCanRetryAndCancelWithoutTouchingAnotherProfile() async throws {
+        let client = FixtureUsageClient(), runner = FixtureSignInRunner()
+        let store = UsageStore(client: client, signInRunner: runner, signInCommand: signInCommand)
+        defer { store.shutdown() }
+        store.configure([a, b]); await client.setFailure(.authorizationRequired)
+        store.refreshAll(force: true); try await eventually { !store.isRefreshing }
+        await runner.setAction { throw AccountSignInError.failed }
+        store.reconnect(a, home: URL(fileURLWithPath: "/tmp"))
+        try await eventually { !store.isReconnecting(self.a) }
+        XCTAssertEqual(store.reconnectionMessages[store.connectionKey(a)], AccountSignInError.failed.message)
+        await runner.setAction { try await Task.sleep(for: .seconds(10)) }
+        store.reconnect(a, home: URL(fileURLWithPath: "/tmp"))
+        store.reconnect(b, home: URL(fileURLWithPath: "/tmp"))
+        XCTAssertFalse(store.isReconnecting(b), "One Codex callback server at a time")
+        store.cancelReconnect(a)
+        XCTAssertTrue(store.reconnecting.isEmpty)
+        XCTAssertNotNil(store.entries[b.id]?.error)
+        store.reconnect(a, home: URL(fileURLWithPath: "/tmp"))
+        store.configure([b])
+        XCTAssertTrue(store.reconnecting.isEmpty, "Removing a profile cancels only its login process")
+    }
+
+    func testCodexConnectionIsCheckedInBackground() async throws {
+        let client = FixtureUsageClient()
+        let store = UsageStore(client: client, backgroundInterval: 0.05)
+        defer { store.shutdown() }
+        store.configure([a]); store.refreshAll()
+        try await eventually { !store.isRefreshing }
+        await client.setIdentity("renewed-account", for: a.id)
+        try await eventually { store.entries[self.a.id]?.snapshot?.identity == "renewed-account" }
+    }
+
+    func testSignInCompletionInvalidatesAnOlderInFlightUsageRequest() async throws {
+        let client = FixtureUsageClient(), runner = FixtureSignInRunner()
+        let store = UsageStore(client: client, signInRunner: runner, signInCommand: signInCommand)
+        defer { store.shutdown() }
+        store.configure([a]); await client.setFailure(.authorizationRequired)
+        store.refreshAll(force: true); try await eventually { !store.isRefreshing }
+        await client.setPaused(true); store.refreshAll(force: true)
+        try await eventually { await client.fetchCalls == 2 }
+        await runner.setAction {
+            await client.setIdentity("renewed-account", for: "a")
+            await client.setReturnedIdentity("renewed-account")
+            await client.setFailure(nil)
+        }
+        store.reconnect(a, home: URL(fileURLWithPath: "/tmp"))
+        try await eventually { await client.fetchCalls == 3 }
+        await client.setPaused(false)
+        try await eventually { !store.isRefreshing }
+        XCTAssertEqual(store.entries[a.id]?.snapshot?.identity, "renewed-account")
+        XCTAssertNil(store.entries[a.id]?.error)
     }
 
 }
