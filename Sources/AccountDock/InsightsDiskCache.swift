@@ -13,6 +13,7 @@ struct InsightsDiskCache: Codable {
     var files: [String: Record]
     var claudeSamples: [InsightSample]?
     var claudePricing: String?
+    var claudeFiles: [String: ClaudeInsightsScanner.Record]?
 
     struct Record: Codable {
         var inode: UInt64
@@ -41,6 +42,8 @@ struct InsightsDiskCache: Codable {
               cache.version == format, cache.pricing == InsightPricing.checkedOn,
               cache.updated <= now.addingTimeInterval(300), now.timeIntervalSince(cache.updated) < 31 * 86400,
               cache.files.count <= 100_000,
+              (cache.claudeFiles?.count ?? 0) <= 5000,
+              (cache.claudeFiles ?? [:]).allSatisfy({ $0.key.count == 64 && $0.value.valid }),
               (cache.claudeSamples?.count ?? 0) <= 100_000,
               (cache.claudeSamples ?? []).allSatisfy({ $0.tokens.valid && Profile.validID($0.profileID) && $0.id.count <= 512 && $0.sessionID.count <= 160 && ($0.estimatedCost.map { $0.isFinite && $0 >= 0 } ?? true) }),
               cache.files.allSatisfy({ key, file in

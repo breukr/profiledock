@@ -135,7 +135,15 @@ struct InsightsPanel: View {
                     Spacer(minLength: 0)
                     if compact { Text("Avg / session \(report.averageCost.map(InsightFormat.money) ?? "unavailable")") }
                 }.font(.caption2).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.8)
-                if !warnings.isEmpty || report.unpricedTokens > 0 {
+                if store.snapshot.historyPending {
+                    Text("Claude history is still loading. Token totals will update as reading continues.")
+                        .font(.caption2).foregroundStyle(.orange)
+                }
+                if warnings.contains(where: { $0.contains("could not be read") || $0.contains("file limit") || $0.contains("incomplete;") }) {
+                    Text("Some local history is unavailable or incomplete. Token totals may be understated.")
+                        .font(.caption2).foregroundStyle(.orange)
+                }
+                if report.unpricedTokens > 0 {
                     HStack(alignment: .top, spacing: 6) {
                         Image(systemName: "info.circle")
                         Text(report.unpricedTokens > 0 ? "Partial estimate: \(InsightFormat.tokens(report.unpricedTokens)) tokens have no reliable price." : "Some local history is unavailable or incomplete.")
@@ -167,8 +175,8 @@ struct InsightsPanel: View {
             guard active else { return }
             rebuild()
             while !Task.isCancelled {
-                store.refresh(profiles: model.preferences.profiles, home: model.home)
-                do { try await Task.sleep(for: .seconds(60)) } catch { return }
+                store.refresh(profiles: model.preferences.profiles, home: model.home, force: store.snapshot.historyPending)
+                do { try await Task.sleep(for: .seconds(store.refreshing || store.snapshot.historyPending ? 1 : 60)) } catch { return }
                 rebuild()
             }
         }

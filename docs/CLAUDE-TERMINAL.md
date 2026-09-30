@@ -52,6 +52,8 @@ The existing source permissions also apply to Claude history. Enable sources in 
 
 Only visible user and assistant text is returned. Tool payloads, thinking blocks, metadata messages and subagent directories are excluded. Read limits, partial coverage and missing sources are reported explicitly. Ordinary Claude Chat, Cowork, remote and cloud-only conversations are outside this local-history integration.
 
+Usage Insights resumes large Claude transcripts across scans and app restarts, saves only usage metadata and complete-line offsets, and reads appended records without rereading the whole transcript. It continues reading automatically while insights is open and shows an incomplete-token warning until the remaining history is loaded.
+
 Usage Insights reads local Claude Code token counters and estimates their cost at published Standard API rates, with cache reads and writes accounted for separately. Repeated streaming records are counted once. A matching project entry takes precedence over the general Claude entry so the same session is not counted twice. Unknown models and unsupported pricing modes remain unpriced. These estimates are not your Max subscription bill. Rates: [Anthropic pricing](https://platform.claude.com/docs/en/about-claude/pricing), checked 23 September 2026.
 
 ## Provider differences
