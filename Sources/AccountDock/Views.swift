@@ -282,7 +282,7 @@ struct IslandView: View {
                             .font(.system(size: 9)).buttonStyle(.plain).foregroundStyle(.white.opacity(0.75)).help(error.message)
                     }
                 } else {
-                    Text((profile.kind == .codex || profile.usesClaudeAccountUsage) ? (snapshot == nil ? "Loading usage…" : "No usage data") : (profile.kind == .terminal ? "Terminal window" : "Usage not reported yet"))
+                    Text((profile.kind == .codex || profile.usesClaudeAccountUsage) ? (snapshot == nil ? "Loading usage…" : "No usage data") : (profile.kind == .terminal ? "Terminal window" : profile.usesSeparateClaudeAccount ? "Separate account · usage not reported yet" : "Usage not reported yet"))
                         .font(.system(size: 10)).foregroundStyle(.white.opacity(0.45))
                 }
             }

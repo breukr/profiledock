@@ -8,6 +8,12 @@ public enum ProfileLaunch {
         return ["-n", "--env", "CODEX_HOME=\(profileHome.path)", "--env", "CODEX_ELECTRON_USER_DATA_PATH=\(data)", "-a", application.path, "--args", "--user-data-dir=\(data)"]
     }
 
+    /// `open -n` starts another Claude instance; its own user-data folder keeps the Desktop sign-in apart.
+    public static func claudeArguments(profile: Profile, home: URL, application: URL) -> [String]? {
+        guard let config = profile.claudeConfigDirectory(in: home), let data = profile.claudeUserDataDirectory(in: home) else { return nil }
+        return ["-n", "--env", "CLAUDE_CONFIG_DIR=\(config.path)", "-a", application.path, "--args", "--user-data-dir=\(data.path)"]
+    }
+
     public static func newProfile(name: String) -> Profile? {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, name.count <= 32 else { return nil }

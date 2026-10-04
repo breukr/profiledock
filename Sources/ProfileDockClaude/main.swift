@@ -24,9 +24,10 @@ if input.count <= 1_048_576,
         index + 1 < arguments.count && arguments[index + 1].hasPrefix("/") ? URL(fileURLWithPath: arguments[index + 1]).standardizedFileURL : nil
     }
     let home = fixtureHome ?? FileManager.default.homeDirectoryForCurrentUser
-    let saved = home.appendingPathComponent("Library/Application Support/Account Dock/ClaudeBridge/original-statusline.json")
+    let configDirectory = ClaudeBridgeSettings.configDirectory(environment: ProcessInfo.processInfo.environment, home: home)
+    let saved = home.appendingPathComponent("Library/Application Support/Account Dock/ClaudeBridge/" + ClaudeBridgeSettings.originalStatuslineName(configDirectory: configDirectory))
     let original = (try? Data(contentsOf: saved)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-    if let session = try? ClaudeSessionStore(home: home).record(payload: payload, statusline: statusline, process: process, tty: tty), statusline, original == nil {
+    if let session = try? ClaudeSessionStore(home: home).record(payload: payload, statusline: statusline, process: process, tty: tty, configDirectory: configDirectory), statusline, original == nil {
         let text = session.limits.map { "\($0.duration == 18000 ? "5h" : "Week"): \(Int(min(100, $0.used)))% used" }.joined(separator: " · ")
         print(text.isEmpty ? "Claude Code · ProfileDock connected" : text)
     }

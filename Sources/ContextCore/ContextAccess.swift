@@ -24,15 +24,26 @@ public struct ContextProfile: Codable, Identifiable, Equatable, Sendable {
     public let alias: String
     public let provider: ProfileProvider?
     public let projectPath: String?
+    public let separateClaudeAccount: Bool?
     public var kind: ProfileProvider { provider ?? .codex }
     public init(_ profile: Profile) {
         id = profile.id; name = profile.name
         provider = profile.provider; projectPath = profile.projectPath
+        separateClaudeAccount = profile.usesSeparateClaudeAccount ? true : nil
         let value = profile.name.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
             .unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
         alias = "@" + (value.isEmpty ? profile.id : value)
     }
-    public func root(in home: URL) -> URL { home.appendingPathComponent(kind != .codex ? ".claude" : id == "default" ? ".codex" : ".codex-" + id) }
+    public func root(in home: URL) -> URL {
+        var profile = Profile(id: id, name: name, color: "")
+        profile.provider = provider; profile.separateClaudeAccount = separateClaudeAccount
+        if let config = profile.claudeConfigDirectory(in: home) { return config }
+        return home.appendingPathComponent(kind != .codex ? ".claude" : id == "default" ? ".codex" : ".codex-" + id)
+    }
+    /// Claude Code keeps its user configuration inside CLAUDE_CONFIG_DIR when one is set.
+    public func claudeConfiguration(in home: URL) -> URL {
+        separateClaudeAccount == true ? root(in: home).appendingPathComponent(".claude.json") : home.appendingPathComponent(".claude.json")
+    }
 }
 
 public struct ContextRegistry: Sendable {

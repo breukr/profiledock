@@ -32,7 +32,7 @@ public struct ContextConnection: Sendable {
     private func entry(_ profile: ContextProfile) throws -> [String: Any]? {
         if profile.kind != .codex {
             guard profile.kind == .claude else { throw ContextError.message("Connect through your Claude Desktop entry. Claude Code shares one user configuration across Terminal and Desktop.") }
-            let config = registry.home.appendingPathComponent(".claude.json")
+            let config = profile.claudeConfiguration(in: registry.home)
             guard FileManager.default.fileExists(atPath: config.path) else { return nil }
             guard let json = try JSONSerialization.jsonObject(with: Data(contentsOf: config)) as? [String: Any] else { throw ContextError.message("Claude configuration could not be read.") }
             guard let server = (json["mcpServers"] as? [String: [String: Any]])?[Self.serverName] else { return nil }
@@ -103,7 +103,7 @@ public struct ContextConnection: Sendable {
     }
 
     private func updateClaude(_ profile: ContextProfile, enabled: Bool) throws {
-        let url = registry.home.appendingPathComponent(".claude.json"), fm = FileManager.default
+        let url = profile.claudeConfiguration(in: registry.home), fm = FileManager.default
         guard url.resolvingSymlinksInPath() == url.standardizedFileURL else { throw ContextError.message("Linked Claude configuration was left unchanged.") }
         let original = fm.fileExists(atPath: url.path) ? try Data(contentsOf: url) : nil
         var json: [String: Any] = [:]

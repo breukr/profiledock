@@ -645,6 +645,7 @@ private struct AddProfileSheet: View {
     @State private var terminalSelection = ""
     @State private var loadingWindows = false
     @State private var separate = false
+    @State private var separateClaude = false
     @State private var source: URL?
     @State private var creating = false
     @State private var error: String?
@@ -654,7 +655,7 @@ private struct AddProfileSheet: View {
             Picker("App", selection: $kind) {
                 ForEach(ProfileProvider.allCases, id: \.self) { Text($0.label).tag($0) }
             }
-            Text(kind == .codex ? "Create a separate Codex sign-in, history and settings." : kind == .claude ? "Add your existing Claude Desktop app and sign-in to the strip." : kind == .terminal ? "Choose an open Terminal tab running Claude Code or Codex. It appears in the strip only while a coding session is open." : "Save a Claude Code project. It appears in the strip while Claude runs in its Terminal tab.").foregroundStyle(.secondary)
+            Text(kind == .codex ? "Create a separate Codex sign-in, history and settings." : kind == .claude ? "Add Claude Desktop to the strip, with your existing sign-in or a separate account." : kind == .terminal ? "Choose an open Terminal tab running Claude Code or Codex. It appears in the strip only while a coding session is open." : "Save a Claude Code project. It appears in the strip while Claude runs in its Terminal tab.").foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 6) {
                 Text("Profile name").font(.subheadline.weight(.medium))
                 TextField("For example, Personal or Work", text: $name).textFieldStyle(.roundedBorder)
@@ -687,6 +688,13 @@ private struct AddProfileSheet: View {
                 Spacer()
             }
 
+            } else if kind == .claude {
+                Picker("Account", selection: $separateClaude) {
+                    Text("Existing Claude sign-in").tag(false).disabled(hasSharedClaude)
+                    Text("Separate Claude account").tag(true)
+                }.pickerStyle(.radioGroup)
+                Text(separateClaude ? "Opens its own Claude window with a separate sign-in, chats and Claude Code settings. Both accounts can stay open at the same time. Sign in with the other account the first time it opens." : "Uses the Claude Desktop sign-in you already have.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             } else if kind.usesTerminal {
                 HStack {
                     Text(project?.path ?? model.home.path).font(.caption).lineLimit(2)
@@ -723,7 +731,7 @@ private struct AddProfileSheet: View {
                                     guard window != nil else { throw CompanionError.message("That coding session has closed. Refresh the terminal list.") }
                                 }
                                 if kind == .terminal, window == nil { throw CompanionError.message("Choose an open coding terminal first.") }
-                                try model.createCompanion(kind: kind, name: name, project: project, window: window)
+                                try model.createCompanion(kind: kind, name: name, project: project, window: window, separateAccount: separateClaude)
                             }
                             model.companions.refresh(); dismiss()
                         }
@@ -733,7 +741,7 @@ private struct AddProfileSheet: View {
                 }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(ProfileLaunch.newProfile(name: name) == nil || (kind == .terminal && terminalSelection.isEmpty))
             }
         }.padding(28).frame(width: 500).disabled(creating).interactiveDismissDisabled(creating).onAppear { nameFocused = true }
-            .onChange(of: kind) { _, _ in terminalSelection = ""; terminalWindows = []; error = nil }
+            .onChange(of: kind) { _, value in terminalSelection = ""; terminalWindows = []; error = nil; if value == .claude { separateClaude = hasSharedClaude } }
             .task(id: kind) {
                 guard kind.usesTerminal else { return }
                 while !Task.isCancelled {
@@ -742,6 +750,7 @@ private struct AddProfileSheet: View {
                 }
             }
     }
+    private var hasSharedClaude: Bool { model.preferences.profiles.contains { $0.kind == .claude && !$0.usesSeparateClaudeAccount } }
     private func refreshTerminals() async {
         guard !loadingWindows, kind.usesTerminal else { return }
         let requestedKind = kind

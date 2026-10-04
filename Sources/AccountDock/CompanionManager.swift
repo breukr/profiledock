@@ -13,7 +13,7 @@ import DockCore
     func start() {
         guard timer == nil else { return }
         if let model, model.claudeBridge.enabled,
-           !(model.preferences.removedProfiles ?? []).contains(where: { $0.kind == .claude }) {
+           !(model.preferences.removedProfiles ?? []).contains(where: { $0.kind == .claude && !$0.usesSeparateClaudeAccount }) {
             let application = NSRunningApplication.runningApplications(withBundleIdentifier: ProfileProvider.claude.bundleIdentifier).first?.bundleURL
                 ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: ProfileProvider.claude.bundleIdentifier)
             _ = try? model.recognizeClaudeDesktop(application: application)
@@ -52,7 +52,10 @@ import DockCore
     }
     func window(for profile: Profile) -> TerminalWindow? { windows.first { $0.matches(profile, processStarted: terminalStarted) } }
     func sessions(for profile: Profile) -> [ClaudeSession] {
-        if profile.kind == .claude { return sessions.filter { $0.tty == nil } }
+        if profile.kind == .claude {
+            let configDirectory = model.flatMap { profile.claudeConfigDirectory(in: $0.home)?.standardizedFileURL.path }
+            return sessions.filter { $0.tty == nil && $0.configDirectory == configDirectory }
+        }
         guard profile.kind.usesTerminal else { return [] }
         if window(for: profile)?.agent == .codex { return [] }
         return sessions.filter { session in
@@ -95,7 +98,7 @@ import DockCore
     }
     @discardableResult func recognizeClaudeDesktop(application: URL?) throws -> Bool {
         guard let application, Bundle(url: application)?.bundleIdentifier == ProfileProvider.claude.bundleIdentifier else { return false }
-        if !preferences.profiles.contains(where: { $0.kind == .claude }) {
+        if !preferences.profiles.contains(where: { $0.kind == .claude && !$0.usesSeparateClaudeAccount }) {
             try createCompanion(kind: .claude, name: "Claude", project: nil)
         }
         return true
@@ -108,6 +111,10 @@ import DockCore
         move(id, to: shown[index + delta].id)
     }
     var claudeBridge: ClaudeBridge { ClaudeBridge(home: home) }
+    /// The shared configuration first, then one bridge per separate Claude account.
+    var claudeBridges: [ClaudeBridge] {
+        [claudeBridge] + preferences.profiles.compactMap { $0.claudeConfigDirectory(in: home).map { ClaudeBridge(home: home, configDirectory: $0) } }
+    }
     func rememberCompanionSessions() {
         var changed = false
         for index in preferences.profiles.indices {
@@ -124,16 +131,26 @@ import DockCore
         }
         if changed { save() }
     }
-    func createCompanion(kind: ProfileProvider, name: String, project: URL?, window: TerminalWindow? = nil) throws {
+    func createCompanion(kind: ProfileProvider, name: String, project: URL?, window: TerminalWindow? = nil, separateAccount: Bool = false, bundledHelper: URL? = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("ProfileDockClaude")) throws {
         guard kind != .codex, let seed = ProfileLaunch.newProfile(name: name) else { throw CompanionError.message("Use a name between 1 and 32 characters.") }
-        if kind == .claude, preferences.profiles.contains(where: { $0.kind == .claude }) { throw CompanionError.message("Claude Desktop is already in ProfileDock. It uses your existing Claude sign-in.") }
+        let separate = kind == .claude && separateAccount
+        if kind == .claude, !separate, preferences.profiles.contains(where: { $0.kind == .claude && !$0.usesSeparateClaudeAccount }) { throw CompanionError.message("Claude Desktop with your existing sign-in is already in ProfileDock. Choose Separate Claude account to add another account.") }
         if let window, preferences.profiles.contains(where: { companions.window(for: $0)?.id == window.id }) { throw CompanionError.message("This Terminal tab is already in ProfileDock.") }
         var profile = seed
         profile.provider = kind; profile.color = kind == .claude ? "C97B5D" : "546E7A"
         profile.projectPath = project?.standardizedFileURL.path ?? home.path
         profile.dockIconStyle = .chatgpt
+        if separate { profile.separateClaudeAccount = true; profile.projectPath = nil }
         if let window { bind(&profile, to: window) }
-        try FileManager.default.createDirectory(at: profile.home(in: home), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let fm = FileManager.default
+        try fm.createDirectory(at: profile.home(in: home), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        for directory in [profile.claudeConfigDirectory(in: home), profile.claudeUserDataDirectory(in: home)].compactMap({ $0 }) {
+            try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        }
+        // A new account follows the existing activity connection; failure only leaves its activity unavailable.
+        if let config = profile.claudeConfigDirectory(in: home), claudeBridge.enabled {
+            try? ClaudeBridge(home: home, configDirectory: config).setEnabled(true, bundledHelper: bundledHelper)
+        }
         preferences.profiles.append(profile); save(); refresh()
     }
     func bind(_ profile: inout Profile, to window: TerminalWindow) {
@@ -144,8 +161,14 @@ import DockCore
     }
     func companionApplications(_ applications: [NSRunningApplication]) -> [String: [RunningProfileApplication]] {
         var result: [String: [RunningProfileApplication]] = [:]
-        for profile in preferences.profiles where profile.kind != .codex {
-            guard profile.kind == .claude || companions.window(for: profile)?.agent != nil,
+        // Several Claude instances can run at once; each is assigned by its own user-data argument.
+        for app in applications where app.bundleIdentifier == ProfileProvider.claude.bundleIdentifier && !app.isTerminated {
+            guard let running = RunningProfileApplication(app), let arguments = Self.arguments(pid: running.processIdentifier),
+                  let id = ProcessIdentity.claudeProfileID(arguments: arguments, profiles: preferences.profiles, home: home) else { continue }
+            result[id, default: []].append(running)
+        }
+        for profile in preferences.profiles where profile.kind.usesTerminal {
+            guard companions.window(for: profile)?.agent != nil,
                   let app = applications.first(where: { $0.bundleIdentifier == profile.kind.bundleIdentifier }),
                   let running = RunningProfileApplication(app) else { continue }
             result[profile.id] = [running]
@@ -156,9 +179,20 @@ import DockCore
         guard !opening.contains(profile.id), !closing.contains(profile.id) else { return }
         message = nil
         if profile.kind == .claude {
+            refresh()
+            if let app = running[profile.id]?.first {
+                // With several Claude instances, only this exact process may be brought forward.
+                app.unhide(); _ = app.activate(options: [.activateAllWindows])
+                try? ApplicationReopen.send(processIdentifier: app.processIdentifier)
+                markCompanionRead(profile)
+                return
+            }
             guard let app = applicationURL(for: profile) else { showProfileMessage("Install Claude Desktop in Applications, then try again.", for: profile); return }
+            if profile.usesSeparateClaudeAccount { openSeparateClaude(profile, application: app); return }
             opening.insert(profile.id)
             let configuration = NSWorkspace.OpenConfiguration(); configuration.activates = true
+            // Without a new instance, Launch Services would focus another account's running Claude.
+            configuration.createsNewApplicationInstance = true
             NSWorkspace.shared.openApplication(at: app, configuration: configuration) { [weak self] application, error in
                 Task { @MainActor in
                     guard let self else { return }; self.opening.remove(profile.id)
@@ -185,6 +219,39 @@ import DockCore
                 }
                 markCompanionRead(profile)
             } catch { showProfileMessage(error.localizedDescription, for: profile) }
+        }
+    }
+    func openSeparateClaude(_ profile: Profile, application: URL) {
+        guard let arguments = ProfileLaunch.claudeArguments(profile: profile, home: home, application: application) else { return }
+        do {
+            for directory in [profile.claudeConfigDirectory(in: home), profile.claudeUserDataDirectory(in: home)].compactMap({ $0 }) {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            }
+        } catch { showProfileMessage("Could not prepare \(profile.name): \(error.localizedDescription)", for: profile); return }
+        opening.insert(profile.id)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = arguments
+        process.currentDirectoryURL = home
+        // Never pass this app's environment on: another account's Claude configuration must not leak in.
+        process.environment = ["HOME": home.path, "USER": NSUserName(), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin", "LANG": "en_US.UTF-8", "TMPDIR": NSTemporaryDirectory()]
+        process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
+        process.terminationHandler = { [weak self] process in
+            let status = process.terminationStatus
+            Task { @MainActor in
+                guard let self else { return }
+                if status != 0 { self.opening.remove(profile.id); self.showProfileMessage("Could not open \(profile.name).", for: profile) }
+                self.refresh()
+            }
+        }
+        do { try process.run() } catch {
+            opening.remove(profile.id)
+            showProfileMessage("Could not open \(profile.name): \(error.localizedDescription)", for: profile); return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
+            guard let self, self.opening.contains(profile.id) else { return }
+            self.refresh()
+            if self.opening.remove(profile.id) != nil { self.showProfileMessage("\(profile.name) has not appeared yet. Check its Claude window before trying again.", for: profile) }
         }
     }
     func closeCompanion(_ profile: Profile) {

@@ -3,7 +3,11 @@ import Foundation
 /// Bounded reader for local Claude Code transcripts. Subagent directories and linked files are excluded.
 public enum ClaudeHistory {
     public static func files(home: URL, since: Date? = nil, limit: Int = 5000) throws -> [URL] {
-        let root = home.appendingPathComponent(".claude/projects")
+        try files(configuration: home.appendingPathComponent(".claude"), since: since, limit: limit)
+    }
+    /// `configuration` is ~/.claude or a separate account's CLAUDE_CONFIG_DIR.
+    public static func files(configuration: URL, since: Date? = nil, limit: Int = 5000) throws -> [URL] {
+        let root = configuration.appendingPathComponent("projects")
         let fm = FileManager.default
         guard fm.fileExists(atPath: root.path) else { return [] }
         guard root.resolvingSymlinksInPath() == root.standardizedFileURL else { throw CompanionError.message("Linked Claude history folders are excluded.") }
