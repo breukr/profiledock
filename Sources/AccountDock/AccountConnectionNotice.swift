@@ -2,71 +2,53 @@ import AppKit
 import SwiftUI
 import DockCore
 
-/// A single quiet nudge per disconnected account, without taking keyboard focus.
-@MainActor
-final class AccountConnectionNotice {
-    private var panel: NSPanel?
-
-    func show(usage: UsageStore, home: URL) {
-        guard !usage.disconnectedProfiles.isEmpty else { dismiss(); return }
-        if panel == nil {
-            let screen = NSScreen.main ?? NSScreen.screens.first
-            let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1000, height: 800)
-            let width = min(440, visible.width - 32)
-            let frame = NSRect(x: visible.midX - width / 2, y: visible.maxY - 300, width: width, height: 280)
-            let panel = NSPanel(contentRect: frame, styleMask: [.titled, .closable, .nonactivatingPanel], backing: .buffered, defer: false)
-            panel.title = "ProfileDock: reconnect account"
-            panel.isReleasedWhenClosed = false
-            panel.hidesOnDeactivate = false
-            panel.level = .floating
-            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-            panel.contentView = NSHostingView(rootView: AccountConnectionNoticeView(usage: usage, home: home, dismiss: { [weak self] in self?.dismiss() }).frame(width: width, height: 280))
-            self.panel = panel
-        }
-        panel?.orderFrontRegardless()
-    }
-
-    func dismiss() { panel?.close(); panel = nil }
-}
-
-struct AccountConnectionNoticeView: View {
+/// Inline sign-in notice inside the strip. It never takes keyboard focus or opens a window.
+struct SignInNoticeBanner: View {
     @ObservedObject var usage: UsageStore
-    let home: URL
-    let dismiss: () -> Void
+    @ObservedObject var model: DockModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Sign-in needed", systemImage: "person.crop.circle.badge.exclamationmark").font(.headline)
-            Text("Reconnect to restore subscription limits. Finish signing in with the account belonging to this profile.")
-                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    ForEach(usage.disconnectedProfiles) { profile in
-                        VStack(alignment: .leading, spacing: 5) {
-                            HStack {
-                                Text(profile.usesClaudeAccountUsage ? "Claude account (shared by Claude tiles)" : profile.name).fontWeight(.medium)
-                                Spacer()
-                                if usage.isReconnecting(profile) {
-                                    ProgressView().controlSize(.small)
-                                    Button("Cancel") { usage.cancelReconnect(profile) }
-                                } else {
-                                    Button("Reconnect") { usage.reconnect(profile, home: home) }
-                                        .accessibilityLabel("Reconnect \(profile.name)")
-                                }
-                            }
+        let profiles = usage.signInNotices
+        if !profiles.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Image(systemName: "person.crop.circle.badge.exclamationmark").foregroundStyle(.orange).accessibilityHidden(true)
+                    Text(profiles.count == 1 ? "Sign-in needed" : "\(profiles.count) accounts need sign-in").font(.system(size: 11, weight: .semibold))
+                    Spacer()
+                    Button("Later") { usage.dismissNotices() }.help("Hide this notice. Tiles keep their Reconnect button.")
+                }
+                ForEach(profiles) { profile in
+                    let key = usage.connectionKey(profile)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 8) {
+                            Text(profile.usesClaudeAccountUsage ? "Claude account" : profile.name).font(.system(size: 11)).lineLimit(1)
+                            Spacer(minLength: 4)
                             if usage.isReconnecting(profile) {
-                                Text("Finish sign-in in your browser. Limits refresh automatically afterwards.").font(.caption).foregroundStyle(.secondary)
+                                ProgressView().controlSize(.mini)
+                                Button("Cancel") { usage.cancelReconnect(profile) }
+                            } else {
+                                Button("Reconnect") { usage.reconnect(profile, home: model.home) }
+                                    .buttonStyle(.borderedProminent).controlSize(.small).accessibilityLabel("Reconnect \(profile.name)")
                             }
-                            if let message = usage.reconnectionMessages[usage.connectionKey(profile)] {
-                                Text(message).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
-                            }
+                            Menu {
+                                Button("Don’t remind me about this account") { model.muteSignInReminders(for: key) }
+                            } label: { Image(systemName: "ellipsis").frame(width: 18, height: 18) }
+                                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                                .accessibilityLabel("More options for \(profile.name)")
+                        }
+                        if usage.isReconnecting(profile) {
+                            Text("Finish sign-in in your browser. Limits refresh automatically.").font(.system(size: 10)).foregroundStyle(.white.opacity(0.55))
+                        } else if let message = usage.reconnectionMessages[key] {
+                            Text(message).font(.system(size: 10)).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
                         }
                     }
-                }.padding(.trailing, 4)
+                }
             }
-            HStack { Spacer(); Button("Later", action: dismiss) }
+            .buttonStyle(.plain).foregroundStyle(.white.opacity(0.9))
+            .padding(10)
+            .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.orange.opacity(0.28), lineWidth: 0.5))
+            .accessibilityElement(children: .contain).accessibilityLabel("Sign-in needed")
         }
-        .padding(18)
-        .onChange(of: usage.disconnectedProfiles.count) { _, count in if count == 0 { dismiss() } }
     }
 }

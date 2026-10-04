@@ -21,8 +21,12 @@ final class AccountConnectionRenderingTests: XCTestCase {
         let deadline = Date().addingTimeInterval(2)
         while usage.isRefreshing && Date() < deadline { try await Task.sleep(for: .milliseconds(1)) }
         XCTAssertEqual(usage.disconnectedProfiles.count, 2)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let model = DockModel(home: home)
+        XCTAssertEqual(usage.signInNotices.count, 2)
         for width in [320.0, 440.0, 700.0] {
-            let view = NSHostingView(rootView: AccountConnectionNoticeView(usage: usage, home: URL(fileURLWithPath: "/fixture"), dismiss: {}).environment(\.colorScheme, .dark).frame(width: width, height: 280).background(Color(nsColor: .windowBackgroundColor)))
+            let view = NSHostingView(rootView: SignInNoticeBanner(usage: usage, model: model).padding(16).environment(\.colorScheme, .dark).frame(width: width, height: 280, alignment: .top).background(Color.black))
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 280), styleMask: [.borderless], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false; window.contentView = view
             view.frame = NSRect(x: 0, y: 0, width: width, height: 280)
@@ -39,5 +43,28 @@ final class AccountConnectionRenderingTests: XCTestCase {
             }
             window.close()
         }
+        // Later hides the notice; muting and the global switch keep it hidden after a new loss of sign-in.
+        usage.mutedConnections = [usage.connectionKey(codex)]
+        XCTAssertEqual(usage.signInNotices.map(\.id), ["claude"])
+        usage.dismissNotices()
+        XCTAssertTrue(usage.signInNotices.isEmpty)
+        XCTAssertEqual(usage.disconnectedProfiles.count, 2, "Tiles and the menu keep their Reconnect actions")
+        usage.remindersEnabled = false
+        XCTAssertTrue(usage.signInNotices.isEmpty)
+    }
+
+    @MainActor func testMutedAccountNeverTriggersTheDropDown() async throws {
+        let client = DisconnectedUsage()
+        let usage = UsageStore(client: client, claudeClient: client)
+        defer { usage.shutdown() }
+        let muted = Profile(id: "muted", name: "Muted", color: "377CF6"), loud = Profile(id: "loud", name: "Loud", color: "377CF6")
+        var lost: [String] = []
+        usage.onConnectionLost = { lost.append($0.id) }
+        usage.mutedConnections = [usage.connectionKey(muted)]
+        usage.configure([muted, loud]); usage.refreshAll()
+        let deadline = Date().addingTimeInterval(2)
+        while usage.isRefreshing && Date() < deadline { try await Task.sleep(for: .milliseconds(1)) }
+        XCTAssertEqual(lost, ["loud"])
+        XCTAssertEqual(usage.signInNotices.map(\.id), ["loud"])
     }
 }

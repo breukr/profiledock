@@ -206,6 +206,9 @@ import DockCore
         for session in companions.sessions(for: profile) { preferences.claudeReadAt?[session.id] = Date() }
         save()
     }
+    func muteSignInReminders(for key: String) {
+        preferences.mutedSignInReminders = Array(Set((preferences.mutedSignInReminders ?? []) + [key])).sorted(); save()
+    }
     func move(_ id: String, to target: String) {
         let ordered = ProfileOrder.move(preferences.profiles, id: id, to: target)
         guard ordered != preferences.profiles else { return }

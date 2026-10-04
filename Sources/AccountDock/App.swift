@@ -14,7 +14,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     let appUpdates = AppUpdates()
     let selfUpdates = ProfileDockUpdates()
     let cues = ActivityCues()
-    let connectionNotice = AccountConnectionNotice()
     var islands: [IslandController] = []
     let iconAppearance = AppIconController()
     var status: NSStatusItem!
@@ -76,19 +75,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         applyVisibility()
         configureMenu()
         if !previewMode {
-            usage.onConnectionLost = { [weak self] _ in
-                guard let self else { return }
-                self.connectionNotice.show(usage: self.usage, home: self.model.home)
-            }
+            applyReminderPreferences()
+            usage.onConnectionLost = { [weak self] _ in self?.presentSignInNotice() }
             usage.$entries.receive(on: RunLoop.main).map { [weak self] _ in self?.usage.disconnectedProfiles.map(\.id) ?? [] }.removeDuplicates().sink { [weak self] _ in
-                guard let self else { return }
-                self.configureMenu()
-                if self.usage.disconnectedProfiles.isEmpty { self.connectionNotice.dismiss() }
+                self?.configureMenu()
             }.store(in: &subscriptions)
-            usage.$reconnecting.dropFirst().receive(on: RunLoop.main).sink { [weak self] keys in
-                guard let self, !keys.isEmpty else { return }
-                self.connectionNotice.show(usage: self.usage, home: self.model.home)
-            }.store(in: &subscriptions)
+            // The strip reserves room for the notice only while it lists accounts, and closes once it is handled.
+            Publishers.CombineLatest4(usage.$entries, usage.$dismissedNotices, usage.$mutedConnections, usage.$remindersEnabled)
+                .receive(on: RunLoop.main).map { [weak self] _ in self?.usage.signInNotices.map(\.id) ?? [] }.removeDuplicates().dropFirst()
+                .sink { [weak self] ids in
+                    guard let self else { return }
+                    DispatchQueue.main.async {
+                        self.islands.forEach { $0.updateLayout() }
+                        if ids.isEmpty { self.islands.forEach { $0.endAttention() } }
+                    }
+                }.store(in: &subscriptions)
         }
         iconAppearance.update(model.preferences.appIconAppearance ?? .auto)
         selfUpdates.mayUpdate = { [weak self] in self?.appUpdates.busy == false && self?.model.nativeDockOperations.isEmpty == true }
@@ -102,6 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         model.onPreferencesChanged = { [weak self] in
             guard let self else { return }
             self.usage.configure(self.previewMode ? [] : self.model.preferences.profiles)
+            self.applyReminderPreferences()
             self.insights.prepare(profiles: self.model.preferences.profiles, home: self.model.home)
             self.activity.configure(self.previewMode ? [] : self.model.activityProfiles, running: Set(self.model.running.keys))
             if !self.previewMode, self.islands.first?.layout.placement != self.model.placement { self.cues.dismiss(); self.rebuildIslands() }
@@ -159,7 +161,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if let localMouseMonitor { NSEvent.removeMonitor(localMouseMonitor) }
         islands.forEach { $0.shutdown() }
         usage.shutdown()
-        connectionNotice.dismiss()
         insights.shutdown()
         activity.shutdown()
         model.companions.stop()
@@ -183,6 +184,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     @objc func screenChanged() { cues.dismiss(); if !previewMode { rebuildIslands() } }
+    func applyReminderPreferences() {
+        usage.remindersEnabled = model.preferences.signInReminders != false
+        usage.mutedConnections = Set(model.preferences.mutedSignInReminders ?? [])
+    }
+    /// Drop the strip down on the display with the pointer, instead of opening a separate window.
+    func presentSignInNotice(force: Bool = false) {
+        guard !previewMode, force || !usage.signInNotices.isEmpty else { return }
+        let mouse = NSEvent.mouseLocation
+        let island = islands.first { $0.screen.frame.contains(mouse) } ?? islands.first
+        island?.presentAttention()
+    }
     @objc func showPanel() { islands.forEach { $0.showPanel() } }
     @objc func measureAnimations(_ notification: Notification) { islands.forEach { $0.measureAnimations = notification.object as? String == "start" } }
     @objc func writeDiagnostics(_ notification: Notification) {
@@ -311,8 +323,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc func reconnectAccount(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String,
               let profile = model.preferences.profiles.first(where: { $0.id == id }) else { return }
-        connectionNotice.show(usage: usage, home: model.home)
         usage.reconnect(profile, home: model.home)
+        presentSignInNotice(force: true)
     }
     @objc func about() { showDestination(.profileDockShowAbout) }
     private func showDestination(_ notification: Notification.Name) {

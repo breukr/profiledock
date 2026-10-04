@@ -68,14 +68,14 @@ final class IslandController {
         return screen.localizedName
     }
 
-    static func layout(screen: NSScreen, model: DockModel, showsResetDetails: Bool = false, position: FloatingPosition? = nil, usageRows: Int = 2, showsInsights: Bool = false) -> IslandLayout {
+    static func layout(screen: NSScreen, model: DockModel, showsResetDetails: Bool = false, position: FloatingPosition? = nil, usageRows: Int = 2, showsInsights: Bool = false, hasNotice: Bool = false) -> IslandLayout {
         let notchWidth: CGFloat
         if screen.safeAreaInsets.top > 0, let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
             notchWidth = right.minX - left.maxX
         } else { notchWidth = 180 }
         let topInset = screen.frame.maxY - screen.visibleFrame.maxY
         let menuBarHeight = topInset > 0 ? topInset : NSStatusBar.system.thickness
-        return IslandLayout(screen: screen.frame, notchHeight: screen.safeAreaInsets.top, notchWidth: notchWidth, count: model.displayedProfiles.count, scale: model.preferences.scale, hasMessage: model.message != nil, menuBarHeight: menuBarHeight, showsResetDetails: showsResetDetails, placement: model.placement, visibleFrame: screen.visibleFrame, position: position ?? model.floatingPosition(for: positionKey(for: screen)), usageRows: usageRows, showsInsights: model.preferences.showInsightsSection != false && (showsInsights || model.preferences.insightsExpansion == .always), compactWidth: model.preferences.compactWidth, expandedWidth: model.preferences.expandedWidth, terminalCount: model.preferences.showTerminalsSection == false ? nil : model.preferences.terminalsExpanded == false ? 0 : model.liveTerminalProfiles.count, grid: model.preferences.profileGrid, showsInsightsSection: model.preferences.showInsightsSection != false)
+        return IslandLayout(screen: screen.frame, notchHeight: screen.safeAreaInsets.top, notchWidth: notchWidth, count: model.displayedProfiles.count, scale: model.preferences.scale, hasMessage: model.message != nil || hasNotice, menuBarHeight: menuBarHeight, showsResetDetails: showsResetDetails, placement: model.placement, visibleFrame: screen.visibleFrame, position: position ?? model.floatingPosition(for: positionKey(for: screen)), usageRows: usageRows, showsInsights: model.preferences.showInsightsSection != false && (showsInsights || model.preferences.insightsExpansion == .always), compactWidth: model.preferences.compactWidth, expandedWidth: model.preferences.expandedWidth, terminalCount: model.preferences.showTerminalsSection == false ? nil : model.preferences.terminalsExpanded == false ? 0 : model.liveTerminalProfiles.count, grid: model.preferences.profileGrid, showsInsightsSection: model.preferences.showInsightsSection != false)
     }
 
     init(screen: NSScreen, model: DockModel, usage: UsageStore, activity: ActivityMonitor? = nil, insights: InsightsStore? = nil, presentWindows: Bool = true,
@@ -149,6 +149,22 @@ final class IslandController {
         else if layout.notchHeight == 0 { compactPanel.orderFrontRegardless() }
     }
 
+    /// Drop the strip down from the notch for a while, as if hovered. The pointer takes over once it enters.
+    func presentAttention(for duration: TimeInterval = 10) {
+        guard presentWindows else { return }
+        updateLayout()
+        hoverIntent.hold(until: ProcessInfo.processInfo.systemUptime + duration)
+        scheduledCollapse = nil
+        checkHover()
+    }
+
+    func endAttention() {
+        guard hoverIntent.holdUntil != nil else { return }
+        hoverIntent.releaseHold()
+        scheduledCollapse = nil
+        checkHover()
+    }
+
     func shutdown() {
         usageSubscription?.cancel()
         menuSubscriptions.removeAll(); trackedMenus.removeAll()
@@ -162,7 +178,7 @@ final class IslandController {
 
     func updateLayout(animateInsights: Bool = false) {
         defer { insightsSnapshot = nil }
-        let next = Self.layout(screen: screen, model: model, showsResetDetails: !presentation.resetDetails.isEmpty, position: draggedPosition, usageRows: usage.cardUsageRows, showsInsights: presentation.insightsExpanded)
+        let next = Self.layout(screen: screen, model: model, showsResetDetails: !presentation.resetDetails.isEmpty, position: draggedPosition, usageRows: usage.cardUsageRows, showsInsights: presentation.insightsExpanded, hasNotice: !usage.signInNotices.isEmpty)
         guard next != layout else { return }
         let animate = animateInsights && expanded && !reduceMotion()
         let oldFrame = panel.frame
