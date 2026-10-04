@@ -184,6 +184,7 @@ import DockCore
                 // With several Claude instances, only this exact process may be brought forward.
                 app.unhide(); _ = app.activate(options: [.activateAllWindows])
                 try? ApplicationReopen.send(processIdentifier: app.processIdentifier)
+                try? ApplicationReopen.activate(processIdentifier: app.processIdentifier)
                 markCompanionRead(profile)
                 return
             }
@@ -197,7 +198,11 @@ import DockCore
                 Task { @MainActor in
                     guard let self else { return }; self.opening.remove(profile.id)
                     if let error { self.showProfileMessage(error.localizedDescription, for: profile) }
-                    else if let application { try? ApplicationReopen.send(processIdentifier: application.processIdentifier); self.markCompanionRead(profile) }
+                    else if let application {
+                        try? ApplicationReopen.send(processIdentifier: application.processIdentifier)
+                        try? ApplicationReopen.activate(processIdentifier: application.processIdentifier)
+                        self.markCompanionRead(profile)
+                    }
                     self.refresh()
                 }
             }
