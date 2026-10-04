@@ -182,9 +182,7 @@ import DockCore
             refresh()
             if let app = running[profile.id]?.first {
                 // With several Claude instances, only this exact process may be brought forward.
-                app.unhide(); _ = app.activate(options: [.activateAllWindows])
-                try? ApplicationReopen.send(processIdentifier: app.processIdentifier)
-                try? ApplicationReopen.activate(processIdentifier: app.processIdentifier)
+                bringClaudeForward(app, profile: profile)
                 markCompanionRead(profile)
                 return
             }
@@ -199,8 +197,7 @@ import DockCore
                     guard let self else { return }; self.opening.remove(profile.id)
                     if let error { self.showProfileMessage(error.localizedDescription, for: profile) }
                     else if let application {
-                        try? ApplicationReopen.send(processIdentifier: application.processIdentifier)
-                        try? ApplicationReopen.activate(processIdentifier: application.processIdentifier)
+                        if let running = RunningProfileApplication(application) { self.bringClaudeForward(running, profile: profile) }
                         self.markCompanionRead(profile)
                     }
                     self.refresh()
@@ -225,6 +222,18 @@ import DockCore
                 markCompanionRead(profile)
             } catch { showProfileMessage(error.localizedDescription, for: profile) }
         }
+    }
+    /// macOS refuses activation requests from an inactive ProfileDock, and Claude does not raise itself on
+    /// reopen. Yield activation to the exact process and ask it to activate itself.
+    func bringClaudeForward(_ app: RunningProfileApplication, profile: Profile) {
+        app.unhide()
+        NSApp.yieldActivation(to: app.application)
+        _ = app.activate(options: [.activateAllWindows])
+        try? ApplicationReopen.send(processIdentifier: app.processIdentifier)
+        do { try ApplicationReopen.activate(processIdentifier: app.processIdentifier) }
+        catch let error as NSError where error.code == -1743 {
+            showProfileMessage("Allow ProfileDock to control Claude in System Settings → Privacy & Security → Automation, then try again.", for: profile)
+        } catch {}
     }
     func openSeparateClaude(_ profile: Profile, application: URL) {
         guard let arguments = ProfileLaunch.claudeArguments(profile: profile, home: home, application: application) else { return }
