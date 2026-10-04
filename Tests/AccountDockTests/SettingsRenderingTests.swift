@@ -23,6 +23,7 @@ final class SettingsRenderingTests: XCTestCase {
                         Profile(id: "profile-long", name: "A longer profile name for layout", color: "CA528B")]
         for profile in profiles { try FileManager.default.createDirectory(at: profile.home(in: home), withIntermediateDirectories: true) }
         profiles[3].dockIconStyle = .image
+        profiles[1].hiddenFromStrip = true
         model.preferences.profiles = profiles
         model.save()
         let source = NSImage(size: NSSize(width: 160, height: 160), flipped: false) { bounds in
