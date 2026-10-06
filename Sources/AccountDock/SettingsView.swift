@@ -549,6 +549,15 @@ struct SettingsView: View {
                         }.foregroundStyle(.secondary).padding(16)
                     }
                     Divider().padding(.leading, 16)
+                    SettingsRow(title: "Sign-in reminders", detail: (model.preferences.mutedSignInReminders ?? []).isEmpty ? "Drop the strip down when an account needs to sign in again." : "Drop the strip down when an account needs to sign in again. Muted for \((model.preferences.mutedSignInReminders ?? []).count) account\((model.preferences.mutedSignInReminders ?? []).count == 1 ? "" : "s").") {
+                        HStack {
+                            if !(model.preferences.mutedSignInReminders ?? []).isEmpty {
+                                Button("Unmute all") { model.preferences.mutedSignInReminders = nil; model.save() }.controlSize(.small)
+                            }
+                            Toggle("Show sign-in reminders", isOn: Binding(get: { model.preferences.signInReminders != false }, set: { model.preferences.signInReminders = $0; model.save() })).labelsHidden()
+                        }
+                    }
+                    Divider().padding(.leading, 16)
                     SettingsRow(title: "Wait for subagents", detail: "Stay quiet when a Claude Code session pauses while its subagents are still working. You get one cue when everything is done.") {
                         Toggle("Wait for subagents before signalling done", isOn: Binding(get: { model.preferences.activityWaitsForSubagents != false }, set: { model.preferences.activityWaitsForSubagents = $0; model.save() })).labelsHidden()
                     }

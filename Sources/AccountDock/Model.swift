@@ -34,6 +34,9 @@ struct Preferences: Codable {
     var profileGrid: ProfileGrid?
     var showTerminalsSection: Bool?
     var showInsightsSection: Bool?
+    var signInReminders: Bool?
+    /// Connection keys whose sign-in reminders were turned off from the notice.
+    var mutedSignInReminders: [String]?
 }
 
 struct ProfileMessageRecovery: Equatable {

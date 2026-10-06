@@ -172,6 +172,7 @@ struct IslandView: View {
                     Image(systemName: "slider.horizontal.3").frame(width: 22, height: 20)
                 }.accessibilityLabel("Settings").help("Profiles, apps, and settings")
             }.buttonStyle(.plain).foregroundStyle(.white.opacity(0.65))
+            SignInNoticeBanner(usage: usage, model: model)
             profileGrid(profiles: Array(desktopProfiles.dropFirst(page * capacity).prefix(capacity)), columns: columns, tileWidth: tileWidth)
             ProfileGridPagination(model: model, page: $profilePage, count: desktopProfiles.count, capacity: capacity, terminals: false)
             if model.preferences.showTerminalsSection != false {
