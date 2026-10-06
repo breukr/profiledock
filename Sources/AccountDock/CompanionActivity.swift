@@ -18,11 +18,16 @@ extension ActivityMonitor {
             let summary = ActivitySummary(unread: unread, working: live.filter { $0.state == .working }.count,
                 waiting: live.filter { $0.state == .waiting || $0.state == .failed }.count,
                 liveAvailable: !live.isEmpty, appOpen: open)
+            let waitsForSubagents = model.preferences.activityWaitsForSubagents != false
             for session in live {
                 let key = profile.id + ":" + session.id
                 if let previous = companionStates[key], previous != session.state {
                     if session.state == .waiting || session.state == .failed { event = ActivityEvent(profileID: profile.id, signal: .needsInput) }
-                    else if session.state == .idle, previous == .working || previous == .waiting { event = ActivityEvent(profileID: profile.id, signal: .finished) }
+                    else if session.state == .idle, previous == .working || previous == .waiting {
+                        // Claude's main turn can end while background subagents keep going. It wakes again when they report back,
+                        // and that later turn raises the real completion.
+                        if !(waitsForSubagents && session.runningSubagents(now: now) > 0) { event = ActivityEvent(profileID: profile.id, signal: .finished) }
+                    }
                 }
                 companionStates[key] = session.state
             }

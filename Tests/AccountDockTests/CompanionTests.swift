@@ -218,6 +218,29 @@ final class CompanionIntegrationTests: XCTestCase {
         monitor.updateCompanions(model: model)
         XCTAssertEqual(monitor.entries[profile.id]?.working, 0)
     }
+    @MainActor func testClaudeFinishedCueWaitsForRunningSubagentsUnlessDisabled() throws {
+        let model = DockModel(home: try temporaryHome())
+        try model.createCompanion(kind: .claude, name: "Assistant", project: nil)
+        let monitor = ActivityMonitor(home: model.home)
+        func run(waits: Bool?, subagents: [String: Date]?) -> ActivitySignal? {
+            model.preferences.activityWaitsForSubagents = waits
+            monitor.event = nil
+            var session = ClaudeSession(id: "fixture", project: "/project", processID: getpid(), processStarted: ClaudeProcess.startTime(getpid()))
+            session.state = .working; session.subagents = subagents
+            model.companions.sessions = [session]
+            monitor.companionStates = [:]
+            monitor.updateCompanions(model: model)
+            session.state = .idle; session.completedAt = Date(); model.companions.sessions = [session]
+            monitor.updateCompanions(model: model)
+            return monitor.event?.signal
+        }
+        let running = ["a1": Date()]
+        XCTAssertNil(run(waits: nil, subagents: running), "On by default: no cue while a subagent still runs")
+        XCTAssertEqual(run(waits: nil, subagents: nil), .finished)
+        XCTAssertEqual(run(waits: false, subagents: running), .finished)
+        XCTAssertNil(run(waits: true, subagents: running))
+        XCTAssertEqual(run(waits: true, subagents: ["old": Date(timeIntervalSinceNow: -ClaudeSession.subagentStaleAfter - 60)]), .finished, "A lost subagent never silences cues forever")
+    }
     @MainActor func testDragKeepsIslandOpenUntilCancelled() async throws {
         _ = NSApplication.shared
         guard let screen = NSScreen.screens.first else { throw XCTSkip("No display") }
