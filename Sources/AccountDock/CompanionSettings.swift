@@ -47,6 +47,7 @@ struct ActivityConnectionsView: View {
 struct ClaudeConnectionView: View {
     @ObservedObject var model: DockModel
     @State private var enabled = false
+    @State private var subagentTracking = true
     @State private var busy = false
     @State private var message: String?
     var body: some View {
@@ -63,16 +64,23 @@ struct ClaudeConnectionView: View {
             if model.claudeBridge.hasCustomStatusline {
                 Text("Your existing status line keeps its output. ProfileDock passes its input through while collecting usage counters.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
+            if enabled, !subagentTracking {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("This connection cannot see subagents yet, so a session can be reported done while they still work.")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Button("Update connection") { connect(true) }.controlSize(.small).disabled(busy)
+                }
+            }
             if busy { ProgressView().controlSize(.small) }
             if let message { Text(message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) }
-        }.onAppear { enabled = model.claudeBridge.enabled }
+        }.onAppear { enabled = model.claudeBridge.enabled; subagentTracking = model.claudeBridge.tracksSubagents }
     }
     private func connect(_ value: Bool) {
         busy = true; message = nil
         let bridge = model.claudeBridge
         let helper = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("ProfileDockClaude")
         Task {
-            defer { busy = false; enabled = bridge.enabled }
+            defer { busy = false; enabled = bridge.enabled; subagentTracking = bridge.tracksSubagents }
             do {
                 try await Task.detached { try bridge.setEnabled(value, bundledHelper: helper) }.value
                 if value {

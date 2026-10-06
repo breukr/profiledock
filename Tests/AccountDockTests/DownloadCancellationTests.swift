@@ -50,5 +50,6 @@ final class DownloadCancellationTests: XCTestCase {
         XCTAssertEqual(preferences.scale, 1.3)
         XCTAssertNil(preferences.activitySounds)
         XCTAssertNil(preferences.activityCues)
+        XCTAssertNil(preferences.activityWaitsForSubagents)
     }
 }
