@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 public enum TerminalAgent: String, Codable, Sendable {
     case claude, codex
@@ -71,6 +72,8 @@ public struct ClaudeSession: Codable, Equatable, Identifiable, Sendable {
     public var inputTokens: Int?
     public var outputTokens: Int?
     public var costUSD: Double?
+    /// CLAUDE_CONFIG_DIR of the reporting session. Nil is the shared ~/.claude configuration.
+    public var configDirectory: String?
     /// Subagents between SubagentStart and SubagentStop, keyed by agent ID. Only IDs and start times are kept.
     public var subagents: [String: Date]?
     public enum State: String, Codable, Sendable { case idle, working, waiting, closed, failed }
@@ -167,6 +170,18 @@ public enum ClaudeBridgeSettings {
     public static let events = coreEvents + subagentEvents
     public static func shellQuote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
     public static func command(helper: URL, mode: String) -> String { shellQuote(helper.path) + " " + mode }
+    /// Each configuration keeps its own wrapped status line, so one account never runs another's command.
+    public static func originalStatuslineName(configDirectory: String?) -> String {
+        guard let configDirectory else { return "original-statusline.json" }
+        let digest = SHA256.hash(data: Data(configDirectory.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+        return "original-statusline-\(digest).json"
+    }
+    /// Only an absolute, non-default CLAUDE_CONFIG_DIR identifies a separate account.
+    public static func configDirectory(environment: [String: String], home: URL) -> String? {
+        guard let raw = environment["CLAUDE_CONFIG_DIR"], raw.hasPrefix("/"), raw.utf8.count < 4096 else { return nil }
+        let path = URL(fileURLWithPath: raw).standardizedFileURL.path
+        return path == home.appendingPathComponent(".claude").standardizedFileURL.path ? nil : path
+    }
     public static func isOurs(_ hook: [String: Any], helper: URL) -> Bool {
         hook["type"] as? String == "command" && hook["command"] as? String == command(helper: helper, mode: "hook")
     }

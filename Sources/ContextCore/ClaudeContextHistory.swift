@@ -3,7 +3,7 @@ import DockCore
 
 extension ContextHistory {
     func claudeThreads(since: Double?, threadID: String?) throws -> ([ContextThread], Bool) {
-        let files = try ClaudeHistory.files(home: root.deletingLastPathComponent(), since: since.map(Date.init(timeIntervalSince1970:)))
+        let files = try ClaudeHistory.files(configuration: root, since: since.map(Date.init(timeIntervalSince1970:)))
         var threads: [ContextThread] = [], limited = files.count >= 5000
         for file in files {
             guard Date() < deadline else { limited = true; break }

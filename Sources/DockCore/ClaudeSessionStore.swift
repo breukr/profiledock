@@ -42,7 +42,7 @@ public struct ClaudeSessionStore: Sendable {
                 return value
             }
     }
-    public func record(payload: [String: Any], statusline: Bool, process: (Int32, Double)?, tty: String?, now: Date = Date()) throws -> ClaudeSession {
+    public func record(payload: [String: Any], statusline: Bool, process: (Int32, Double)?, tty: String?, configDirectory: String? = nil, now: Date = Date()) throws -> ClaudeSession {
         guard let id = payload["session_id"] as? String, ClaudeSession.validID(id),
               let project = payload["cwd"] as? String ?? (payload["workspace"] as? [String: Any])?["current_dir"] as? String,
               project.hasPrefix("/"), project.utf8.count < 8192 else { throw CompanionError.message("Invalid Claude session metadata.") }
@@ -61,6 +61,7 @@ public struct ClaudeSessionStore: Sendable {
         value.project = project
         if let process { value.processID = process.0; value.processStarted = process.1 }
         if let tty, ClaudeSession.validTTY(tty) { value.tty = tty }
+        if let configDirectory, configDirectory.hasPrefix("/") { value.configDirectory = configDirectory }
         value.apply(payload, statusline: statusline, now: now)
         try JSONEncoder().encode(value).write(to: url, options: .atomic)
         try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)

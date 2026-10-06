@@ -77,12 +77,16 @@ struct ClaudeConnectionView: View {
     }
     private func connect(_ value: Bool) {
         busy = true; message = nil
-        let bridge = model.claudeBridge
+        let bridge = model.claudeBridge, bridges = model.claudeBridges
         let helper = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("ProfileDockClaude")
         Task {
             defer { busy = false; enabled = bridge.enabled; subagentTracking = bridge.tracksSubagents }
             do {
-                try await Task.detached { try bridge.setEnabled(value, bundledHelper: helper) }.value
+                // The shared configuration decides success; separate accounts follow it.
+                try await Task.detached {
+                    try bridge.setEnabled(value, bundledHelper: helper)
+                    for other in bridges.dropFirst() { try other.setEnabled(value, bundledHelper: helper) }
+                }.value
                 if value {
                     let application = NSRunningApplication.runningApplications(withBundleIdentifier: ProfileProvider.claude.bundleIdentifier).first?.bundleURL
                         ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: ProfileProvider.claude.bundleIdentifier)
@@ -102,7 +106,10 @@ struct CompanionDetails: View {
     var body: some View {
         GroupBox(profile.kind.label) {
             VStack(alignment: .leading, spacing: 12) {
-                if profile.kind == .claude {
+                if profile.usesSeparateClaudeAccount {
+                    Text("Opens its own Claude Desktop window with a separate sign-in, chats and Claude Code settings. Sign in with the account for this profile the first time it opens. Claude manages its own updates.")
+                    Text("Subscription limits come from this account's Claude Code status line when available. Account-endpoint usage and saved resets remain available for your shared Claude sign-in only.").font(.caption)
+                } else if profile.kind == .claude {
                     Text("Uses your existing Claude Desktop installation and sign-in. Claude manages its own updates.")
                 } else {
                     Text("Opens this project in its own Terminal tab. If the tab closes, Open starts a new one in the same folder.")

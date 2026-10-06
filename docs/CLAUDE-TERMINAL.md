@@ -21,6 +21,7 @@ Custom layouts size the panel width from the column count. Tall pages scroll ins
 ## Windows
 
 - Claude Desktop uses the existing installed app and sign-in. Opening it restores its window.
+- A separate Claude account opens its own Claude Desktop instance. See [Separate Claude accounts](#separate-claude-accounts).
 - A Terminal entry points to a specific tab using its window ID, TTY and Terminal process start time. Reused identifiers after a restart cannot select an unrelated tab.
 - Choose an existing tab while adding an entry, or choose a project folder and let Open create a tab. A closed tab reopens as a new tab in the saved folder.
 - A Claude Code project runs `claude` in that folder using your normal shell configuration. ProfileDock does not supply an API key or change the CLI's account.
@@ -40,7 +41,7 @@ Start a new local Claude Code session after connecting. Hook events report worki
 
 Claude subscription usage comes directly from the signed-in Claude Code account, independently of terminal status-line reports. ProfileDock refreshes at startup, after wake, every minute while the strip is open, and every five minutes while it is closed. Refresh also requests current data; requests for tiles sharing an account are combined. Rate limits pause retries. Account changes clear previous readings, and network failures retain the last reading with a stale marker.
 
-All Claude tiles show the local Claude Code account's shared five-hour and weekly limits. If Claude Desktop uses a different account, these are still the Code account's limits. An expired or missing Code sign-in is reported explicitly; ProfileDock never refreshes or rewrites Claude's credentials itself.
+All Claude tiles using the shared sign-in show the local Claude Code account's shared five-hour and weekly limits. If Claude Desktop uses a different account, these are still the Code account's limits. An expired or missing Code sign-in is reported explicitly; ProfileDock never refreshes or rewrites Claude's credentials itself.
 
 Saved resets are separate from quota reset times. Choose **Connect saved resets** in a Claude tile or **Profiles → Claude usage connector**, then sign in to Claude. ProfileDock keeps its own WebKit session and checks that it can access the organization verified through Claude Code. It imports no cookies from browsers or Claude Desktop. Available grants, remaining counts and expiry dates are read automatically. Unsupported, signed-out or malformed inventory is unknown, never zero. A saved reset can be banked even if Claude will only allow its use after reaching a limit. ProfileDock does not consume resets. Disconnect removes its web session and stops this check.
 
@@ -48,7 +49,7 @@ The optional status-line bridge still records local counters for session insight
 
 ## History and context
 
-Search Chats includes local Claude Code transcripts in `~/.claude/projects`. Project entries are restricted to their saved working directory. The Claude Desktop entry represents the shared local Claude Code history, including terminal sessions. It is not a separate account container.
+Search Chats includes local Claude Code transcripts in `~/.claude/projects`. Project entries are restricted to their saved working directory. The Claude Desktop entry represents the shared local Claude Code history, including terminal sessions. Separate Claude accounts are searched in their own configuration folder instead.
 
 The existing source permissions also apply to Claude history. Enable sources in **Context Access** and connect through the Claude Desktop entry to make retrieval available to Claude Code. This adds the `profiledock-context` server to the shared user configuration in `~/.claude.json`, preserving other servers. New Claude Code sessions in Desktop and Terminal can use it. Per-project terminal entries are searchable sources; they do not install competing user-wide MCP identities.
 
@@ -58,13 +59,30 @@ Usage Insights resumes large Claude transcripts across scans and app restarts, s
 
 Usage Insights reads local Claude Code token counters and estimates their cost at published Standard API rates, with cache reads and writes accounted for separately. Repeated streaming records are counted once. A matching project entry takes precedence over the general Claude entry so the same session is not counted twice. Unknown models and unsupported pricing modes remain unpriced. These estimates are not your Max subscription bill. Rates: [Anthropic pricing](https://platform.claude.com/docs/en/about-claude/pricing), checked 23 September 2026.
 
+## Separate Claude accounts
+
+Choose **Profiles → Add Profile → Claude Desktop → Separate Claude account** to keep another Claude account signed in next to the shared one. Each separate account gets a private folder under `~/Library/Application Support/Account Dock/Companions/<profile>` with two parts:
+
+- `electron-user-data`: the Claude Desktop sign-in, chats cache and app settings for that account.
+- `claude-config`: the Claude Code configuration, passed as `CLAUDE_CONFIG_DIR`, so its settings, transcripts and Claude Code sign-in stay apart from `~/.claude`.
+
+Open runs the installed Claude app as a new instance with `open -n --env CLAUDE_CONFIG_DIR=<claude-config> -a Claude --args --user-data-dir=<electron-user-data>`. Sign in with the intended account the first time it opens. Every account can stay open at once. Running instances are matched to tiles by their exact `--user-data-dir` argument, so Show, activity dots and Close act only on that account's window. An instance without the argument, or with Claude's default folder, belongs to the shared sign-in. The shared entry also starts its own instance when another account is already open.
+
+All accounts use the same Claude installation and update together. They share the Claude icon in the macOS Dock; tile colors, letters and artwork stay configurable in the notch and Finder.
+
+Connecting Claude Code installs the same activity hooks in each separate account's `claude-config/settings.json`. The hook helper records the session's `CLAUDE_CONFIG_DIR`, so activity appears only on its own tile. Each configuration keeps its own saved status line. Search Chats reads `claude-config/projects`, and the context connection writes `claude-config/.claude.json` and `claude-config/skills`.
+
+Limits for a separate account come from its Claude Code status line when one has reported. The account endpoint, Reconnect and saved resets remain tied to the shared Claude Code sign-in and are never shown on a separate account's tile. Usage Insights covers the shared configuration only.
+
+Acceptance testing still required: Claude Desktop sign-in through a browser hands control back through a `claude://` link, which macOS may deliver to the instance that registered first. If sign-in completes in the wrong window, quit the other Claude windows during the first sign-in, or use email sign-in. Whether the Desktop Code tab honors `CLAUDE_CONFIG_DIR` from its launch environment is not yet verified.
+
 ## Provider differences
 
 Common launch, focus, ordering, profile artwork, activity, search and insights controls use the same ProfileDock surfaces. Provider-specific capabilities remain explicit:
 
 | Capability | Codex | Claude / Terminal |
 | --- | --- | --- |
-| Separate account containers | Existing profile homes | Existing Claude sign-in; project/window entries |
+| Separate account containers | Existing profile homes | Shared Claude sign-in or separate Claude Desktop accounts; project/window entries |
 | Live task activity | Local Work/Codex | Connected local Claude Code |
 | Subscription windows | Account endpoint | Claude Code account endpoint |
 | Saved reset credits | When supplied by Codex | Claude web connection, when supplied |

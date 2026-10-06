@@ -64,4 +64,37 @@ final class ClaudeContextTests: XCTestCase {
         XCTAssertFalse(try connection.isConnected(context))
         XCTAssertEqual(try JSONSerialization.jsonObject(with: Data(contentsOf: config)) as? NSDictionary, original as NSDictionary)
     }
+    func testSeparateAccountSearchesAndConnectsInsideItsOwnConfiguration() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        addTeardownBlock { try? FileManager.default.removeItem(at: home) }
+        var profile = Profile(id: "profile-work", name: "Work", color: "123456"); profile.provider = .claude; profile.separateClaudeAccount = true
+        let config = try XCTUnwrap(profile.claudeConfigDirectory(in: home))
+        try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true)
+        let prefs = home.appendingPathComponent("Library/Application Support/Account Dock/preferences.json")
+        struct Preferences: Encodable { let profiles: [Profile] }
+        try JSONEncoder().encode(Preferences(profiles: [profile])).write(to: prefs)
+        // The shared history must stay invisible to the separate account.
+        try transcript(home: home, id: "shared-session", cwd: "/project", text: "Shared only phrase")
+        let folder = config.appendingPathComponent("projects/fixture")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: home.appendingPathComponent(".claude/projects/fixture/shared-session.jsonl"), to: folder.appendingPathComponent("work-session.jsonl"))
+        let registry = ContextRegistry(home: home)
+        let context = try XCTUnwrap(try registry.profiles().first { $0.id == profile.id })
+        XCTAssertEqual(context.root(in: registry.home).path, config.resolvingSymlinksInPath().path)
+        let found = try ContextService(registry: registry, caller: profile.id).search(query: "Shared only phrase", sources: [profile.id])
+        XCTAssertEqual(Set(found.hits.map(\.thread.id)), ["work-session"])
+
+        let helper = home.appendingPathComponent("helper")
+        try Data("fixture".utf8).write(to: helper)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
+        let connection = ContextConnection(registry: registry, codex: URL(fileURLWithPath: "/unused"), run: { _, _, _ in
+            XCTFail("Claude must never invoke the Codex CLI"); return ContextCommandResult(status: 1, output: "", error: "unexpected")
+        })
+        try connection.connect(context, helper: helper, skill: ContextConnection.skillMarker)
+        XCTAssertTrue(try connection.isConnected(context))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: context.root(in: registry.home).appendingPathComponent(".claude.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: registry.home.appendingPathComponent(".claude.json").path))
+        try connection.disconnect(context)
+        XCTAssertFalse(try connection.isConnected(context))
+    }
 }

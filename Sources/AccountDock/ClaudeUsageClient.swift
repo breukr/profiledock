@@ -154,5 +154,6 @@ actor ClaudeUsageClient: UsageFetching {
 }
 
 extension Profile {
-    var usesClaudeAccountUsage: Bool { kind == .claude || kind == .claudeCode || (kind == .terminal && terminalAgent == .claude) }
+    /// Separate Claude accounts are excluded: the account reader only knows the shared Claude Code sign-in.
+    var usesClaudeAccountUsage: Bool { (kind == .claude && !usesSeparateClaudeAccount) || kind == .claudeCode || (kind == .terminal && terminalAgent == .claude) }
 }

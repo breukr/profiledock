@@ -15,9 +15,12 @@ public struct Profile: Identifiable, Codable, Equatable, Sendable {
     public var terminalProcessStarted: Double?
     public var terminalAgent: TerminalAgent?
     public var claudeSessionID: String?
+    /// A Claude Desktop entry with its own app data and Claude Code configuration, so it can stay signed in to another account.
+    public var separateClaudeAccount: Bool?
     /// Hidden profiles keep their app, sign-in and history; only the strip, shortcuts and menu skip them.
     public var hiddenFromStrip: Bool?
     public var kind: ProfileProvider { provider ?? .codex }
+    public var usesSeparateClaudeAccount: Bool { kind == .claude && separateClaudeAccount == true }
     public var isShownInStrip: Bool { hiddenFromStrip != true }
     public var launcherPath: String?
     /// Opt-in, locally re-signed app. applicationPath continues to identify the signed source.
@@ -53,6 +56,15 @@ public struct Profile: Identifiable, Codable, Equatable, Sendable {
     public func home(in userHome: URL) -> URL {
         if kind != .codex { return userHome.appendingPathComponent("Library/Application Support/Account Dock/Companions/\(id)") }
         return userHome.appendingPathComponent(id == "default" ? ".codex" : ".codex-\(id)")
+    }
+
+    /// Claude Code honours CLAUDE_CONFIG_DIR for settings, history and its own sign-in. Nil means the shared ~/.claude.
+    public func claudeConfigDirectory(in userHome: URL) -> URL? {
+        usesSeparateClaudeAccount ? home(in: userHome).appendingPathComponent("claude-config") : nil
+    }
+
+    public func claudeUserDataDirectory(in userHome: URL) -> URL? {
+        usesSeparateClaudeAccount ? home(in: userHome).appendingPathComponent("electron-user-data") : nil
     }
 
     public static func validID(_ id: String) -> Bool {
@@ -121,26 +133,42 @@ public enum ProcessIdentity {
         return result
     }
 
-    public static func profileID(arguments: [String], profiles: [Profile], home: URL) -> String? {
-        guard let executable = arguments.first, ["ChatGPT", "Codex"].contains(URL(fileURLWithPath: executable).lastPathComponent) else { return nil }
+    /// nil: no user-data argument. .some(nil): an argument that cannot identify a profile.
+    static func userDataPath(_ arguments: [String]) -> String?? {
         var userDataPath: String?
         for (index, argument) in arguments.enumerated().dropFirst() {
             if argument.hasPrefix("--user-data-dir=") {
                 userDataPath = String(argument.dropFirst("--user-data-dir=".count))
             } else if argument == "--user-data-dir" {
-                guard index + 1 < arguments.count else { return nil }
+                guard index + 1 < arguments.count else { return .some(nil) }
                 userDataPath = arguments[index + 1]
             }
         }
-        if let path = userDataPath {
-            guard path.hasPrefix("/") else { return nil }
-            let normalized = URL(fileURLWithPath: path).standardizedFileURL.path
-            for profile in profiles where profile.id != "default" {
+        guard let path = userDataPath else { return nil }
+        guard path.hasPrefix("/") else { return .some(nil) }
+        return .some(URL(fileURLWithPath: path).standardizedFileURL.path)
+    }
+
+    public static func profileID(arguments: [String], profiles: [Profile], home: URL) -> String? {
+        guard let executable = arguments.first, ["ChatGPT", "Codex"].contains(URL(fileURLWithPath: executable).lastPathComponent) else { return nil }
+        if let path = userDataPath(arguments) {
+            guard let normalized = path else { return nil }
+            for profile in profiles where profile.id != "default" && profile.kind == .codex {
                 if normalized == profile.home(in: home).appendingPathComponent("electron-user-data").standardizedFileURL.path { return profile.id }
             }
             let stockPaths = ["Library/Application Support/Codex", "Library/Application Support/ChatGPT"].map { home.appendingPathComponent($0).path }
             return stockPaths.contains(normalized) && profiles.contains(where: { $0.id == "default" }) ? "default" : nil
         }
         return profiles.contains(where: { $0.id == "default" }) ? "default" : nil
+    }
+
+    /// Separate Claude accounts are identified only by their exact user-data folder; everything else belongs to the shared sign-in.
+    public static func claudeProfileID(arguments: [String], profiles: [Profile], home: URL) -> String? {
+        guard let executable = arguments.first, URL(fileURLWithPath: executable).lastPathComponent == "Claude" else { return nil }
+        let shared = profiles.first { $0.kind == .claude && !$0.usesSeparateClaudeAccount }?.id
+        guard let path = userDataPath(arguments) else { return shared }
+        guard let normalized = path else { return nil }
+        if let profile = profiles.first(where: { $0.claudeUserDataDirectory(in: home)?.standardizedFileURL.path == normalized }) { return profile.id }
+        return normalized == home.appendingPathComponent("Library/Application Support/Claude").standardizedFileURL.path ? shared : nil
     }
 }

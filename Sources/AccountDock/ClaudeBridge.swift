@@ -3,10 +3,12 @@ import DockCore
 
 struct ClaudeBridge {
     let home: URL
+    /// Nil is the shared ~/.claude configuration; separate Claude accounts pass their own CLAUDE_CONFIG_DIR.
+    var configDirectory: URL? = nil
     var directory: URL { home.appendingPathComponent("Library/Application Support/Account Dock/ClaudeBridge") }
     var helper: URL { directory.appendingPathComponent("ProfileDockClaude") }
-    var settings: URL { home.appendingPathComponent(".claude/settings.json") }
-    var originalStatusline: URL { directory.appendingPathComponent("original-statusline.json") }
+    var settings: URL { (configDirectory ?? home.appendingPathComponent(".claude")).appendingPathComponent("settings.json") }
+    var originalStatusline: URL { directory.appendingPathComponent(ClaudeBridgeSettings.originalStatuslineName(configDirectory: configDirectory?.standardizedFileURL.path)) }
     private func installed(_ events: [String]) -> Bool {
         guard let data = try? Data(contentsOf: settings), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let hooks = json["hooks"] as? [String: [[String: Any]]] else { return false }
