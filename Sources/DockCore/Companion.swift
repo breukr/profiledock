@@ -71,6 +71,8 @@ public struct ClaudeSession: Codable, Equatable, Identifiable, Sendable {
     public var inputTokens: Int?
     public var outputTokens: Int?
     public var costUSD: Double?
+    /// Subagents between SubagentStart and SubagentStop, keyed by agent ID. Only IDs and start times are kept.
+    public var subagents: [String: Date]?
     public enum State: String, Codable, Sendable { case idle, working, waiting, closed, failed }
     public struct Limit: Codable, Equatable, Sendable {
         public let id: String
@@ -91,7 +93,34 @@ public struct ClaudeSession: Codable, Equatable, Identifiable, Sendable {
     public static func validTTY(_ value: String) -> Bool {
         value.range(of: "^/dev/ttys[0-9]{3,}$", options: .regularExpression) != nil
     }
+    /// A subagent that never reports a stop (crash, interrupt) stops counting after this long.
+    public static let subagentStaleAfter: TimeInterval = 6 * 3600
+    private static let subagentLimit = 64
+
+    /// Session-level hooks carry no `agent_id`. Only the two subagent lifecycle events are kept from subagents,
+    /// so their tool calls and prompts never reach ProfileDock.
+    public static func isSessionPayload(_ payload: [String: Any]) -> Bool {
+        payload["agent_id"] == nil || subagentEvent(payload) != nil
+    }
+    private static func subagentEvent(_ payload: [String: Any]) -> (id: String, starting: Bool)? {
+        guard let name = payload["hook_event_name"] as? String, name == "SubagentStart" || name == "SubagentStop",
+              let id = payload["agent_id"] as? String, validID(id) else { return nil }
+        return (id, name == "SubagentStart")
+    }
+    public func runningSubagents(now: Date = Date()) -> Int {
+        (subagents ?? [:]).values.filter { now.timeIntervalSince($0) < Self.subagentStaleAfter }.count
+    }
+
     public mutating func apply(_ payload: [String: Any], statusline: Bool, now: Date) {
+        if !statusline, let event = Self.subagentEvent(payload) {
+            // Subagent events only maintain the running count. They never change the session's own state.
+            var running = (subagents ?? [:]).filter { now.timeIntervalSince($0.value) < Self.subagentStaleAfter }
+            if event.starting, running.count < Self.subagentLimit || running[event.id] != nil { running[event.id] = now }
+            else if !event.starting { running.removeValue(forKey: event.id) }
+            subagents = running.isEmpty ? nil : running
+            updatedAt = now
+            return
+        }
         guard payload["agent_id"] == nil else { return }
         updatedAt = now
         if statusline {
@@ -111,14 +140,14 @@ public struct ClaudeSession: Codable, Equatable, Identifiable, Sendable {
             return
         }
         switch payload["hook_event_name"] as? String {
-        case "SessionStart": state = .idle; completedAt = nil
+        case "SessionStart": state = .idle; completedAt = nil; subagents = nil
         case "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure": state = .working
         case "PermissionRequest": state = .waiting
         case "Notification":
             if ["permission_prompt", "elicitation_dialog", "idle_prompt"].contains(payload["notification_type"] as? String ?? "") { state = .waiting }
         case "Stop": state = .idle; completedAt = now
         case "StopFailure": state = .failed
-        case "SessionEnd": state = .closed
+        case "SessionEnd": state = .closed; subagents = nil
         default: break
         }
     }
@@ -132,7 +161,10 @@ public struct ClaudeSession: Codable, Equatable, Identifiable, Sendable {
 }
 
 public enum ClaudeBridgeSettings {
-    public static let events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "PostToolUseFailure", "Notification", "Stop", "StopFailure", "SessionEnd"]
+    public static let coreEvents = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "PostToolUseFailure", "Notification", "Stop", "StopFailure", "SessionEnd"]
+    /// Added after the first release. A connection without them still works, it just cannot see subagents.
+    public static let subagentEvents = ["SubagentStart", "SubagentStop"]
+    public static let events = coreEvents + subagentEvents
     public static func shellQuote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
     public static func command(helper: URL, mode: String) -> String { shellQuote(helper.path) + " " + mode }
     public static func isOurs(_ hook: [String: Any], helper: URL) -> Bool {
