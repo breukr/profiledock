@@ -15,10 +15,11 @@ extension ActivityMonitor {
                 guard let completed = session.completedAt else { return false }
                 return completed > (model.preferences.claudeReadAt?[session.id] ?? .distantPast)
             }.count
-            let summary = ActivitySummary(unread: unread, working: live.filter { $0.state == .working }.count,
+            let waitsForSubagents = model.preferences.activityWaitsForSubagents != false
+            // A paused session whose subagents still run is still working, so the strip and update checks agree with the cues.
+            let summary = ActivitySummary(unread: unread, working: live.filter { $0.state == .working || (waitsForSubagents && $0.state == .idle && $0.runningSubagents(now: now) > 0) }.count,
                 waiting: live.filter { $0.state == .waiting || $0.state == .failed }.count,
                 liveAvailable: !live.isEmpty, appOpen: open)
-            let waitsForSubagents = model.preferences.activityWaitsForSubagents != false
             for session in live {
                 let key = profile.id + ":" + session.id
                 if let previous = companionStates[key], previous != session.state {

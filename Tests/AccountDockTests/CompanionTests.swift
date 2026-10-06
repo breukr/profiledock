@@ -240,6 +240,19 @@ final class CompanionIntegrationTests: XCTestCase {
         XCTAssertEqual(run(waits: false, subagents: running), .finished)
         XCTAssertNil(run(waits: true, subagents: running))
         XCTAssertEqual(run(waits: true, subagents: ["old": Date(timeIntervalSinceNow: -ClaudeSession.subagentStaleAfter - 60)]), .finished, "A lost subagent never silences cues forever")
+        // The strip keeps showing a paused session as working while its subagents run.
+        let profile = model.preferences.profiles[0]
+        func working(waits: Bool?, subagents: [String: Date]?) -> Int? {
+            model.preferences.activityWaitsForSubagents = waits
+            var session = ClaudeSession(id: "fixture", project: "/project", processID: getpid(), processStarted: ClaudeProcess.startTime(getpid()))
+            session.state = .idle; session.subagents = subagents
+            model.companions.sessions = [session]
+            monitor.updateCompanions(model: model)
+            return monitor.entries[profile.id]?.working
+        }
+        XCTAssertEqual(working(waits: nil, subagents: running), 1)
+        XCTAssertEqual(working(waits: nil, subagents: nil), 0)
+        XCTAssertEqual(working(waits: false, subagents: running), 0)
     }
     @MainActor func testDragKeepsIslandOpenUntilCancelled() async throws {
         _ = NSApplication.shared
