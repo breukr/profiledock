@@ -549,6 +549,10 @@ struct SettingsView: View {
                         }.foregroundStyle(.secondary).padding(16)
                     }
                     Divider().padding(.leading, 16)
+                    SettingsRow(title: "Wait for subagents", detail: "Stay quiet when a Claude Code session pauses while its subagents are still working. You get one cue when everything is done.") {
+                        Toggle("Wait for subagents before signalling done", isOn: Binding(get: { model.preferences.activityWaitsForSubagents != false }, set: { model.preferences.activityWaitsForSubagents = $0; model.save() })).labelsHidden()
+                    }
+                    Divider().padding(.leading, 16)
                     HStack {
                         Text("Try a cue").foregroundStyle(.secondary)
                         Spacer()

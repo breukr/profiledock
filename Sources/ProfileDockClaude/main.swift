@@ -5,7 +5,7 @@ import DockCore
 let statusline = CommandLine.arguments.dropFirst().first == "statusline"
 let input = FileHandle.standardInput.readData(ofLength: 1_048_577)
 if input.count <= 1_048_576,
-   let payload = try? JSONSerialization.jsonObject(with: input) as? [String: Any], payload["agent_id"] == nil {
+   let payload = try? JSONSerialization.jsonObject(with: input) as? [String: Any], ClaudeSession.isSessionPayload(payload) {
     let process = ClaudeProcess.ancestor()
     var tty: String?
     if let process {
