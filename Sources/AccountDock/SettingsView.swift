@@ -262,7 +262,7 @@ struct SettingsView: View {
             ProfileDragHandle(model: model, profile: profile).frame(width: 18, height: 22)
             Button { editing = profile } label: {
                 HStack(spacing: 12) {
-                    ProfileBadge(model: model, profile: profile, size: 40, showStatus: false)
+                    ProfileBadge(model: model, profile: profile, size: 40, showStatus: false).opacity(profile.isShownInStrip ? 1 : 0.45)
                     VStack(alignment: .leading, spacing: 5) {
                         Text(profile.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(.primary).lineLimit(1)
                         HStack(spacing: 5) {
@@ -270,6 +270,7 @@ struct SettingsView: View {
                             Text(model.state(profile))
                             Text("·")
                             Text(profile.kind != .codex ? profile.kind.label : profile.dockApplicationPath != nil ? "Custom Dock icon" : profile.applicationPath == nil ? "Shared app" : "Separate app")
+                            if !profile.isShownInStrip { Text("·"); Text("Hidden from strip") }
                         }.font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }.contentShape(Rectangle())
@@ -278,6 +279,11 @@ struct SettingsView: View {
                 Text("⌥⌘\(shortcut + 1)").font(.system(size: 11)).foregroundStyle(.tertiary).frame(width: 38)
                     .accessibilityLabel("Option Command \(shortcut + 1)")
             }
+            Toggle(isOn: Binding(get: { profile.isShownInStrip }, set: { model.setShownInStrip(profile.id, $0) })) {
+                Image(systemName: profile.isShownInStrip ? "eye" : "eye.slash")
+            }.toggleStyle(.button).buttonStyle(.borderless).frame(width: 26)
+                .help(profile.isShownInStrip ? "Hide \(profile.name) from the strip, shortcuts and menu. Its app and data are kept." : "Show \(profile.name) in the strip again.")
+                .accessibilityLabel("Show \(profile.name) in strip")
             Button(isOpen ? "Show" : "Open") { model.select(profile) }
                 .buttonStyle(.bordered).frame(width: 62)
                 .disabled(model.opening.contains(profile.id) || model.closing.contains(profile.id))
@@ -314,6 +320,8 @@ struct SettingsView: View {
         Section("Organize") {
             Button("Move up", systemImage: "arrow.up") { model.move(profile.id, by: -1) }.disabled(index == 0)
             Button("Move down", systemImage: "arrow.down") { model.move(profile.id, by: 1) }.disabled(index + 1 == model.preferences.profiles.count)
+            if profile.isShownInStrip { Button("Hide from strip", systemImage: "eye.slash") { model.setShownInStrip(profile.id, false) } }
+            else { Button("Show in strip", systemImage: "eye") { model.setShownInStrip(profile.id, true) } }
         }
         Section {
             Button("Remove profile…", systemImage: "trash", role: .destructive) { trashData = false; removing = profile }
