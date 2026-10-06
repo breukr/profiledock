@@ -16,6 +16,10 @@ final class UsageStore: ObservableObject {
     @Published private(set) var reconnecting: Set<String> = []
     @Published private(set) var reconnectionMessages: [String: String] = [:]
     var onConnectionLost: ((Profile) -> Void)?
+    /// Muted connections keep their tile and menu actions but never drop the strip down.
+    @Published var mutedConnections: Set<String> = []
+    @Published var remindersEnabled = true
+    @Published private(set) var dismissedNotices: Set<String> = []
     private var nudgedConnections: Set<String> = []
     private var signInTasks: [String: Task<Void, Never>] = [:]
     private let signInRunner: any AccountSigningIn
@@ -122,7 +126,9 @@ final class UsageStore: ObservableObject {
                 self.entries[id]?.validatingIdentity = false
                 self.entries[id]?.isRefreshing = false
                 self.entries[id]?.error = failure
-                if failure.needsSignIn && self.nudgedConnections.insert(self.connectionKey(profile)).inserted {
+                let key = self.connectionKey(profile)
+                if failure.needsSignIn && self.nudgedConnections.insert(key).inserted && self.remindersEnabled && !self.mutedConnections.contains(key) {
+                    self.dismissedNotices.remove(key)
                     self.onConnectionLost?(profile)
                 }
             }
@@ -131,6 +137,12 @@ final class UsageStore: ObservableObject {
 
     func connectionKey(_ profile: Profile) -> String { profile.usesClaudeAccountUsage ? "claude-account" : "codex:" + profile.id }
     func isReconnecting(_ profile: Profile) -> Bool { reconnecting.contains(connectionKey(profile)) }
+    /// Accounts the strip's sign-in notice lists: disconnected, not muted and not set aside with Later.
+    var signInNotices: [Profile] {
+        guard remindersEnabled else { return [] }
+        return disconnectedProfiles.filter { !mutedConnections.contains(connectionKey($0)) && !dismissedNotices.contains(connectionKey($0)) }
+    }
+    func dismissNotices() { dismissedNotices.formUnion(signInNotices.map(connectionKey)) }
     var disconnectedProfiles: [Profile] {
         var seen = Set<String>()
         return profiles.filter { entries[$0.id]?.error?.needsSignIn == true && seen.insert(connectionKey($0)).inserted }

@@ -172,6 +172,7 @@ struct IslandView: View {
                     Image(systemName: "slider.horizontal.3").frame(width: 22, height: 20)
                 }.accessibilityLabel("Settings").help("Profiles, apps, and settings")
             }.buttonStyle(.plain).foregroundStyle(.white.opacity(0.65))
+            SignInNoticeBanner(usage: usage, model: model)
             profileGrid(profiles: Array(desktopProfiles.dropFirst(page * capacity).prefix(capacity)), columns: columns, tileWidth: tileWidth)
             ProfileGridPagination(model: model, page: $profilePage, count: desktopProfiles.count, capacity: capacity, terminals: false)
             if model.preferences.showTerminalsSection != false {
@@ -201,7 +202,11 @@ struct IslandView: View {
                 }
             }
             }
-            if model.displayedProfiles.isEmpty { Button("Add your first profile", action: settings).buttonStyle(.borderedProminent) }
+            if model.displayedProfiles.isEmpty {
+                if model.preferences.profiles.contains(where: { !$0.kind.usesTerminal }) {
+                    Button("All profiles are hidden · Show some", action: settings).buttonStyle(.bordered)
+                } else { Button("Add your first profile", action: settings).buttonStyle(.borderedProminent) }
+            }
             if model.preferences.showInsightsSection != false { InsightsDrawer(model: model, store: insights, presentation: presentation) }
             ProfileMessageNotice(model: model, compact: true)
         }
@@ -227,6 +232,8 @@ struct IslandView: View {
                     .contextMenu {
                         Button("Move earlier") { model.moveDisplayed(profile.id, by: -1) }.disabled(index == 0)
                         Button("Move later") { model.moveDisplayed(profile.id, by: 1) }.disabled(index == model.displayedProfiles.count - 1)
+                        Divider()
+                        Button("Hide from strip") { model.setShownInStrip(profile.id, false) }
                     }
             }
         }

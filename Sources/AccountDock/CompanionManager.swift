@@ -67,13 +67,20 @@ import DockCore
 
 @MainActor extension DockModel {
     var displayedProfiles: [Profile] {
-        preferences.profiles.filter { !$0.kind.usesTerminal } + (preferences.showTerminalsSection == false || preferences.terminalsExpanded == false ? [] : liveTerminalProfiles)
+        preferences.profiles.filter { !$0.kind.usesTerminal && $0.isShownInStrip } + (preferences.showTerminalsSection == false || preferences.terminalsExpanded == false ? [] : liveTerminalProfiles)
     }
     var liveTerminalProfiles: [Profile] {
-        preferences.profiles.filter { $0.kind.usesTerminal && companions.window(for: $0)?.agent != nil && ($0.discoveredTerminal != true || preferences.discoverTerminals != false) }
+        preferences.profiles.filter { $0.kind.usesTerminal && $0.isShownInStrip && companions.window(for: $0)?.agent != nil && ($0.discoveredTerminal != true || preferences.discoverTerminals != false) }
     }
     var activityProfiles: [Profile] {
-        preferences.profiles.filter { $0.kind != .codex || preferences.codexActivityEnabled != false }
+        preferences.profiles.filter { $0.isShownInStrip && ($0.kind != .codex || preferences.codexActivityEnabled != false) }
+    }
+    /// Usage polling and sign-in reminders follow the strip, so a hidden profile stays quiet.
+    var stripProfiles: [Profile] { preferences.profiles.filter(\.isShownInStrip) }
+    func setShownInStrip(_ id: String, _ shown: Bool) {
+        guard let index = preferences.profiles.firstIndex(where: { $0.id == id }), preferences.profiles[index].isShownInStrip != shown else { return }
+        preferences.profiles[index].hiddenFromStrip = shown ? nil : true
+        save()
     }
     func setTerminalsExpanded(_ expanded: Bool) {
         preferences.terminalsExpanded = expanded; save(); companions.refresh()
@@ -286,6 +293,9 @@ import DockCore
         if preferences.claudeReadAt == nil { preferences.claudeReadAt = [:] }
         for session in companions.sessions(for: profile) { preferences.claudeReadAt?[session.id] = Date() }
         save()
+    }
+    func muteSignInReminders(for key: String) {
+        preferences.mutedSignInReminders = Array(Set((preferences.mutedSignInReminders ?? []) + [key])).sorted(); save()
     }
     func move(_ id: String, to target: String) {
         let ordered = ProfileOrder.move(preferences.profiles, id: id, to: target)

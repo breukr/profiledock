@@ -262,7 +262,7 @@ struct SettingsView: View {
             ProfileDragHandle(model: model, profile: profile).frame(width: 18, height: 22)
             Button { editing = profile } label: {
                 HStack(spacing: 12) {
-                    ProfileBadge(model: model, profile: profile, size: 40, showStatus: false)
+                    ProfileBadge(model: model, profile: profile, size: 40, showStatus: false).opacity(profile.isShownInStrip ? 1 : 0.45)
                     VStack(alignment: .leading, spacing: 5) {
                         Text(profile.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(.primary).lineLimit(1)
                         HStack(spacing: 5) {
@@ -270,6 +270,7 @@ struct SettingsView: View {
                             Text(model.state(profile))
                             Text("·")
                             Text(profile.kind != .codex ? profile.kind.label : profile.dockApplicationPath != nil ? "Custom Dock icon" : profile.applicationPath == nil ? "Shared app" : "Separate app")
+                            if !profile.isShownInStrip { Text("·"); Text("Hidden from strip") }
                         }.font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }.contentShape(Rectangle())
@@ -278,6 +279,11 @@ struct SettingsView: View {
                 Text("⌥⌘\(shortcut + 1)").font(.system(size: 11)).foregroundStyle(.tertiary).frame(width: 38)
                     .accessibilityLabel("Option Command \(shortcut + 1)")
             }
+            Toggle(isOn: Binding(get: { profile.isShownInStrip }, set: { model.setShownInStrip(profile.id, $0) })) {
+                Image(systemName: profile.isShownInStrip ? "eye" : "eye.slash")
+            }.toggleStyle(.button).buttonStyle(.borderless).frame(width: 26)
+                .help(profile.isShownInStrip ? "Hide \(profile.name) from the strip, shortcuts and menu. Its app and data are kept." : "Show \(profile.name) in the strip again.")
+                .accessibilityLabel("Show \(profile.name) in strip")
             Button(isOpen ? "Show" : "Open") { model.select(profile) }
                 .buttonStyle(.bordered).frame(width: 62)
                 .disabled(model.opening.contains(profile.id) || model.closing.contains(profile.id))
@@ -314,6 +320,8 @@ struct SettingsView: View {
         Section("Organize") {
             Button("Move up", systemImage: "arrow.up") { model.move(profile.id, by: -1) }.disabled(index == 0)
             Button("Move down", systemImage: "arrow.down") { model.move(profile.id, by: 1) }.disabled(index + 1 == model.preferences.profiles.count)
+            if profile.isShownInStrip { Button("Hide from strip", systemImage: "eye.slash") { model.setShownInStrip(profile.id, false) } }
+            else { Button("Show in strip", systemImage: "eye") { model.setShownInStrip(profile.id, true) } }
         }
         Section {
             Button("Remove profile…", systemImage: "trash", role: .destructive) { trashData = false; removing = profile }
@@ -539,6 +547,15 @@ struct SettingsView: View {
                             Slider(value: Binding(get: { model.preferences.activitySoundVolume ?? 0.18 }, set: { model.preferences.activitySoundVolume = $0; model.save() }), in: 0...0.5).accessibilityLabel("Activity sound volume")
                             Image(systemName: "speaker.wave.2")
                         }.foregroundStyle(.secondary).padding(16)
+                    }
+                    Divider().padding(.leading, 16)
+                    SettingsRow(title: "Sign-in reminders", detail: (model.preferences.mutedSignInReminders ?? []).isEmpty ? "Drop the strip down when an account needs to sign in again." : "Drop the strip down when an account needs to sign in again. Muted for \((model.preferences.mutedSignInReminders ?? []).count) account\((model.preferences.mutedSignInReminders ?? []).count == 1 ? "" : "s").") {
+                        HStack {
+                            if !(model.preferences.mutedSignInReminders ?? []).isEmpty {
+                                Button("Unmute all") { model.preferences.mutedSignInReminders = nil; model.save() }.controlSize(.small)
+                            }
+                            Toggle("Show sign-in reminders", isOn: Binding(get: { model.preferences.signInReminders != false }, set: { model.preferences.signInReminders = $0; model.save() })).labelsHidden()
+                        }
                     }
                     Divider().padding(.leading, 16)
                     SettingsRow(title: "Wait for subagents", detail: "Stay quiet when a Claude Code session pauses while its subagents are still working. You get one cue when everything is done.") {

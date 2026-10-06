@@ -17,8 +17,11 @@ public struct Profile: Identifiable, Codable, Equatable, Sendable {
     public var claudeSessionID: String?
     /// A Claude Desktop entry with its own app data and Claude Code configuration, so it can stay signed in to another account.
     public var separateClaudeAccount: Bool?
+    /// Hidden profiles keep their app, sign-in and history; only the strip, shortcuts and menu skip them.
+    public var hiddenFromStrip: Bool?
     public var kind: ProfileProvider { provider ?? .codex }
     public var usesSeparateClaudeAccount: Bool { kind == .claude && separateClaudeAccount == true }
+    public var isShownInStrip: Bool { hiddenFromStrip != true }
     public var launcherPath: String?
     /// Opt-in, locally re-signed app. applicationPath continues to identify the signed source.
     public var dockApplicationPath: String?
