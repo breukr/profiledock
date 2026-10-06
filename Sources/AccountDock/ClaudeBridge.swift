@@ -9,13 +9,16 @@ struct ClaudeBridge {
     var helper: URL { directory.appendingPathComponent("ProfileDockClaude") }
     var settings: URL { (configDirectory ?? home.appendingPathComponent(".claude")).appendingPathComponent("settings.json") }
     var originalStatusline: URL { directory.appendingPathComponent(ClaudeBridgeSettings.originalStatuslineName(configDirectory: configDirectory?.standardizedFileURL.path)) }
-    var enabled: Bool {
+    private func installed(_ events: [String]) -> Bool {
         guard let data = try? Data(contentsOf: settings), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let hooks = json["hooks"] as? [String: [[String: Any]]] else { return false }
-        return ClaudeBridgeSettings.events.allSatisfy { event in
+        return events.allSatisfy { event in
             (hooks[event] ?? []).contains { group in ((group["hooks"] as? [[String: Any]]) ?? []).contains { ClaudeBridgeSettings.isOurs($0, helper: helper) } }
         } && FileManager.default.isExecutableFile(atPath: helper.path)
     }
+    var enabled: Bool { installed(ClaudeBridgeSettings.coreEvents) }
+    /// False for a connection made before subagent tracking existed. Connecting again adds the hooks and a newer helper.
+    var tracksSubagents: Bool { installed(ClaudeBridgeSettings.events) }
     var hasCustomStatusline: Bool {
         guard let data = try? Data(contentsOf: settings), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let status = json["statusLine"] as? [String: Any] else { return false }

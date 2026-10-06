@@ -62,6 +62,58 @@ final class CompanionTests: XCTestCase {
         session.apply(["hook_event_name": "SessionEnd"], statusline: false, now: now)
         XCTAssertEqual(session.state, .closed)
     }
+    func testSubagentEventsCountRunningAgentsWithoutChangingSessionState() {
+        let now = Date()
+        var session = ClaudeSession(id: "test", project: "/project", now: now)
+        session.apply(["hook_event_name": "UserPromptSubmit"], statusline: false, now: now)
+        session.apply(["hook_event_name": "SubagentStart", "agent_id": "a1", "agent_type": "Explore"], statusline: false, now: now)
+        session.apply(["hook_event_name": "SubagentStart", "agent_id": "a2"], statusline: false, now: now)
+        session.apply(["hook_event_name": "SubagentStart", "agent_id": "a2"], statusline: false, now: now)
+        XCTAssertEqual(session.runningSubagents(now: now), 2)
+        XCTAssertEqual(session.state, .working)
+        // A subagent's own tool calls are still ignored.
+        session.apply(["hook_event_name": "PermissionRequest", "agent_id": "a1"], statusline: false, now: now)
+        XCTAssertEqual(session.state, .working)
+        session.apply(["hook_event_name": "Stop"], statusline: false, now: now)
+        XCTAssertEqual(session.state, .idle)
+        XCTAssertEqual(session.runningSubagents(now: now), 2, "The main turn ending does not end its background subagents")
+        session.apply(["hook_event_name": "SubagentStop", "agent_id": "a1"], statusline: false, now: now)
+        session.apply(["hook_event_name": "SubagentStop", "agent_id": "unknown"], statusline: false, now: now)
+        XCTAssertEqual(session.runningSubagents(now: now), 1)
+        session.apply(["hook_event_name": "SubagentStop", "agent_id": "a2"], statusline: false, now: now)
+        XCTAssertEqual(session.runningSubagents(now: now), 0)
+        XCTAssertNil(session.subagents)
+    }
+    func testSubagentCountIgnoresStaleEntriesAndResetsWithTheSession() {
+        let now = Date()
+        var session = ClaudeSession(id: "test", project: "/project", now: now)
+        session.apply(["hook_event_name": "SubagentStart", "agent_id": "lost"], statusline: false, now: now)
+        XCTAssertEqual(session.runningSubagents(now: now.addingTimeInterval(ClaudeSession.subagentStaleAfter - 1)), 1)
+        XCTAssertEqual(session.runningSubagents(now: now.addingTimeInterval(ClaudeSession.subagentStaleAfter + 1)), 0)
+        session.apply(["hook_event_name": "SessionEnd"], statusline: false, now: now)
+        XCTAssertEqual(session.runningSubagents(now: now), 0)
+        session.apply(["hook_event_name": "SubagentStart", "agent_id": "again"], statusline: false, now: now)
+        session.apply(["hook_event_name": "SessionStart"], statusline: false, now: now)
+        XCTAssertEqual(session.runningSubagents(now: now), 0)
+        session.apply(["hook_event_name": "SubagentStart", "agent_id": "../escape"], statusline: false, now: now)
+        XCTAssertEqual(session.runningSubagents(now: now), 0, "Agent IDs use the same validation as session IDs")
+    }
+    func testOnlySessionPayloadsAndSubagentLifecycleReachTheStore() {
+        XCTAssertTrue(ClaudeSession.isSessionPayload(["hook_event_name": "Stop"]))
+        XCTAssertTrue(ClaudeSession.isSessionPayload(["hook_event_name": "SubagentStart", "agent_id": "a1"]))
+        XCTAssertTrue(ClaudeSession.isSessionPayload(["hook_event_name": "SubagentStop", "agent_id": "a1"]))
+        XCTAssertFalse(ClaudeSession.isSessionPayload(["hook_event_name": "PreToolUse", "agent_id": "a1"]))
+        XCTAssertFalse(ClaudeSession.isSessionPayload(["hook_event_name": "Stop", "agent_id": "a1"]))
+        XCTAssertFalse(ClaudeSession.isSessionPayload(["hook_event_name": "SubagentStop", "agent_id": 7]))
+    }
+    func testBridgeInstallsSubagentHooksAndRemovesThemOnDisconnect() throws {
+        let helper = URL(fileURLWithPath: "/fixture/helper")
+        let enabled = try JSONSerialization.jsonObject(with: ClaudeBridgeSettings.updating(nil, helper: helper, enabled: true)) as? [String: Any]
+        let hooks = try XCTUnwrap(enabled?["hooks"] as? [String: Any])
+        XCTAssertNotNil(hooks["SubagentStart"]); XCTAssertNotNil(hooks["SubagentStop"])
+        let removed = try ClaudeBridgeSettings.updating(ClaudeBridgeSettings.updating(nil, helper: helper, enabled: true), helper: helper, enabled: false)
+        XCTAssertTrue(((try JSONSerialization.jsonObject(with: removed) as? [String: Any])?["hooks"] as? [String: Any])?.isEmpty == true)
+    }
     func testMissingExpiredAndMalformedUsageNeverBecomesZero() {
         let now = Date(timeIntervalSince1970: 1000)
         var session = ClaudeSession(id: "test", project: "/project", now: now)

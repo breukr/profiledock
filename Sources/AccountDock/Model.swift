@@ -18,6 +18,8 @@ struct Preferences: Codable {
     var activityCues: Bool?
     var activitySounds: Bool?
     var activitySoundVolume: Double?
+    /// Nil means on: a Claude Code session is not reported done while its subagents still run.
+    var activityWaitsForSubagents: Bool?
     var placement: DockPlacement?
     var floatingPositions: [String: FloatingPosition]?
     var showDockIcon: Bool?
