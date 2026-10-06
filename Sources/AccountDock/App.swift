@@ -53,7 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             return
         }
         applyVisibility()
-        usage.configure(previewMode ? [] : model.preferences.profiles)
+        usage.configure(previewMode ? [] : model.stripProfiles)
         insights.prepare(profiles: model.preferences.profiles, home: model.home)
         if !previewMode {
             usage.refreshAll()
@@ -101,7 +101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if model.preferences.profiles.isEmpty || previewMode || CommandLine.arguments.contains("--settings") || CommandLine.arguments.contains("--context-settings") || CommandLine.arguments.contains("--search-chats") { showSettings() }
         model.onPreferencesChanged = { [weak self] in
             guard let self else { return }
-            self.usage.configure(self.previewMode ? [] : self.model.preferences.profiles)
+            self.usage.configure(self.previewMode ? [] : self.model.stripProfiles)
             self.insights.prepare(profiles: self.model.preferences.profiles, home: self.model.home)
             self.activity.configure(self.previewMode ? [] : self.model.activityProfiles, running: Set(self.model.running.keys))
             if !self.previewMode, self.islands.first?.layout.placement != self.model.placement { self.cues.dismiss(); self.rebuildIslands() }

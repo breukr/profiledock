@@ -15,7 +15,10 @@ public struct Profile: Identifiable, Codable, Equatable, Sendable {
     public var terminalProcessStarted: Double?
     public var terminalAgent: TerminalAgent?
     public var claudeSessionID: String?
+    /// Hidden profiles keep their app, sign-in and history; only the strip, shortcuts and menu skip them.
+    public var hiddenFromStrip: Bool?
     public var kind: ProfileProvider { provider ?? .codex }
+    public var isShownInStrip: Bool { hiddenFromStrip != true }
     public var launcherPath: String?
     /// Opt-in, locally re-signed app. applicationPath continues to identify the signed source.
     public var dockApplicationPath: String?
