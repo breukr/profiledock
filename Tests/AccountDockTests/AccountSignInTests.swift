@@ -25,6 +25,21 @@ final class AccountSignInTests: XCTestCase {
         XCTAssertNil(command.environment["ANTHROPIC_API_KEY"])
     }
 
+    func testOnlySeparateClaudeAccountsSignInToTheirOwnConfiguration() throws {
+        let home = URL(fileURLWithPath: "/tmp/test"), claude = home.appendingPathComponent(".local/bin/claude").path
+        var separate = Profile(id: "profile-work", name: "Work", color: "377CF6"); separate.provider = .claude; separate.separateClaudeAccount = true
+        let command = try AccountSignInCommand.make(profile: separate, home: home, executableExists: { $0 == claude })
+        XCTAssertEqual(command.arguments, ["auth", "login", "--claudeai"])
+        XCTAssertEqual(command.environment["CLAUDE_CONFIG_DIR"], separate.claudeConfigPath(in: home))
+        XCTAssertEqual(command.environment["CLAUDE_CONFIG_DIR"], home.appendingPathComponent("Library/Application Support/Account Dock/Companions/profile-work/claude-config").path)
+        var shared = separate; shared.separateClaudeAccount = nil
+        XCTAssertNil(try AccountSignInCommand.make(profile: shared, home: home, executableExists: { $0 == claude }).environment["CLAUDE_CONFIG_DIR"])
+        var code = Profile(id: "project", name: "Project", color: "377CF6"); code.provider = .claudeCode
+        XCTAssertNil(try AccountSignInCommand.make(profile: code, home: home, executableExists: { $0 == claude }).environment["CLAUDE_CONFIG_DIR"])
+        let codex = try AccountSignInCommand.make(profile: Profile(id: "lamboo", name: "Lamboo", color: "377CF6"), home: home, executableExists: { _ in true })
+        XCTAssertNil(codex.environment["CLAUDE_CONFIG_DIR"])
+    }
+
     func testInvalidAndUnsupportedProfilesCannotStartLogin() {
         XCTAssertThrowsError(try AccountSignInCommand.make(profile: Profile(id: "../other", name: "Invalid", color: "377CF6"), home: URL(fileURLWithPath: "/tmp"), executableExists: { _ in true }))
         var terminal = Profile(id: "terminal", name: "Terminal", color: "377CF6"); terminal.provider = .terminal

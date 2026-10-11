@@ -41,9 +41,11 @@ Start a new local Claude Code session after connecting. Hook events report worki
 
 Claude subscription usage comes directly from the signed-in Claude Code account, independently of terminal status-line reports. ProfileDock refreshes at startup, after wake, every minute while the strip is open, and every five minutes while it is closed. Refresh also requests current data; requests for tiles sharing an account are combined. Rate limits pause retries. Account changes clear previous readings, and network failures retain the last reading with a stale marker.
 
-All Claude tiles using the shared sign-in show the local Claude Code account's shared five-hour and weekly limits. If Claude Desktop uses a different account, these are still the Code account's limits. An expired or missing Code sign-in is reported explicitly; ProfileDock never refreshes or rewrites Claude's credentials itself.
+All Claude tiles using the shared sign-in show the local Claude Code account's shared five-hour and weekly limits. If Claude Desktop uses a different account, these are still the Code account's limits. A separate Claude account reads its own Claude Code sign-in instead; see [Separate Claude accounts](#separate-claude-accounts). Each account has its own usage client, so requests, rate-limit pauses, nudges and reconnection never mix accounts. ProfileDock never refreshes or rewrites Claude's credentials itself.
 
-Saved resets are separate from quota reset times. Choose **Connect saved resets** in a Claude tile or **Profiles → Claude usage connector**, then sign in to Claude. ProfileDock keeps its own WebKit session and checks that it can access the organization verified through Claude Code. It imports no cookies from browsers or Claude Desktop. Available grants, remaining counts and expiry dates are read automatically. Unsupported, signed-out or malformed inventory is unknown, never zero. A saved reset can be banked even if Claude will only allow its use after reaching a limit. ProfileDock does not consume resets. Disconnect removes its web session and stops this check.
+An expired access token is not treated as a sign-in failure while Claude Code still holds a refresh token, because Claude Code renews the token the next time it runs. This is common on days when only the Claude Desktop Code tab is used: that tab passes its own token to sessions and does not renew the Claude Code sign-in. The tile keeps the last verified reading with its stale marker and shows **Waiting for Claude Code to refresh** with **Refresh**; **Reconnect** remains available as a secondary action, without a nudge or sign-in banner. Only the presence of the refresh token is checked. Sign-in is still required, with a nudge, when the credential is missing, has no access token, lacks the `user:profile` scope, has expired without a refresh token, or when Anthropic rejects an unexpired token.
+
+Saved resets are separate from quota reset times. Choose **Connect saved resets** in a Claude tile or **Profiles → Claude usage connector**, then sign in to Claude. ProfileDock keeps its own WebKit session and checks that it can access the organization verified through Claude Code. The shared sign-in uses ProfileDock's default web session, so existing connections are kept. Each separate Claude account has its own persistent web session, identified by a stable value derived from its configuration folder, and its organization is verified against that account's Claude Code sign-in. A separate account connects from its own tile and can disconnect from the tile's context menu. It imports no cookies from browsers or Claude Desktop. Available grants, remaining counts and expiry dates are read automatically. Unsupported, signed-out or malformed inventory is unknown, never zero. A saved reset can be banked even if Claude will only allow its use after reaching a limit. ProfileDock does not consume resets. Disconnect removes its web session and stops this check.
 
 The optional status-line bridge still records local counters for session insights. An existing custom status-line command receives the original input and keeps its output; these reports never replace independently refreshed account usage.
 
@@ -72,7 +74,9 @@ All accounts use the same Claude installation and update together. They share th
 
 Connecting Claude Code installs the same activity hooks in each separate account's `claude-config/settings.json`. The hook helper records the session's `CLAUDE_CONFIG_DIR`, so activity appears only on its own tile. Each configuration keeps its own saved status line. Search Chats reads `claude-config/projects`, and the context connection writes `claude-config/.claude.json` and `claude-config/skills`.
 
-Limits for a separate account come from its Claude Code status line when one has reported. The account endpoint, Reconnect and saved resets remain tied to the shared Claude Code sign-in and are never shown on a separate account's tile. Usage Insights covers the shared configuration only.
+Account usage for a separate account comes from the same Anthropic usage endpoint as the shared sign-in, using that account's own Claude Code credential. Claude Code stores it in the login Keychain as a generic password named `Claude Code-credentials-<hash>`, where `<hash>` is the first eight hexadecimal characters of the SHA-256 of the exact `CLAUDE_CONFIG_DIR` string (NFC-normalized, without resolving trailing slashes or symlinks), under the macOS user name. ProfileDock derives the name from the same string it passes at launch, reads it through `/usr/bin/security` like the shared item, and falls back to Claude Code's documented `claude-config/.credentials.json` file (64 KB limit). Credentials are never logged or stored by ProfileDock.
+
+If Claude Code has not signed in for that account yet, the tile shows **Connect usage** instead of a sign-in warning. Connect, like Reconnect, runs `claude auth login --claudeai` with `CLAUDE_CONFIG_DIR` set to the account's configuration folder, so the credential lands in the account's own Keychain item. While the account endpoint has no reading, the account's Claude Code status-line report is shown as a fallback when one exists; it is labelled as such and never replaces an endpoint reading. Stale-token handling, nudges and saved resets work per account as described in [Activity and subscription usage](#activity-and-subscription-usage). Usage Insights covers the shared configuration only.
 
 Acceptance testing still required: Claude Desktop sign-in through a browser hands control back through a `claude://` link, which macOS may deliver to the instance that registered first. If sign-in completes in the wrong window, quit the other Claude windows during the first sign-in, or use email sign-in. Whether the Desktop Code tab honors `CLAUDE_CONFIG_DIR` from its launch environment is not yet verified.
 
@@ -84,7 +88,7 @@ Common launch, focus, ordering, profile artwork, activity, search and insights c
 | --- | --- | --- |
 | Separate account containers | Existing profile homes | Shared Claude sign-in or separate Claude Desktop accounts; project/window entries |
 | Live task activity | Local Work/Codex | Connected local Claude Code |
-| Subscription windows | Account endpoint | Claude Code account endpoint |
+| Subscription windows | Account endpoint | Claude Code account endpoint, per Claude account |
 | Saved reset credits | When supplied by Codex | Claude web connection, when supplied |
 | App updates | ProfileDock-managed OpenAI app groups | Claude and macOS manage their own updates |
 | Custom native running Dock copies | Existing experimental option | Not provided; notch and Finder artwork remain configurable |
@@ -111,13 +115,16 @@ ProfileDock checks Claude and Codex connections every five minutes in the backgr
 and every minute while the strip is open. Expired or missing sign-in produces one
 nonactivating nudge per disconnected account, plus a persistent **Sign-in needed**
 label and **Reconnect** action in the tile and menu. Network failures and provider
-rate limits continue using normal retries without a sign-in nudge.
+rate limits continue using normal retries without a sign-in nudge. An expired Claude
+access token that Claude Code can still renew also gets no nudge; see
+[Activity and subscription usage](#activity-and-subscription-usage).
 
 Reconnect runs the installed provider's official subscription login and opens its
 browser sign-in. Finish with the account belonging to that profile; ProfileDock then
 refreshes its limits automatically. Codex login uses only the selected profile's
 home and writes the same local credential file used by the usage reader. Claude
-tiles share one Claude Code account and one reconnection flow. Only one Codex login
+tiles on the shared sign-in share one Claude Code account and one reconnection flow;
+each separate Claude account has its own, scoped to its `CLAUDE_CONFIG_DIR`. Only one Codex login
 can run at a time because its browser callback uses a shared local port. Cancellation
 and a ten-minute timeout stop only the login subprocess. No credential, login URL
 or authorization code is logged. This flow does not connect saved resets, which

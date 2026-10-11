@@ -40,6 +40,58 @@ final class ClaudeUsageClientTests: XCTestCase {
         XCTAssertEqual(try ClaudeUsageCredential.parse(valid).plan, "max")
         XCTAssertThrowsError(try ClaudeUsageCredential.parse(valid, now: Date(timeIntervalSince1970: 4102444801)))
         XCTAssertThrowsError(try ClaudeUsageCredential.parse(Data(#"{"apiKey":"fixture"}"#.utf8)))
+        let later = Date(timeIntervalSince1970: 4102444801)
+        func failure(_ json: String) -> UsageLoadError? {
+            do { _ = try ClaudeUsageCredential.parse(Data(json.utf8), now: later); return nil } catch { return error as? UsageLoadError }
+        }
+        // Expired with a refresh token: Claude Code renews it on its next run, so this is stale rather than signed out.
+        XCTAssertEqual(failure(#"{"claudeAiOauth":{"accessToken":"fixture","refreshToken":"fixture-refresh","expiresAt":4102444800000,"scopes":["user:profile"]}}"#), .claudeTokenStale)
+        XCTAssertFalse(UsageLoadError.claudeTokenStale.needsSignIn)
+        XCTAssertTrue(UsageLoadError.claudeTokenStale.offersReconnect)
+        XCTAssertFalse(UsageLoadError.claudeTokenStale.clearsSnapshot)
+        XCTAssertEqual(UsageLoadError.claudeTokenStale.statusLabel, "Waiting for Claude Code to refresh")
+        // Expired without a usable refresh token, or missing scope or token, still needs sign-in.
+        XCTAssertEqual(failure(#"{"claudeAiOauth":{"accessToken":"fixture","expiresAt":4102444800000,"scopes":["user:profile"]}}"#), .claudeSignInRequired)
+        XCTAssertEqual(failure(#"{"claudeAiOauth":{"accessToken":"fixture","refreshToken":"","expiresAt":4102444800000,"scopes":["user:profile"]}}"#), .claudeSignInRequired)
+        XCTAssertEqual(failure(#"{"claudeAiOauth":{"accessToken":"fixture","refreshToken":"fixture-refresh","expiresAt":4102444800000,"scopes":["user:inference"]}}"#), .claudeSignInRequired)
+        XCTAssertEqual(failure(#"{"claudeAiOauth":{"refreshToken":"fixture-refresh","expiresAt":4102444800000,"scopes":["user:profile"]}}"#), .claudeSignInRequired)
+        XCTAssertEqual(UsageLoadError.claudeSignInRequired.statusLabel, "Sign-in needed")
+    }
+
+    func testCredentialLookupUsesAccountKeychainItemThenConfigFile() throws {
+        let valid = Data(#"{"claudeAiOauth":{"accessToken":"fixture","expiresAt":4102444800000,"scopes":["user:profile"],"subscriptionType":"pro"}}"#.utf8)
+        let config = FileManager.default.temporaryDirectory.appendingPathComponent("claude-config-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: config) }
+        var requested: [String] = []
+        // Shared sign-in: the unsuffixed item only, never a file fallback.
+        XCTAssertEqual(try ClaudeUsageCredential.read(configDirectory: nil, keychain: { requested.append($0); return valid }).plan, "pro")
+        do { _ = try ClaudeUsageCredential.read(configDirectory: nil, keychain: { _ in nil }); XCTFail("Missing shared sign-in") }
+        catch { XCTAssertEqual(error as? UsageLoadError, .claudeSignInRequired) }
+        // Separate account: its hashed item first.
+        XCTAssertEqual(try ClaudeUsageCredential.read(configDirectory: config.path, keychain: { requested.append($0); return valid }).plan, "pro")
+        XCTAssertEqual(requested, ["Claude Code-credentials", ClaudeCredentialService.name(configDirectory: config.path)])
+        // No item and no file: connect usage, not a sign-in nag.
+        do { _ = try ClaudeUsageCredential.read(configDirectory: config.path, keychain: { _ in nil }); XCTFail("Missing separate credential") }
+        catch { XCTAssertEqual(error as? UsageLoadError, .claudeConnectionNeeded) }
+        XCTAssertFalse(UsageLoadError.claudeConnectionNeeded.needsSignIn)
+        XCTAssertTrue(UsageLoadError.claudeConnectionNeeded.offersReconnect)
+        XCTAssertEqual(UsageLoadError.claudeConnectionNeeded.statusLabel, "Connect usage")
+        // Claude Code's documented file fallback, parsed the same way.
+        let file = config.appendingPathComponent(".credentials.json")
+        try valid.write(to: file)
+        XCTAssertEqual(try ClaudeUsageCredential.read(configDirectory: config.path, keychain: { _ in nil }).plan, "pro")
+        try Data(repeating: 0x20, count: 65537).write(to: file)
+        do { _ = try ClaudeUsageCredential.read(configDirectory: config.path, keychain: { _ in nil }); XCTFail("Oversized file must be ignored") }
+        catch { XCTAssertEqual(error as? UsageLoadError, .claudeConnectionNeeded) }
+    }
+
+    func testRejectedUnexpiredTokenStillRequiresSignIn() async throws {
+        let credential = credential()
+        ClaudeResponseProtocol.handler = { _ in (401, Data(), [:]) }
+        let client = ClaudeUsageClient(session: session(), credentials: { credential }, resetFetcher: { _ in nil })
+        do { _ = try await client.identity(for: profile); XCTFail("A rejected token must require sign-in") }
+        catch { XCTAssertEqual(error as? UsageLoadError, .claudeSignInRequired) }
     }
 
     func testMultipleTilesShareAccountRequestAndUnknownResetBalanceStaysUnknown() async throws {

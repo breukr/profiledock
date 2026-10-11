@@ -56,8 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         insights.prepare(profiles: model.preferences.profiles, home: model.home)
         if !previewMode {
             usage.refreshAll()
-            NotificationCenter.default.publisher(for: ClaudeResetConnection.changed).sink { [weak self] _ in
-                self?.usage.claudeConnectionChanged()
+            NotificationCenter.default.publisher(for: ClaudeResetConnection.changed).sink { [weak self] note in
+                self?.usage.claudeConnectionChanged(configDirectory: note.userInfo?[ClaudeResetConnection.configDirectoryKey] as? String)
             }.store(in: &subscriptions)
             NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification).sink { [weak self] _ in
                 self?.usage.refreshAll()
@@ -249,7 +249,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if !usage.disconnectedProfiles.isEmpty {
             menu.addItem(.sectionHeader(title: "Sign-in needed"))
             for profile in usage.disconnectedProfiles {
-                let title = profile.usesClaudeAccountUsage ? "Reconnect Claude account…" : "Reconnect \(profile.name)…"
+                let title = profile.usesClaudeAccountUsage && !profile.usesSeparateClaudeAccount ? "Reconnect Claude account…" : "Reconnect \(profile.name)…"
                 let item = menu.addItem(withTitle: title, action: #selector(reconnectAccount(_:)), keyEquivalent: "")
                 item.target = self; item.representedObject = profile.id
             }
