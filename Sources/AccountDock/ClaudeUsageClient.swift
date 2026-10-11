@@ -24,11 +24,22 @@ struct ClaudeUsageCredential: Sendable {
     }
     static func digest(_ value: String) -> String { SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined() }
 
-    static func read() throws -> Self {
-        // Use the same narrowly scoped Keychain reader as Claude Code; never log or persist its output.
+    /// Reads the credential Claude Code keeps for `configDirectory` (nil: the shared ~/.claude sign-in).
+    /// A separate account falls back to Claude Code's documented `<config>/.credentials.json` file.
+    static func read(configDirectory: String? = nil, keychain: (String) throws -> Data? = keychainItem) throws -> Self {
+        if let data = try keychain(ClaudeCredentialService.name(configDirectory: configDirectory)) { return try parse(data) }
+        guard let configDirectory else { throw UsageLoadError.claudeSignInRequired }
+        let file = URL(fileURLWithPath: configDirectory).appendingPathComponent(".credentials.json")
+        guard let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 65536,
+              let data = try? Data(contentsOf: file) else { throw UsageLoadError.claudeConnectionNeeded }
+        return try parse(data)
+    }
+
+    /// Use the same narrowly scoped Keychain reader as Claude Code; never log or persist its output. Nil when absent or unreadable.
+    static func keychainItem(service: String) throws -> Data? {
         let process = Process(), output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        process.arguments = ["find-generic-password", "-a", NSUserName(), "-s", "Claude Code-credentials", "-w"]
+        process.arguments = ["find-generic-password", "-a", NSUserName(), "-s", service, "-w"]
         process.standardOutput = output; process.standardError = FileHandle.nullDevice
         try process.run()
         let timeout = DispatchWorkItem { if process.isRunning { process.terminate() } }
@@ -37,8 +48,7 @@ struct ClaudeUsageCredential: Sendable {
         let data = output.fileHandleForReading.readData(ofLength: 65537)
         if data.count > 65536, process.isRunning { process.terminate() }
         process.waitUntilExit()
-        guard process.terminationStatus == 0, data.count <= 65536 else { throw UsageLoadError.claudeSignInRequired }
-        return try parse(data)
+        return process.terminationStatus == 0 && data.count <= 65536 ? data : nil
     }
 }
 
@@ -67,8 +77,11 @@ actor ClaudeUsageClient: UsageFetching {
     private var pending: (identity: String, id: UUID, task: Task<UsageSnapshot, Error>)?
     private var retryAfter: Date?
 
-    init(session: URLSession? = nil, credentials: @escaping Credentials = { try ClaudeUsageCredential.read() }, clock: @escaping @Sendable () -> Date = { Date() }, resetFetcher: @escaping ResetFetcher = { try await ClaudeResetConnection.shared.inventory(for: $0) }) {
-        self.credentials = credentials; self.clock = clock; self.resetFetcher = resetFetcher
+    /// One client per Claude Code configuration: nil is the shared ~/.claude sign-in, otherwise a separate account's CLAUDE_CONFIG_DIR.
+    init(configDirectory: String? = nil, session: URLSession? = nil, credentials: Credentials? = nil, clock: @escaping @Sendable () -> Date = { Date() }, resetFetcher: ResetFetcher? = nil) {
+        self.credentials = credentials ?? { try ClaudeUsageCredential.read(configDirectory: configDirectory) }
+        self.resetFetcher = resetFetcher ?? { try await ClaudeResetConnection.connection(configDirectory: configDirectory).inventory(for: $0) }
+        self.clock = clock
         if let session { self.session = session }
         else {
             let config = URLSessionConfiguration.ephemeral
@@ -160,6 +173,6 @@ actor ClaudeUsageClient: UsageFetching {
 }
 
 extension Profile {
-    /// Separate Claude accounts are excluded: the account reader only knows the shared Claude Code sign-in.
-    var usesClaudeAccountUsage: Bool { (kind == .claude && !usesSeparateClaudeAccount) || kind == .claudeCode || (kind == .terminal && terminalAgent == .claude) }
+    /// Separate Claude accounts read their own CLAUDE_CONFIG_DIR sign-in; all other Claude tiles share ~/.claude.
+    var usesClaudeAccountUsage: Bool { kind == .claude || kind == .claudeCode || (kind == .terminal && terminalAgent == .claude) }
 }

@@ -63,6 +63,9 @@ public struct Profile: Identifiable, Codable, Equatable, Sendable {
         usesSeparateClaudeAccount ? home(in: userHome).appendingPathComponent("claude-config") : nil
     }
 
+    /// The exact CLAUDE_CONFIG_DIR string ProfileDock passes; Claude Code derives its Keychain item from it.
+    public func claudeConfigPath(in userHome: URL) -> String? { claudeConfigDirectory(in: userHome)?.path }
+
     public func claudeUserDataDirectory(in userHome: URL) -> URL? {
         usesSeparateClaudeAccount ? home(in: userHome).appendingPathComponent("electron-user-data") : nil
     }

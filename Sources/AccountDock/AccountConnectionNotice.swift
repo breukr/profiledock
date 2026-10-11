@@ -21,7 +21,7 @@ struct SignInNoticeBanner: View {
                     let key = usage.connectionKey(profile)
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 8) {
-                            Text(profile.usesClaudeAccountUsage ? "Claude account" : profile.name).font(.system(size: 11)).lineLimit(1)
+                            Text(profile.usesClaudeAccountUsage && !profile.usesSeparateClaudeAccount ? "Claude account" : profile.name).font(.system(size: 11)).lineLimit(1)
                             Spacer(minLength: 4)
                             if usage.isReconnecting(profile) {
                                 ProgressView().controlSize(.mini)

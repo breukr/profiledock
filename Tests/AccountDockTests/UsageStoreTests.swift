@@ -198,6 +198,67 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertEqual(store.disconnectedProfiles.map(\.id), [profile.id])
     }
 
+    func testSeparateClaudeAccountsUseTheirOwnClientsConnectionsAndNudges() async throws {
+        let shared = FixtureUsageClient(), work = FixtureUsageClient(), client = FixtureUsageClient(), runner = FixtureSignInRunner()
+        let home = URL(fileURLWithPath: "/tmp/profiledock-fixture-home")
+        func claude(_ id: String, separate: Bool) -> Profile {
+            var profile = Profile(id: id, name: id, color: "377CF6"); profile.provider = .claude
+            if separate { profile.separateClaudeAccount = true }
+            return profile
+        }
+        let main = claude("shared", separate: false), first = claude("work", separate: true), second = claude("client", separate: true)
+        var created: [String] = []
+        let accounts = [first.claudeConfigPath(in: home)!: work, second.claudeConfigPath(in: home)!: client]
+        let store = UsageStore(claudeClient: shared, claudeAccountClient: { created.append($0); return accounts[$0]! }, signInRunner: runner, signInCommand: signInCommand, home: home)
+        defer { store.shutdown() }
+        var nudges: [String] = []
+        store.onConnectionLost = { nudges.append($0.id) }
+        await work.setIdentity("work-account", for: first.id)
+        store.configure([main, first, second]); store.refreshAll()
+        try await eventually { !store.isRefreshing }
+        XCTAssertEqual(store.entries[main.id]?.snapshot?.identity, main.id)
+        XCTAssertEqual(store.entries[first.id]?.snapshot?.identity, "work-account")
+        XCTAssertEqual(Set(created), Set(accounts.keys), "One client per CLAUDE_CONFIG_DIR, created once")
+        XCTAssertEqual(created.count, 2)
+        let sharedCalls = await shared.fetchCalls
+        XCTAssertEqual(sharedCalls, 1)
+        XCTAssertEqual(Set([main, first, second].map(store.connectionKey)).count, 3)
+        // A missing credential for one separate account asks to connect, without a nudge or touching the others.
+        await client.setIdentityFailure(.claudeConnectionNeeded)
+        await work.setIdentityFailure(.claudeSignInRequired)
+        store.refreshAll(force: true); try await eventually { !store.isRefreshing }
+        XCTAssertEqual(store.entries[second.id]?.error, .claudeConnectionNeeded)
+        XCTAssertNil(store.entries[second.id]?.snapshot)
+        XCTAssertNotNil(store.entries[main.id]?.snapshot)
+        XCTAssertEqual(nudges, [first.id], "Sign-in nudges are per account")
+        XCTAssertEqual(store.disconnectedProfiles.map(\.id), [first.id])
+        await runner.setAction { await client.setIdentityFailure(nil) }
+        store.reconnect(second, home: home)
+        try await eventually { store.reconnecting.isEmpty && store.entries[second.id]?.snapshot != nil }
+        XCTAssertEqual(store.entries[first.id]?.error, .claudeSignInRequired, "Connecting one account leaves the others alone")
+    }
+
+    func testSeparateAccountStatusLineIsAFallbackBesideAccountUsage() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let model = DockModel(home: home), client = FixtureUsageClient()
+        var profile = a; profile.provider = .claude; profile.separateClaudeAccount = true
+        var session = ClaudeSession(id: "work", project: "/project")
+        session.configDirectory = profile.claudeConfigDirectory(in: home)!.standardizedFileURL.path
+        session.limits = [.init(id: "five_hour", used: 40, resetsAt: Date().addingTimeInterval(3600), duration: 18000)]
+        session.usageAt = Date()
+        model.companions.sessions = [session]
+        let store = UsageStore(claudeAccountClient: { _ in client }, home: home)
+        defer { store.shutdown() }
+        await client.setIdentityFailure(.claudeConnectionNeeded)
+        store.configure([profile]); store.refreshAll()
+        try await eventually { !store.isRefreshing }
+        store.updateCompanions(model: model)
+        XCTAssertEqual(store.statusLineReadings[profile.id]?.windows.first?.remainingPercent, 60)
+        XCTAssertNil(store.entries[profile.id]?.snapshot, "Status-line reports never masquerade as account readings")
+        XCTAssertEqual(store.entries[profile.id]?.error, .claudeConnectionNeeded)
+    }
+
     func testCompanionActivityCannotOverwriteClaudeAccountMeasurements() async throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }

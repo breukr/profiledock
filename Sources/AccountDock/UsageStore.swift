@@ -24,10 +24,16 @@ final class UsageStore: ObservableObject {
     private var signInTasks: [String: Task<Void, Never>] = [:]
     private let signInRunner: any AccountSigningIn
     private let signInCommand: (Profile, URL) throws -> AccountSignInCommand
-    var cardUsageRows: Int { max(1, entries.values.compactMap { $0.snapshot?.windows.count }.max() ?? 2) }
+    /// Status-line limits for separate Claude accounts, shown only while their account endpoint has no reading.
+    @Published private(set) var statusLineReadings: [String: UsageSnapshot] = [:]
+    var cardUsageRows: Int { max(1, (entries.values.compactMap { $0.snapshot?.windows.count } + statusLineReadings.values.map(\.windows.count)).max() ?? 2) }
     @Published private(set) var now = Date()
     private let client: any UsageFetching
     private let claudeClient: any UsageFetching
+    /// One account client per separate CLAUDE_CONFIG_DIR, so requests, caches and rate limits never mix accounts.
+    private let makeClaudeAccountClient: (String) -> any UsageFetching
+    private var claudeAccountClients: [String: any UsageFetching] = [:]
+    private let home: URL
     private let backgroundInterval: TimeInterval
     private var profiles: [Profile] = []
     private var tasks: [String: Task<Void, Never>] = [:]
@@ -36,8 +42,9 @@ final class UsageStore: ObservableObject {
     private var visibleScreens: Set<String> = []
     private var timer: Timer?
 
-    init(client: any UsageFetching = UsageClient(), claudeClient: any UsageFetching = ClaudeUsageClient(), backgroundInterval: TimeInterval = 300, signInRunner: any AccountSigningIn = AccountSignInRunner(), signInCommand: @escaping (Profile, URL) throws -> AccountSignInCommand = { try AccountSignInCommand.make(profile: $0, home: $1) }) {
-        self.client = client; self.claudeClient = claudeClient; self.backgroundInterval = backgroundInterval
+    init(client: any UsageFetching = UsageClient(), claudeClient: any UsageFetching = ClaudeUsageClient(), claudeAccountClient: @escaping (String) -> any UsageFetching = { ClaudeUsageClient(configDirectory: $0) }, backgroundInterval: TimeInterval = 300, signInRunner: any AccountSigningIn = AccountSignInRunner(), signInCommand: @escaping (Profile, URL) throws -> AccountSignInCommand = { try AccountSignInCommand.make(profile: $0, home: $1) }, home: URL = FileManager.default.homeDirectoryForCurrentUser) {
+        self.client = client; self.claudeClient = claudeClient; self.makeClaudeAccountClient = claudeAccountClient; self.backgroundInterval = backgroundInterval
+        self.home = home
         self.signInRunner = signInRunner
         self.signInCommand = signInCommand
     }
@@ -51,6 +58,9 @@ final class UsageStore: ObservableObject {
         reconnectionMessages = reconnectionMessages.filter { connections.contains($0.key) }
         for id in tasks.keys.filter({ !ids.contains($0) }) { tasks.removeValue(forKey: id)?.cancel(); generation[id] = nil }
         entries = entries.filter { ids.contains($0.key) }
+        statusLineReadings = statusLineReadings.filter { ids.contains($0.key) }
+        let configs = Set(profiles.compactMap(claudeConfigPath))
+        claudeAccountClients = claudeAccountClients.filter { configs.contains($0.key) }
         for profile in profiles where entries[profile.id] == nil { entries[profile.id] = UsageEntry(validatingIdentity: profile.kind == .codex || profile.usesClaudeAccountUsage) }
         scheduleRefresh()
     }
@@ -87,7 +97,7 @@ final class UsageStore: ObservableObject {
 
     func refresh(_ profile: Profile, force: Bool = false) {
         guard profile.kind == .codex || profile.usesClaudeAccountUsage, tasks[profile.id] == nil else { return }
-        let client = profile.usesClaudeAccountUsage ? claudeClient : self.client
+        let client = usageClient(for: profile)
         let id = profile.id
         let token = UUID()
         generation[id] = token
@@ -135,7 +145,23 @@ final class UsageStore: ObservableObject {
         }
     }
 
-    func connectionKey(_ profile: Profile) -> String { profile.usesClaudeAccountUsage ? "claude-account" : "codex:" + profile.id }
+    /// The exact CLAUDE_CONFIG_DIR ProfileDock launches a separate account with; nil for the shared sign-in.
+    func claudeConfigPath(_ profile: Profile) -> String? { profile.claudeConfigPath(in: home) }
+    private func usageClient(for profile: Profile) -> any UsageFetching {
+        guard profile.usesClaudeAccountUsage else { return client }
+        guard let config = claudeConfigPath(profile) else { return claudeClient }
+        if let existing = claudeAccountClients[config] { return existing }
+        let created = makeClaudeAccountClient(config)
+        claudeAccountClients[config] = created
+        return created
+    }
+
+    /// Shared Claude tiles have one connection; each separate account has its own, keyed like its Keychain item.
+    func connectionKey(_ profile: Profile) -> String {
+        guard profile.usesClaudeAccountUsage else { return "codex:" + profile.id }
+        guard let config = claudeConfigPath(profile) else { return "claude-account" }
+        return "claude-account:" + ClaudeCredentialService.name(configDirectory: config).suffix(8)
+    }
     func isReconnecting(_ profile: Profile) -> Bool { reconnecting.contains(connectionKey(profile)) }
     /// Accounts the strip's sign-in notice lists: disconnected, not muted and not set aside with Later.
     var signInNotices: [Profile] {
@@ -169,9 +195,9 @@ final class UsageStore: ObservableObject {
                 try await signInRunner.signIn(command)
                 guard let self, !Task.isCancelled, self.reconnecting.contains(key) else { return }
                 self.reconnecting.remove(key); self.signInTasks[key] = nil
-                await (profile.usesClaudeAccountUsage ? self.claudeClient : self.client).invalidate()
+                await self.usageClient(for: profile).invalidate()
                 guard !Task.isCancelled else { return }
-                // Refresh all Claude tiles sharing the account, or only this Codex profile.
+                // Refresh all Claude tiles sharing the account, or only this separate account or Codex profile.
                 for current in self.profiles where self.connectionKey(current) == key {
                     self.tasks.removeValue(forKey: current.id)?.cancel(); self.generation[current.id] = nil
                     self.entries[current.id] = UsageEntry()
@@ -191,23 +217,33 @@ final class UsageStore: ObservableObject {
         reconnecting.remove(key); reconnectionMessages[key] = nil
     }
 
-    func claudeConnectionChanged() {
-        for profile in profiles where profile.usesClaudeAccountUsage {
+    /// A saved-resets connection changed for one account: nil is the shared sign-in, otherwise a separate CLAUDE_CONFIG_DIR.
+    func claudeConnectionChanged(configDirectory: String?) {
+        let affected = profiles.filter { $0.usesClaudeAccountUsage && claudeConfigPath($0) == configDirectory }
+        guard let first = affected.first else { return }
+        for profile in affected {
             tasks.removeValue(forKey: profile.id)?.cancel(); generation[profile.id] = nil
             entries[profile.id] = UsageEntry()
         }
+        let client = usageClient(for: first)
         Task {
-            await claudeClient.invalidate()
-            for profile in profiles where profile.usesClaudeAccountUsage { refresh(profile, force: true) }
+            await client.invalidate()
+            for profile in affected { refresh(profile, force: true) }
         }
     }
 
     func updateCompanions(model: DockModel) {
         now = Date()
-        for profile in profiles where profile.kind != .codex && !profile.usesClaudeAccountUsage {
+        for profile in profiles where profile.kind != .codex && (!profile.usesClaudeAccountUsage || profile.usesSeparateClaudeAccount) {
             let session = model.companions.sessions(for: profile).filter { $0.usageAt != nil }.max { ($0.usageAt ?? .distantPast) < ($1.usageAt ?? .distantPast) }
             let identity = "claude-session:" + (session?.id ?? profile.id)
-            let value = UsageEntry(snapshot: session?.snapshot(identity: identity, now: now), identity: identity, validatingIdentity: false)
+            let snapshot = session?.snapshot(identity: identity, now: now)
+            // Separate accounts keep their status-line report apart from endpoint readings, as a fallback only.
+            if profile.usesSeparateClaudeAccount {
+                if statusLineReadings[profile.id] != snapshot { statusLineReadings[profile.id] = snapshot }
+                continue
+            }
+            let value = UsageEntry(snapshot: snapshot, identity: identity, validatingIdentity: false)
             if entries[profile.id] != value { entries[profile.id] = value }
         }
     }

@@ -3,7 +3,7 @@ import CryptoKit
 import DockCore
 
 enum UsageLoadError: Error, Equatable {
-    case notSignedIn, authorizationRequired, claudeSignInRequired, claudeTokenStale, accountChanged, wrongAccount, invalidResponse, network, http(Int), rateLimited(Date)
+    case notSignedIn, authorizationRequired, claudeSignInRequired, claudeTokenStale, claudeConnectionNeeded, accountChanged, wrongAccount, invalidResponse, network, http(Int), rateLimited(Date)
     var needsSignIn: Bool {
         switch self {
         case .notSignedIn, .authorizationRequired, .claudeSignInRequired: return true
@@ -11,7 +11,7 @@ enum UsageLoadError: Error, Equatable {
         }
     }
     /// Reconnect stays available without the orange sign-in nudge.
-    var offersReconnect: Bool { needsSignIn || self == .claudeTokenStale }
+    var offersReconnect: Bool { needsSignIn || self == .claudeTokenStale || self == .claudeConnectionNeeded }
     /// The access token expired but Claude Code still holds a refresh token, so the last verified reading remains valid.
     var preservesReading: Bool { self == .claudeTokenStale }
     /// Short tile label; only real sign-in failures read as a warning.
@@ -19,6 +19,7 @@ enum UsageLoadError: Error, Equatable {
         switch self {
         case _ where needsSignIn: return "Sign-in needed"
         case .claudeTokenStale: return "Waiting for Claude Code to refresh"
+        case .claudeConnectionNeeded: return "Connect usage"
         default: return "Unavailable"
         }
     }
@@ -26,6 +27,7 @@ enum UsageLoadError: Error, Equatable {
         switch self {
         case .notSignedIn, .authorizationRequired: return "Open this profile and check that you are signed in."
         case .claudeSignInRequired: return "Open Claude Code and sign in to refresh account usage."
+        case .claudeConnectionNeeded: return "Claude Code has not signed in for this account yet. Connect usage to sign in once."
         case .claudeTokenStale: return "Waiting for Claude Code to renew its sign-in. It does this the next time it runs. Refresh to check again, or Reconnect to sign in now."
         case .rateLimited: return "Claude requested a pause. Usage will retry automatically."
         case .accountChanged: return "Account changed. Refresh usage again."
@@ -37,7 +39,7 @@ enum UsageLoadError: Error, Equatable {
     }
     var clearsSnapshot: Bool {
         switch self {
-        case .notSignedIn, .authorizationRequired, .claudeSignInRequired, .accountChanged, .wrongAccount: return true
+        case .notSignedIn, .authorizationRequired, .claudeSignInRequired, .claudeConnectionNeeded, .accountChanged, .wrongAccount: return true
         default: return false
         }
     }

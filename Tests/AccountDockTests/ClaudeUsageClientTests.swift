@@ -58,6 +58,34 @@ final class ClaudeUsageClientTests: XCTestCase {
         XCTAssertEqual(UsageLoadError.claudeSignInRequired.statusLabel, "Sign-in needed")
     }
 
+    func testCredentialLookupUsesAccountKeychainItemThenConfigFile() throws {
+        let valid = Data(#"{"claudeAiOauth":{"accessToken":"fixture","expiresAt":4102444800000,"scopes":["user:profile"],"subscriptionType":"pro"}}"#.utf8)
+        let config = FileManager.default.temporaryDirectory.appendingPathComponent("claude-config-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: config) }
+        var requested: [String] = []
+        // Shared sign-in: the unsuffixed item only, never a file fallback.
+        XCTAssertEqual(try ClaudeUsageCredential.read(configDirectory: nil, keychain: { requested.append($0); return valid }).plan, "pro")
+        do { _ = try ClaudeUsageCredential.read(configDirectory: nil, keychain: { _ in nil }); XCTFail("Missing shared sign-in") }
+        catch { XCTAssertEqual(error as? UsageLoadError, .claudeSignInRequired) }
+        // Separate account: its hashed item first.
+        XCTAssertEqual(try ClaudeUsageCredential.read(configDirectory: config.path, keychain: { requested.append($0); return valid }).plan, "pro")
+        XCTAssertEqual(requested, ["Claude Code-credentials", ClaudeCredentialService.name(configDirectory: config.path)])
+        // No item and no file: connect usage, not a sign-in nag.
+        do { _ = try ClaudeUsageCredential.read(configDirectory: config.path, keychain: { _ in nil }); XCTFail("Missing separate credential") }
+        catch { XCTAssertEqual(error as? UsageLoadError, .claudeConnectionNeeded) }
+        XCTAssertFalse(UsageLoadError.claudeConnectionNeeded.needsSignIn)
+        XCTAssertTrue(UsageLoadError.claudeConnectionNeeded.offersReconnect)
+        XCTAssertEqual(UsageLoadError.claudeConnectionNeeded.statusLabel, "Connect usage")
+        // Claude Code's documented file fallback, parsed the same way.
+        let file = config.appendingPathComponent(".credentials.json")
+        try valid.write(to: file)
+        XCTAssertEqual(try ClaudeUsageCredential.read(configDirectory: config.path, keychain: { _ in nil }).plan, "pro")
+        try Data(repeating: 0x20, count: 65537).write(to: file)
+        do { _ = try ClaudeUsageCredential.read(configDirectory: config.path, keychain: { _ in nil }); XCTFail("Oversized file must be ignored") }
+        catch { XCTAssertEqual(error as? UsageLoadError, .claudeConnectionNeeded) }
+    }
+
     func testRejectedUnexpiredTokenStillRequiresSignIn() async throws {
         let credential = credential()
         ClaudeResponseProtocol.handler = { _ in (401, Data(), [:]) }
