@@ -17,7 +17,12 @@ actor FixtureUsageClient: UsageFetching {
     private(set) var fetchCalls = 0
     private var continuations: [CheckedContinuation<Void, Never>] = []
 
-    func identity(for profile: Profile) async throws -> String { identities[profile.id] ?? profile.id }
+    var identityFailure: UsageLoadError?
+    func identity(for profile: Profile) async throws -> String {
+        if let identityFailure { throw identityFailure }
+        return identities[profile.id] ?? profile.id
+    }
+    func setIdentityFailure(_ error: UsageLoadError?) { identityFailure = error }
     func fetch(_ profile: Profile, expectedIdentity: String) async throws -> UsageSnapshot {
         fetchCalls += 1
         if paused { await withCheckedContinuation { continuations.append($0) } }
@@ -148,6 +153,49 @@ final class UsageStoreTests: XCTestCase {
         store.refreshAll(force: true)
         try await eventually { !store.isRefreshing }
         XCTAssertNil(store.entries[profile.id]?.snapshot)
+    }
+
+    func testStaleClaudeTokenKeepsReadingWithoutNudgeButCanReconnect() async throws {
+        let client = FixtureUsageClient(), runner = FixtureSignInRunner()
+        var profile = a; profile.provider = .claude
+        let store = UsageStore(claudeClient: client, signInRunner: runner, signInCommand: signInCommand)
+        defer { store.shutdown() }
+        var nudges = 0
+        store.onConnectionLost = { _ in nudges += 1 }
+        store.configure([profile]); store.refreshAll()
+        try await eventually { !store.isRefreshing }
+        let reading = store.entries[profile.id]?.snapshot
+        XCTAssertNotNil(reading)
+        // The identity check itself fails while Claude Code has not yet renewed its access token.
+        await client.setIdentityFailure(.claudeTokenStale)
+        store.refreshAll(force: true); try await eventually { !store.isRefreshing }
+        XCTAssertEqual(store.entries[profile.id]?.snapshot, reading, "The last verified reading stays, with its stale marker")
+        XCTAssertEqual(store.entries[profile.id]?.error, .claudeTokenStale)
+        XCTAssertEqual(store.entries[profile.id]?.validatingIdentity, false)
+        XCTAssertEqual(nudges, 0)
+        XCTAssertTrue(store.disconnectedProfiles.isEmpty)
+        XCTAssertTrue(store.signInNotices.isEmpty)
+        await runner.setAction { await client.setIdentityFailure(nil) }
+        store.reconnect(profile, home: URL(fileURLWithPath: "/tmp"))
+        try await eventually { store.reconnecting.isEmpty && store.entries[profile.id]?.error == nil && store.entries[profile.id]?.snapshot != nil }
+        let calls = await runner.calls
+        XCTAssertEqual(calls, 1, "Reconnect remains available as a secondary action")
+    }
+
+    func testExpiredClaudeSignInWithoutRefreshStillNudges() async throws {
+        let client = FixtureUsageClient()
+        var profile = a; profile.provider = .claude
+        let store = UsageStore(claudeClient: client)
+        defer { store.shutdown() }
+        var nudges = 0
+        store.onConnectionLost = { _ in nudges += 1 }
+        store.configure([profile]); store.refreshAll()
+        try await eventually { !store.isRefreshing }
+        await client.setIdentityFailure(.claudeSignInRequired)
+        store.refreshAll(force: true); try await eventually { !store.isRefreshing }
+        XCTAssertNil(store.entries[profile.id]?.snapshot)
+        XCTAssertEqual(nudges, 1)
+        XCTAssertEqual(store.disconnectedProfiles.map(\.id), [profile.id])
     }
 
     func testCompanionActivityCannotOverwriteClaudeAccountMeasurements() async throws {

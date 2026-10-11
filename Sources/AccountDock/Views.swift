@@ -234,6 +234,9 @@ struct IslandView: View {
                         Button("Move later") { model.moveDisplayed(profile.id, by: 1) }.disabled(index == model.displayedProfiles.count - 1)
                         Divider()
                         Button("Hide from strip") { model.setShownInStrip(profile.id, false) }
+                        if usage.entries[profile.id]?.error?.offersReconnect == true {
+                            Button("Reconnect usage…") { usage.reconnect(profile, home: model.home) }.disabled(usage.isReconnecting(profile))
+                        }
                     }
             }
         }
@@ -278,12 +281,22 @@ struct IslandView: View {
                 if let snapshot, !snapshot.windows.isEmpty {
                     ForEach(snapshot.windows) { window in UsageWindowView(window: window, now: usage.now) }
                 } else if let error = entry?.error {
-                    Text(error.needsSignIn ? "Sign-in needed" : "Unavailable").font(.system(size: 10)).foregroundStyle(error.needsSignIn ? .orange : .white.opacity(0.5))
+                    Text(error.statusLabel).font(.system(size: 10)).lineLimit(2).minimumScaleFactor(0.8).foregroundStyle(error.needsSignIn ? .orange : .white.opacity(0.5))
                     if error.needsSignIn {
                         Button(usage.isReconnecting(profile) ? "Finish in browser…" : "Reconnect") { usage.reconnect(profile, home: model.home) }
                             .font(.system(size: 9, weight: .medium)).buttonStyle(.plain).foregroundStyle(.orange)
                             .disabled(usage.isReconnecting(profile)).accessibilityLabel("Reconnect \(profile.name)")
                             .help(usage.reconnectionMessages[usage.connectionKey(profile)] ?? "Open sign-in for this account. Usage refreshes automatically when you finish.")
+                    } else if error.offersReconnect {
+                        // A stale token is not a sign-in failure: refresh first, Reconnect only as the secondary action.
+                        HStack(spacing: 8) {
+                            Button("Refresh") { usage.refresh(profile, force: true) }
+                                .font(.system(size: 9)).buttonStyle(.plain).foregroundStyle(.white.opacity(0.75)).help(error.message)
+                            Button(usage.isReconnecting(profile) ? "Finish in browser…" : "Reconnect") { usage.reconnect(profile, home: model.home) }
+                                .font(.system(size: 9)).buttonStyle(.plain).foregroundStyle(.white.opacity(0.5))
+                                .disabled(usage.isReconnecting(profile)).accessibilityLabel("Reconnect \(profile.name)")
+                                .help(usage.reconnectionMessages[usage.connectionKey(profile)] ?? "Sign in again now instead of waiting for Claude Code.")
+                        }
                     } else {
                         Button("Try again") { usage.refresh(profile, force: true) }
                             .font(.system(size: 9)).buttonStyle(.plain).foregroundStyle(.white.opacity(0.75)).help(error.message)

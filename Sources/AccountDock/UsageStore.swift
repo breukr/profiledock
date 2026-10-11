@@ -122,7 +122,7 @@ final class UsageStore: ObservableObject {
             } catch {
                 guard self.generation[id] == token, !Task.isCancelled else { return }
                 let failure = error as? UsageLoadError ?? .network
-                if failure.clearsSnapshot || self.entries[id]?.validatingIdentity == true { self.entries[id]?.snapshot = nil }
+                if failure.clearsSnapshot || (self.entries[id]?.validatingIdentity == true && !failure.preservesReading) { self.entries[id]?.snapshot = nil }
                 self.entries[id]?.validatingIdentity = false
                 self.entries[id]?.isRefreshing = false
                 self.entries[id]?.error = failure
@@ -149,7 +149,7 @@ final class UsageStore: ObservableObject {
     }
 
     func reconnect(_ profile: Profile, home: URL) {
-        guard profiles.contains(where: { $0.id == profile.id }), entries[profile.id]?.error?.needsSignIn == true else { return }
+        guard profiles.contains(where: { $0.id == profile.id }), entries[profile.id]?.error?.offersReconnect == true else { return }
         let key = connectionKey(profile)
         guard signInTasks[key] == nil, !reconnecting.contains(key) else { return }
         // Codex uses one local callback port. Keep profile login flows sequential.

@@ -12,8 +12,14 @@ struct ClaudeUsageCredential: Sendable {
               let oauth = root["claudeAiOauth"] as? [String: Any],
               let token = oauth["accessToken"] as? String, !token.isEmpty,
               token.rangeOfCharacter(from: .controlCharacters) == nil,
-              let expires = oauth["expiresAt"] as? Double, expires.isFinite, expires / 1000 > now.timeIntervalSince1970,
-              let scopes = oauth["scopes"] as? [String], scopes.contains("user:profile") else { throw UsageLoadError.claudeSignInRequired }
+              let scopes = oauth["scopes"] as? [String], scopes.contains("user:profile"),
+              let expires = oauth["expiresAt"] as? Double, expires.isFinite else { throw UsageLoadError.claudeSignInRequired }
+        // Claude Code renews an expired access token itself the next time it runs (the Desktop Code tab does not).
+        // Only the refresh token's presence is checked; ProfileDock never uses or rotates it.
+        guard expires / 1000 > now.timeIntervalSince1970 else {
+            let renewable = (oauth["refreshToken"] as? String).map { !$0.isEmpty } ?? false
+            throw renewable ? UsageLoadError.claudeTokenStale : UsageLoadError.claudeSignInRequired
+        }
         return Self(token: token, fingerprint: digest(token), plan: oauth["subscriptionType"] as? String)
     }
     static func digest(_ value: String) -> String { SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined() }

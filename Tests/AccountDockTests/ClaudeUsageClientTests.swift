@@ -40,6 +40,30 @@ final class ClaudeUsageClientTests: XCTestCase {
         XCTAssertEqual(try ClaudeUsageCredential.parse(valid).plan, "max")
         XCTAssertThrowsError(try ClaudeUsageCredential.parse(valid, now: Date(timeIntervalSince1970: 4102444801)))
         XCTAssertThrowsError(try ClaudeUsageCredential.parse(Data(#"{"apiKey":"fixture"}"#.utf8)))
+        let later = Date(timeIntervalSince1970: 4102444801)
+        func failure(_ json: String) -> UsageLoadError? {
+            do { _ = try ClaudeUsageCredential.parse(Data(json.utf8), now: later); return nil } catch { return error as? UsageLoadError }
+        }
+        // Expired with a refresh token: Claude Code renews it on its next run, so this is stale rather than signed out.
+        XCTAssertEqual(failure(#"{"claudeAiOauth":{"accessToken":"fixture","refreshToken":"fixture-refresh","expiresAt":4102444800000,"scopes":["user:profile"]}}"#), .claudeTokenStale)
+        XCTAssertFalse(UsageLoadError.claudeTokenStale.needsSignIn)
+        XCTAssertTrue(UsageLoadError.claudeTokenStale.offersReconnect)
+        XCTAssertFalse(UsageLoadError.claudeTokenStale.clearsSnapshot)
+        XCTAssertEqual(UsageLoadError.claudeTokenStale.statusLabel, "Waiting for Claude Code to refresh")
+        // Expired without a usable refresh token, or missing scope or token, still needs sign-in.
+        XCTAssertEqual(failure(#"{"claudeAiOauth":{"accessToken":"fixture","expiresAt":4102444800000,"scopes":["user:profile"]}}"#), .claudeSignInRequired)
+        XCTAssertEqual(failure(#"{"claudeAiOauth":{"accessToken":"fixture","refreshToken":"","expiresAt":4102444800000,"scopes":["user:profile"]}}"#), .claudeSignInRequired)
+        XCTAssertEqual(failure(#"{"claudeAiOauth":{"accessToken":"fixture","refreshToken":"fixture-refresh","expiresAt":4102444800000,"scopes":["user:inference"]}}"#), .claudeSignInRequired)
+        XCTAssertEqual(failure(#"{"claudeAiOauth":{"refreshToken":"fixture-refresh","expiresAt":4102444800000,"scopes":["user:profile"]}}"#), .claudeSignInRequired)
+        XCTAssertEqual(UsageLoadError.claudeSignInRequired.statusLabel, "Sign-in needed")
+    }
+
+    func testRejectedUnexpiredTokenStillRequiresSignIn() async throws {
+        let credential = credential()
+        ClaudeResponseProtocol.handler = { _ in (401, Data(), [:]) }
+        let client = ClaudeUsageClient(session: session(), credentials: { credential }, resetFetcher: { _ in nil })
+        do { _ = try await client.identity(for: profile); XCTFail("A rejected token must require sign-in") }
+        catch { XCTAssertEqual(error as? UsageLoadError, .claudeSignInRequired) }
     }
 
     func testMultipleTilesShareAccountRequestAndUnknownResetBalanceStaysUnknown() async throws {
