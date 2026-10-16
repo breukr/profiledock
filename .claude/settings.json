@@ -1,0 +1,18 @@
+{
+  "skillOverrides": {
+    "impeccable": "on"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "compact|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '[design log, last rounds: docs/design-log.md]'; tail -n 30 \"$CLAUDE_PROJECT_DIR/docs/design-log.md\" 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}
