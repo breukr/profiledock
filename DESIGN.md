@@ -1,0 +1,96 @@
+# ProfileDock design contract
+
+Source of truth for how ProfileDock looks and moves. Extracted from the code (`Sources/AccountDock`, `Sources/DockCore`) and `docs/MENU-DESIGN.md`. Change this file together with the code. Decisions and their reasons live in `docs/MENU-DESIGN.md`; round history lives in `docs/design-log.md`.
+
+Product: native macOS 14+ utility (SwiftUI + AppKit, Apple Silicon). Two surfaces: the **strip** (a black notch/menu-bar island that expands on hover) and the **Settings window** (System Settings style). Direction is fixed: native controls, system fonts, system semantic colors, no marketing styling inside the app.
+
+## Surfaces and tokens
+
+There is no central tokens file. The tokens are the constants below; reuse the named component instead of re-declaring values.
+
+### Settings window (`Sources/AccountDock/SettingsDesign.swift`, `SettingsView.swift`)
+- Layout: persistent sidebar (190 min, 210 ideal, 240 max) + one centered content column, max width 760 (`pageWidth`). Window opens 760x560 (compact) or 920x700; minimum 760x560.
+- Destinations: Workspace group (Profiles, Search Chats, Usage Insights), Settings group (General, Appearance, Profile Icons, Context Access, Updates), then Support (pink heart) and About last.
+- Type: system fonts only. 12 pt semibold secondary for group labels, `.body` for row titles, `.caption` secondary for details, 20 pt page titles, 13 pt controls. Code or hex values use `.monospaced()`.
+- Color: system semantic colors only (`controlBackgroundColor`, `separatorColor`, `.secondary`, accent for selection and primary action). No fixed white or black. Warnings use `.orange`, info uses accent.
+- Shape: `SettingsCard` radius 10 with a 0.5 pt separator stroke at 0.45 opacity; `SettingsNotice` radius 8; row padding 16 horizontal, 12 vertical; row gap 24; 4-point spacing steps (4, 8, 12, 16, 24).
+- Components to reuse: `SettingsCard`, `SettingsGroupBoxStyle`, `SettingsRow`, `SettingsNotice`, `ProfileMessageNotice`, `ProfileGridSettings`. Icons are SF Symbols (`SettingsDestination.symbol`).
+
+### Strip (`Views.swift`, `Island.swift`, `IslandLayout.swift`, `WidgetSizing.swift`)
+- Always dark: `.environment(\.colorScheme, .dark)` on a black surface. Text is white at 0.55 to 1.0 opacity; secondary labels 0.45 to 0.65. Do not add light-mode strip styling.
+- Type: 10 to 11 pt system (11 semibold for titles and profile names, 10 for status lines, 9 for micro actions). Numbers use `.monospacedDigit()`.
+- Collapsed: notch-width capsule (or 160 to 480 pt free strip) with the 11 pt `BrandMark`, "Apps" label, one 6 pt activity dot per profile (`WidgetSizing.visibleDots` caps them, then "+N"), chevron. Top corners 2 pt on a notch, 12 pt when floating; bottom corners 12 pt.
+- Expanded width: `WidgetSizing.expanded` = count x 142 x scale + 32, max 880 automatic, 320 to 1400 when set, 520 minimum with Insights open. Custom grid: columns x 142 x scale + 32.
+- Tiles: width 104 to 132 x scale, gap 10 x scale; badge `min(52 x scale, tileWidth x 0.42)`; badge radius 26% of size; 1 pt white 0.15 stroke. Scale range 0.85 to 1.3 (`preferences.scale`).
+- Grid: automatic columns = `(available + 10 x scale) / (114 x scale)`; custom `ProfileGrid` 1 to 12 columns x 1 to 12 rows (presets 2x2, 3x3, 6x1, 1x6); extra profiles paginate. Terminals paginate independently. Section stack gap 13; strip padding 16 horizontal, 14 bottom, 13 plus notch height top.
+- Usage bars: 4 pt capsule, white 0.12 track; fill from `UsageTint.remaining` (green >= 60%, smoothstep to amber at 25%, to red at <= 10%). Row height 46, gap 10 (`IslandLayout.usageHeight`).
+
+### Profile identity (`Profile.swift`, `NativeProfileArtwork.swift`)
+- A profile has a name, a 6-digit hex `color`, and a style: dot (colored dot on the app icon), initials (white text on color), image (center-cropped, no inset border), chatgpt (knot extracted from the installed app on the color).
+- Letters: custom text up to 3 characters, uppercased; otherwise first plus last word initial, or first 2 letters of a single word.
+- Default palette (`ProfileCatalog.discover`): blue 377CF6, teal 009B87, purple 955CE5, green 339958, orange D77620, pink CA528B, red D85252. The same artwork renders in the editor, notch, list and menu; never fork the renderer.
+- Activity dot colors (`ProfileActivityState.color`): working blue (0.3, 0.65, 1), waiting orange, unread red, idle green (0.23, 0.9, 0.42), closed white 0.22. Unread badge red capsule, waiting is a black-on-orange pause glyph.
+
+### Brand (`Resources/Brand`, `docs/BRANDING.md`)
+Four-tile mark from `mark.json` (dark 151A25 / light EEF4FF backgrounds, blues 4A8FFA, AED0FF, D9E7FF, 629FFF). Menu-bar mark is a template image. Regenerate with `python3 scripts/make-brand.py`; keep the four tiles and spacing.
+
+## Motion
+
+Timings in use today (keep new motion inside these):
+
+| Token | Value | Where |
+| --- | --- | --- |
+| hover exit delay | 0.12 s | `HoverIntent.exitDelay`; 250 ms hover intent before Insights opens |
+| drawer open / close (spring) | 0.42 s / 0.30 s, stiffness 320 / 420, damping 36 / 42 | `IslandSurface.reveal` in `Island.swift` |
+| content fade in / out | 0.24 s / 0.18 s (ease out) | `Island.swift` |
+| strip reveal morph | 0.16 s open, 0.14 s close | `Island.swift` |
+| tile reorder | 0.18 s and 0.15 s ease in-out; snappy 0.25 s on commit | `ProfileReordering.swift` |
+| grid change | 0.20 s ease in-out | `Views.swift` |
+| usage bar and number | 0.45 s ease in-out | `UsageWindowView` |
+| activity cue open / close | 0.55 s / 0.40 s spring, content fade 0.22 s | `ActivityCues.swift` |
+| working pulse | 1.05 s autoreverse, only while a task is working and the strip is visible | `IconPulse.swift` |
+
+Rules:
+- Motion follows a user action (hover, click, drag) or a real state change (task working, cue). No decorative loops. The working pulse is the only repeating animation and it stops when the state ends or the strip is hidden.
+- Springs resize a fixed native canvas; never resize the window per frame (see `docs/MENU-DESIGN.md`).
+- Stagger: none. Animate one surface at a time.
+- Reduce Motion: every animation reads `accessibilityReduceMotion` (or `NSWorkspace.accessibilityDisplayShouldReduceMotion`) and skips geometry, rotation and pulse; fades may remain at <= 0.16 s. New motion without a Reduce Motion path fails review.
+- Regression tests: `IslandRenderingTests` (rapid reversal, Reduce Motion), `IconPulseTests`.
+
+## Done bar
+
+Every visible change meets all of these before it is shown to Sam.
+
+### Windows and sizes (desktop only; ProfileDock ships no mobile)
+- Settings window: 760x560 (minimum), 920x700 (default), 1280x800; every destination, light and dark. Plus the profile editor sheet (600x660), an empty state at 1280x800, and compact notices at 320 and 680 wide.
+- Strip: widths 360, 680, 1040 at scale 0.85, 1 and 1.3; grids 2x2, 3x3, 6x1, 1x6; sections hidden; terminals collapsed; Insights 488, 680, 1000 wide in light and dark; adaptive widgets 420, 740, 1200. Strip is dark only.
+- Also check the Reduce Motion state for anything animated, and increased contrast for new colors.
+- `./scripts/design-check.sh` renders all of the above from fixtures. Native SwiftUI has no browser zoom; the scale preference (0.85 to 1.3) is the zoom axis.
+
+### Geometry checks
+- Centered elements within 1 px of their container center (empty states, titles, notch capsule vs screen midX).
+- Left edges of an aligned group within 1 px (settings rows, tile labels).
+- Gaps come from the spacing steps above (4, 8, 10, 12, 13, 16, 24).
+- No clipping or truncation without an affordance (`lineLimit` with `.help` or tooltip, `minimumScaleFactor`, `ViewThatFits`). The existing tests assert part of this (`ActivityCueRenderingTests` truncation, `AccountConnectionRenderingTests` notice height, `IslandTests`); extend them for new layouts instead of eyeballing only.
+- Hit targets >= 28x28 pt on macOS. Known exceptions today: the 20x20 close and refresh icons on the strip; do not add new ones below 20x20 and do not shrink these further.
+- Machine-checked now: `design-check.sh` fails if a render is missing, empty, or has unexpected pixel dimensions. Pixel-level centering and edge checks are reviewer-judged from the PNGs until a test measures them.
+
+### Token lint
+`./scripts/design-lint.sh` fails when a raw color literal (`Color(red:`, `Color(white:`, `NSColor(srgbRed:`, hex literals) appears in a file outside its allowed list, or when a file exceeds its baseline count. Run by `design-check.sh`. New colors go through system semantic colors or an existing helper (`UsageTint`, `ProfileActivityState.color`, `StatusDot`).
+
+### AI-look blacklist (reject on sight)
+Generic purple/blue gradients, glassmorphism by default (`.ultraThinMaterial` panels, custom glass), bento grid as a default layout, emoji as icons (use SF Symbols), centered hero + three feature cards, gradient text on headlines, floating blobs or orbs, stock 3D illustrations, "trusted by" strips with fake logos, uniform rounded-2xl cards everywhere, shadow on everything, lorem ipsum or placeholder numbers, icon-in-circle feature rows. Repo-specific rejections (see `design/references/README.md`): marketing hero type sizes and pill buttons inside the app, decorative bitmap assets, off-center empty states, an inset colored border on custom icon images, fixed white or black in Settings.
+
+### Motion
+As in the Motion section: durations from the table, user-action or state triggered, no settling-free loops beyond the working pulse, Reduce Motion path required.
+
+### Fixture hygiene
+Renders and screenshots use fictional profiles and a temporary home only. Synthetic names: Noordhaven, Veldkamp, Atlas, Rijnstaal, Meridian (existing fixtures also use Personal, Work, Research). No real account data, tokens, client names or task content (see `CONTRIBUTING.md`).
+
+### Final gate
+Sam approves visually. Show him the screenshots and the `design-reviewer` verdict; never record approval he did not give.
+
+## Film and marketing assets
+- Launch film: `launch-film/` is a Remotion project (not in git here; local only). Video route: skill `remotion-best-practices`. Do not scaffold a new project; extend the existing one and follow `docs/REMOTION-UPDATE-PROMPT.md`.
+- `linkedin-carousel/` holds marketing images (local only, Dutch, Breukr v3 styling). Treat as references, not as in-app design.
+- `docs/hero.svg`, `docs/hero-dark.svg`, `docs/companions-preview.png`: README visuals; update when the strip or mark changes.
