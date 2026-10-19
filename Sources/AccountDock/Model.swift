@@ -89,9 +89,9 @@ final class DockModel: ObservableObject {
     private var terminalAgentArt: [TerminalAgent: NSImage] = [:]
     func terminalAgentArtwork(_ agent: TerminalAgent) -> NSImage {
         if let cached = terminalAgentArt[agent] { return cached }
-        var profile = Profile(id: agent.rawValue, name: agent == .claude ? "Cl" : "Cx", color: agent == .claude ? "C97B5D" : "202020")
+        var profile = Profile(id: agent.rawValue, name: agent == .claude ? "Cl" : agent == .codex ? "Cx" : agent.label, color: agent == .claude ? "C97B5D" : agent == .codex ? "202020" : (agent.tool?.color ?? "546E7A"))
         profile.dockIconStyle = .chatgpt
-        let vendor = NSWorkspace.shared.urlForApplication(withBundleIdentifier: agent.bundleIdentifier).map { NSWorkspace.shared.icon(forFile: $0.path) }
+        let vendor = agent.bundleIdentifier.isEmpty ? nil : NSWorkspace.shared.urlForApplication(withBundleIdentifier: agent.bundleIdentifier).map { NSWorkspace.shared.icon(forFile: $0.path) }
         let image = NativeProfileArtwork.preview(profile: profile, image: nil, vendor: vendor, margin: 0)
         terminalAgentArt[agent] = image
         return image

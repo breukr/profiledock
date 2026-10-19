@@ -56,6 +56,10 @@ public struct ContextService: Sendable {
         let deadline = Date().addingTimeInterval(24)
         for profile in profiles {
             try Task.checkCancellation()
+            if profile.kind == .agent {
+                coverage.append(ContextCoverage(profile: profile, status: "unavailable", conversationsRead: 0, detail: "This tool's chats are not searched."))
+                continue
+            }
             let history = ContextHistory(root: profile.root(in: registry.home), deadline: min(deadline, Date().addingTimeInterval(8)), claude: profile.kind != .codex, project: profile.kind == .claudeCode ? profile.projectPath : nil)
             var status = ContextCoverage(profile: profile, status: "available", conversationsRead: 0, detail: profile.kind == .codex ? "Local Work/Codex conversations only." : "Local Claude Code transcripts only. Cloud Chat and Cowork are not included.")
             do {
@@ -102,6 +106,7 @@ public struct ContextService: Sendable {
         let after: Int64
         if let cursor { guard let value = Int64(cursor), value >= -1 else { throw ContextError.message("Invalid conversation cursor.") }; after = value } else { after = -1 }
         let profile = try registry.authorized(caller: caller, sources: [source])[0]
+        guard profile.kind != .agent else { throw ContextError.message("This tool's chats are not searched.") }
         let history = ContextHistory(root: profile.root(in: registry.home), deadline: Date().addingTimeInterval(8), claude: profile.kind != .codex, project: profile.kind == .claudeCode ? profile.projectPath : nil)
         guard let thread = try history.threads(since: nil, includeArchived: true, threadID: threadID).0.first else { throw ContextError.message("This local conversation is unavailable or excluded from context sharing.") }
         guard cursor == nil || messageID == nil else { throw ContextError.message("Use either a cursor or a message to focus on.") }

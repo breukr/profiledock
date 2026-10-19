@@ -104,9 +104,22 @@ struct CompanionDetails: View {
     @ObservedObject var model: DockModel
     let profile: Profile
     var body: some View {
-        GroupBox(profile.kind.label) {
+        GroupBox(profile.kind == .agent ? (profile.agentTool?.name ?? profile.kind.label) : profile.kind.label) {
             VStack(alignment: .leading, spacing: 12) {
-                if profile.usesSeparateClaudeAccount {
+                if profile.kind == .agent, let tool = profile.agentTool {
+                    Text(tool.accountNotice)
+                    if tool.launchesInTerminal {
+                        Text(profile.projectPath ?? model.home.path).font(.caption).textSelection(.enabled)
+                        Button("Choose project folder…") {
+                            let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true
+                            panel.begin { response in
+                                if response == .OK, let url = panel.url {
+                                    var changed = profile; changed.projectPath = url.path; model.update(changed)
+                                }
+                            }
+                        }
+                    }
+                } else if profile.usesSeparateClaudeAccount {
                     Text("Opens its own Claude Desktop window with a separate sign-in, chats and Claude Code settings. Sign in with the account for this profile the first time it opens. Claude manages its own updates.")
                     Text("Subscription limits come from this account's Claude Code status line when available. Account-endpoint usage and saved resets remain available for your shared Claude sign-in only.").font(.caption)
                 } else if profile.kind == .claude {
@@ -124,7 +137,7 @@ struct CompanionDetails: View {
                         }
                     }
                 }
-                if profile.kind != .terminal {
+                if profile.kind != .terminal && profile.kind != .agent {
                     Text("Local Claude Code history is available in Search chats. Context access controls which other profiles can retrieve it.").font(.caption)
                 }
                 if let latest = model.companions.sessions(for: profile).max(by: { $0.updatedAt < $1.updatedAt }) {

@@ -3,7 +3,7 @@ import DockCore
 
 extension ActivityMonitor {
     func updateCompanions(model: DockModel, now: Date = Date()) {
-        for profile in model.preferences.profiles where profile.kind != .codex {
+        for profile in model.preferences.profiles where profile.kind != .codex && profile.kind != .agent {
             let records = model.companions.sessions(for: profile)
             let live = records.filter { $0.state != .closed && ClaudeProcess.isAlive($0) }
             let open = model.running[profile.id]?.isEmpty == false
@@ -34,7 +34,7 @@ extension ActivityMonitor {
             }
             if entries[profile.id] != summary { entries[profile.id] = summary }
         }
-        let allowed = Set(model.preferences.profiles.filter { $0.kind != .codex }.map(\.id))
+        let allowed = Set(model.preferences.profiles.filter { $0.kind != .codex && $0.kind != .agent }.map(\.id))
         companionStates = companionStates.filter { allowed.contains(String($0.key.split(separator: ":").first ?? "")) }
     }
 }

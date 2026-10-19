@@ -10,7 +10,7 @@
 
 ProfileDock puts your ChatGPT and Codex profiles within reach on every screen. Switch accounts, search local conversations, check usage, and see which tasks need your attention.
 
-ProfileDock also supports **Claude Desktop, Claude Code projects and Apple Terminal tabs**, including separate Claude accounts that stay signed in side by side. Drag the handles in the strip or profile list to save a new order. See [Claude and Terminal setup, scope and provider differences](docs/CLAUDE-TERMINAL.md).
+ProfileDock also supports **Claude Desktop, Claude Code projects and Apple Terminal tabs**, including separate Claude accounts that stay signed in side by side. It recognizes other coding agents that are installed or running in Terminal. Drag the handles in the strip or profile list to save a new order. See [Claude and Terminal setup, scope and provider differences](docs/CLAUDE-TERMINAL.md).
 
 **Free. Open source. Mac-native. Made by [Breukr](https://github.com/breukr).**
 
@@ -24,6 +24,28 @@ ProfileDock also supports **Claude Desktop, Claude Code projects and Apple Termi
 - **Fits your Mac.** Use the notch/menu bar, or drag a floating launcher anywhere on each display. Keep the notch free for other apps. Tiles adapt into rows, with pages for more accounts.
 - **Saved resets, explained.** Expand the resets row for an oldest-first expiry countdown.
 - **See your activity over time.** Expand Usage insights for tokens, API-equivalent estimates, and session activity. Compare Today, 7 days, or 30 days for one account or all local profiles.
+
+## Supported tools
+
+ProfileDock keeps one description of each tool: its name, executable names, app bundle, config directory, and where that tool stores a sign-in. It notices a tool when its command is on `PATH` or in a usual install location, when its app is in `/Applications` or `~/Applications`, or when its config directory already exists. A Terminal tab is recognized only while that tool's command is the foreground process.
+
+Separate accounts, side by side, are available only where a tool already gives each process its own directory. ProfileDock points that variable at a folder under `~/Library/Application Support/Account Dock/Companions` and does not store the API key or token. You sign in from the tool. Everything else can be opened, and says so when a second account is not available.
+
+| Tool | How ProfileDock sees it | Separate accounts |
+| --- | --- | --- |
+| ChatGPT / Codex | `codex`, ChatGPT.app / Codex.app, `~/.codex` | Yes. Existing profiles, `CODEX_HOME`, and `auth.json`. Unchanged. |
+| Claude Desktop and Claude Code | `claude`, Claude.app, `~/.claude` | Yes for separate Claude Desktop accounts (`CLAUDE_CONFIG_DIR`). A Terminal session uses the account it was started with. |
+| Grok (`grok`) | `grok`, `~/.grok` | Yes. `GROK_HOME` and that folder's `auth.json`. |
+| Hermes (`hermes`) | `hermes`, `~/.hermes` | Yes. `HERMES_HOME` (the same switch as `hermes -p`). |
+| Gemini CLI (`gemini`) | `gemini`, `~/.gemini` | Yes. `GEMINI_CLI_HOME`. Keychain storage stays off, because that is one login for the whole Mac. |
+| OpenCode (`opencode`) | `opencode`, `~/.local/share/opencode` | Yes. `OPENCODE_DB` points at that profile's database. Other XDG data stays put. |
+| GitHub Copilot CLI (`copilot`) | `copilot`, `~/.copilot` | No. The Mac Keychain item `copilot-cli` is one token. |
+| Aider (`aider`) | `aider` | No. There is no account directory, and ProfileDock does not store API keys. |
+| Amp (`amp`) | `amp`, `~/.local/share/amp` | No. Amp keeps one secrets file for this Mac. |
+| Cursor CLI (`agent`, `cursor-agent`) | either command, or `~/.cursor/cli-config.json` | No. A foreground command named `agent` is treated as Cursor CLI. |
+| Cursor | Cursor.app (`com.todesktop.230313mzl4w4u92`), `~/.cursor` | No. ProfileDock opens the installed app. |
+| Windsurf / Devin Desktop | Windsurf.app or Devin.app (`com.exafunction.windsurf`), `~/.codeium/windsurf` | No. ProfileDock opens the installed app. |
+| Goose (`goose`) | `goose`, `~/.config/goose` | No. ProfileDock does not read Goose's config or store keys. |
 
 **New in [1.5.0](docs/RELEASE-NOTES-1.5.0.md):** Claude Desktop and automatic coding-terminal discovery, clearer drag-to-reorder feedback, configurable grid columns and rows, and independent switches for the Terminals and Usage Insights sections. Choose any combination of 1–12 columns and rows from the notch grid menu or Appearance settings.
 

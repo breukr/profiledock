@@ -14,6 +14,10 @@ public struct Profile: Identifiable, Codable, Equatable, Sendable {
     public var terminalWindowID: Int?
     public var terminalProcessStarted: Double?
     public var terminalAgent: TerminalAgent?
+    /// Registry id when this profile launches a tool other than the original Claude and Codex providers.
+    public var agentID: String?
+    /// True only for a registry tool whose own directory can hold a separate sign-in.
+    public var isolatedAgentHome: Bool?
     public var claudeSessionID: String?
     /// A Claude Desktop entry with its own app data and Claude Code configuration, so it can stay signed in to another account.
     public var separateClaudeAccount: Bool?
@@ -21,7 +25,37 @@ public struct Profile: Identifiable, Codable, Equatable, Sendable {
     public var hiddenFromStrip: Bool?
     public var kind: ProfileProvider { provider ?? .codex }
     public var usesSeparateClaudeAccount: Bool { kind == .claude && separateClaudeAccount == true }
+    public var agentTool: AgentTool? {
+        if let agentID, let tool = AgentRegistry.tool(id: agentID) { return tool }
+        return terminalAgent?.tool
+    }
+    public var usesIsolatedAgentHome: Bool { kind == .agent && isolatedAgentHome == true && agentTool?.supportsIsolatedProfiles == true }
+    /// Saved agent profiles stay in the main strip. Once one is bound to a tab, that tab is still recognized.
+    public var tracksTerminalWindow: Bool { kind.usesTerminal || (kind == .agent && agentTool?.launchesInTerminal == true && terminalTTY != nil) }
     public var isShownInStrip: Bool { hiddenFromStrip != true }
+    /// Finder shortcut title. Claude and Codex keep the names they already use.
+    public var shortcutTitle: String {
+        if kind == .codex { return "ChatGPT" }
+        if kind == .agent, let name = agentTool?.name { return name }
+        return kind.label
+    }
+    public var listDetail: String {
+        if kind == .agent, let tool = agentTool { return tool.supportsIsolatedProfiles ? "\(tool.name) · separate account" : "\(tool.name) · shared sign-in" }
+        if kind == .terminal, let tool = terminalAgent?.tool, !tool.legacy { return tool.name }
+        return kind.label
+    }
+    public var tileCaption: String {
+        if kind == .claudeCode { return "Claude Code" }
+        if kind == .agent { return usesIsolatedAgentHome ? "Separate account" : "Shared sign-in" }
+        if kind == .terminal, let tool = terminalAgent?.tool, !tool.legacy { return tool.name }
+        return kind.label
+    }
+    public var accountCaption: String {
+        if kind == .codex { return "Your sign-in and conversation history belong to this profile." }
+        if kind == .agent, let tool = agentTool { return tool.accountNotice }
+        if kind == .terminal, let tool = terminalAgent?.tool, !tool.legacy { return tool.runningHelp }
+        return "This entry uses your existing app and sign-in."
+    }
     public var launcherPath: String?
     /// Opt-in, locally re-signed app. applicationPath continues to identify the signed source.
     public var dockApplicationPath: String?

@@ -289,7 +289,7 @@ struct IslandView: View {
                             .font(.system(size: 9)).buttonStyle(.plain).foregroundStyle(.white.opacity(0.75)).help(error.message)
                     }
                 } else {
-                    Text((profile.kind == .codex || profile.usesClaudeAccountUsage) ? (snapshot == nil ? "Loading usage…" : "No usage data") : (profile.kind == .terminal ? "Terminal window" : profile.usesSeparateClaudeAccount ? "Separate account · usage not reported yet" : "Usage not reported yet"))
+                    Text(profile.kind == .agent ? profile.tileCaption : (profile.kind == .codex || profile.usesClaudeAccountUsage) ? (snapshot == nil ? "Loading usage…" : "No usage data") : (profile.kind == .terminal ? "Terminal window" : profile.usesSeparateClaudeAccount ? "Separate account · usage not reported yet" : "Usage not reported yet"))
                         .font(.system(size: 10)).foregroundStyle(.white.opacity(0.45))
                 }
             }
@@ -304,7 +304,7 @@ struct IslandView: View {
                 presentation.toggleResetDetails(profile.id)
             }
             .help(resetHelp(snapshot))
-            } else { Text(profile.kind == .claudeCode ? "Claude Code" : profile.kind.label).font(.system(size: 10)).foregroundStyle(.white.opacity(0.55)).frame(height: 20) }
+            } else { Text(profile.kind == .agent ? (profile.agentTool?.name ?? profile.tileCaption) : profile.tileCaption).font(.system(size: 10)).foregroundStyle(.white.opacity(0.55)).frame(height: 20) }
             if let snapshot, entry?.error != nil || usage.now.timeIntervalSince(snapshot.fetchedAt) > (profile.usesClaudeAccountUsage ? 360 : 90) {
                 Text("Updated \(Self.age(snapshot.fetchedAt, now: usage.now)) ago")
                     .font(.system(size: 8)).foregroundStyle(.orange.opacity(0.9))
@@ -330,8 +330,10 @@ struct IslandView: View {
     }
 
     private func activityHelp(_ state: ActivitySummary?, profile: Profile) -> String {
+        if profile.kind == .agent, let tool = profile.agentTool { return tool.accountNotice }
         if profile.kind != .codex {
             if model.terminalAgent(for: profile) == .codex { return "Codex is running in this Terminal tab. Per-tab Codex CLI task activity and usage are not reported by this integration." }
+            if let tool = model.terminalAgent(for: profile)?.tool, !tool.legacy { return tool.runningHelp }
             if profile.kind == .terminal, state?.working == 0, state?.waiting == 0 { return "This Terminal tab. Claude Code activity appears when connected." }
             return "Tracks connected local Claude Code sessions. Claude Chat and Cowork activity are not available. " + (state?.liveAvailable == true ? "" : "Connect Claude Code in Profiles to enable activity.")
         }

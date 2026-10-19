@@ -269,7 +269,7 @@ struct SettingsView: View {
                             Circle().fill(isOpen ? Color.green : Color.secondary.opacity(0.5)).frame(width: 5, height: 5)
                             Text(model.state(profile))
                             Text("·")
-                            Text(profile.kind != .codex ? profile.kind.label : profile.dockApplicationPath != nil ? "Custom Dock icon" : profile.applicationPath == nil ? "Shared app" : "Separate app")
+                            Text(profile.kind != .codex ? profile.listDetail : profile.dockApplicationPath != nil ? "Custom Dock icon" : profile.applicationPath == nil ? "Shared app" : "Separate app")
                             if !profile.isShownInStrip { Text("·"); Text("Hidden from strip") }
                         }.font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }.frame(maxWidth: .infinity, alignment: .leading)
@@ -300,7 +300,7 @@ struct SettingsView: View {
 
         Section {
             Button("Profile settings…", systemImage: "slider.horizontal.3") { editing = profile }
-            if profile.kind != .terminal { Button("Context tagging…", systemImage: "at") { manageContext(for: profile.id) } }
+            if profile.kind != .terminal && profile.kind != .agent { Button("Context tagging…", systemImage: "at") { manageContext(for: profile.id) } }
         }
         Section("Window") {
             Button("Open profile", systemImage: "arrow.up.forward.app") { model.select(profile) }
@@ -655,12 +655,20 @@ struct SettingsView: View {
 
 }
 
+private struct AddChoice: Hashable {
+    var provider: ProfileProvider
+    var toolID: String?
+    static let codex = AddChoice(provider: .codex, toolID: nil)
+}
+
 private struct AddProfileSheet: View {
     @ObservedObject var model: DockModel
     @Environment(\.dismiss) var dismiss
     @State private var name = ""
     @FocusState private var nameFocused: Bool
-    @State private var kind: ProfileProvider = .codex
+    @State private var choice = AddChoice.codex
+    private var kind: ProfileProvider { choice.provider }
+    private var selectedTool: AgentTool? { choice.toolID.flatMap { AgentRegistry.tool(id: $0) } }
     @State private var project: URL?
     @State private var terminalWindows: [TerminalWindow] = []
     @State private var terminalSelection = ""
@@ -673,10 +681,15 @@ private struct AddProfileSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Add Profile").font(.title2.weight(.semibold))
-            Picker("App", selection: $kind) {
-                ForEach(ProfileProvider.allCases, id: \.self) { Text($0.label).tag($0) }
+            Picker("App", selection: $choice) {
+                ForEach(ProfileProvider.allCases.filter { $0 != .agent }, id: \.self) { provider in
+                    Text(provider.label).tag(AddChoice(provider: provider, toolID: nil))
+                }
+                ForEach(AgentRegistry.addable) { tool in
+                    Text(tool.name).tag(AddChoice(provider: .agent, toolID: tool.id))
+                }
             }
-            Text(kind == .codex ? "Create a separate Codex sign-in, history and settings." : kind == .claude ? "Add Claude Desktop to the strip, with your existing sign-in or a separate account." : kind == .terminal ? "Choose an open Terminal tab running Claude Code or Codex. It appears in the strip only while a coding session is open." : "Save a Claude Code project. It appears in the strip while Claude runs in its Terminal tab.").foregroundStyle(.secondary)
+            Text(choiceDescription).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             VStack(alignment: .leading, spacing: 6) {
                 Text("Profile name").font(.subheadline.weight(.medium))
                 TextField("For example, Personal or Work", text: $name).textFieldStyle(.roundedBorder)
@@ -716,6 +729,15 @@ private struct AddProfileSheet: View {
                 }.pickerStyle(.radioGroup)
                 Text(separateClaude ? "Opens its own Claude window with a separate sign-in, chats and Claude Code settings. Both accounts can stay open at the same time. Sign in with the other account the first time it opens." : "Uses the Claude Desktop sign-in you already have.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            } else if kind == .agent, selectedTool?.launchesInTerminal == true {
+                HStack {
+                    Text(project?.path ?? model.home.path).font(.caption).lineLimit(2)
+                    Spacer()
+                    Button("Choose folder…") {
+                        let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true
+                        panel.begin { if $0 == .OK { project = panel.url } }
+                    }
+                }
             } else if kind.usesTerminal {
                 HStack {
                     Text(project?.path ?? model.home.path).font(.caption).lineLimit(2)
@@ -745,6 +767,7 @@ private struct AddProfileSheet: View {
                     Task {
                         do {
                             if kind == .codex { try await model.createProfile(name: name, separateApp: separate, source: source) }
+                            else if kind == .agent, let toolID = choice.toolID { try model.createAgentProfile(toolID: toolID, name: name, project: project) }
                             else {
                                 var window: TerminalWindow?
                                 if kind.usesTerminal, !terminalSelection.isEmpty {
@@ -761,9 +784,9 @@ private struct AddProfileSheet: View {
                     }
                 }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(ProfileLaunch.newProfile(name: name) == nil || (kind == .terminal && terminalSelection.isEmpty))
             }
-        }.padding(28).frame(width: 500).disabled(creating).interactiveDismissDisabled(creating).onAppear { nameFocused = true }
-            .onChange(of: kind) { _, value in terminalSelection = ""; terminalWindows = []; error = nil; if value == .claude { separateClaude = hasSharedClaude } }
-            .task(id: kind) {
+        }.padding(28).frame(width: 560).disabled(creating).interactiveDismissDisabled(creating).onAppear { nameFocused = true }
+            .onChange(of: choice) { _, value in terminalSelection = ""; terminalWindows = []; error = nil; if value.provider == .claude { separateClaude = hasSharedClaude } }
+            .task(id: choice) {
                 guard kind.usesTerminal else { return }
                 while !Task.isCancelled {
                     await refreshTerminals()
@@ -772,6 +795,16 @@ private struct AddProfileSheet: View {
             }
     }
     private var hasSharedClaude: Bool { model.preferences.profiles.contains { $0.kind == .claude && !$0.usesSeparateClaudeAccount } }
+    private var choiceDescription: String {
+        if let selectedTool { return selectedTool.accountNotice }
+        switch kind {
+        case .codex: return "Create a separate Codex sign-in, history and settings."
+        case .claude: return "Add Claude Desktop to the strip, with your existing sign-in or a separate account."
+        case .terminal: return "Choose an open Terminal tab running a coding agent. It appears in the strip only while that session is open."
+        case .claudeCode: return "Save a Claude Code project. It appears in the strip while Claude runs in its Terminal tab."
+        case .agent: return ""
+        }
+    }
     private func refreshTerminals() async {
         guard !loadingWindows, kind.usesTerminal else { return }
         let requestedKind = kind
@@ -782,7 +815,7 @@ private struct AddProfileSheet: View {
             guard requestedKind == kind, !Task.isCancelled else { return }
             terminalWindows = windows
             if !windows.contains(where: { $0.id == terminalSelection }) { terminalSelection = "" }
-            error = windows.isEmpty ? "No open coding terminals. Start a Claude Code or Codex session in Terminal, then try again." : nil
+            error = windows.isEmpty ? "No open coding terminals. Start a coding agent in Terminal, then try again." : nil
         } catch { if requestedKind == kind { self.error = error.localizedDescription; terminalWindows = []; terminalSelection = "" } }
     }
 }
