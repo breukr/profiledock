@@ -105,8 +105,11 @@ public enum AgentProcessTable {
     /// Only foreground, running or sleeping processes count, never idle shells, stopped jobs or zombies.
     /// When several agents share a TTY's foreground group, the earliest process (the one the shell started) wins.
     /// Lines are `pid tpgid tty stat comm`; older callers omit tpgid, or both numbers.
+    /// `executablePath` gives the kernel's path of a process without its arguments. It identifies tools that rename
+    /// their process title (Kimi Code shows as `kimi-code`), against confirmed installs and package markers only.
     public static func agents(_ table: String, tools: [AgentTool] = AgentRegistry.tools, installs: [String: String] = [:],
-                              inspect: (Int32) -> AgentProcessLaunch?, resolve: (String) -> String) -> [String: AgentTerminalProcess] {
+                              inspect: (Int32) -> AgentProcessLaunch?, executablePath: (Int32) -> String? = { _ in nil },
+                              resolve: (String) -> String) -> [String: AgentTerminalProcess] {
         var result: [String: AgentTerminalProcess] = [:]
         var leaders = Set<String>()
         for line in table.split(separator: "\n") {
@@ -124,8 +127,18 @@ public enum AgentProcessTable {
             let tty = "/dev/" + fields[0]
             guard ClaudeSession.validTTY(tty) else { continue }
             let command = fields[2].trimmingCharacters(in: .whitespaces)
-            guard AgentIdentity.worthInspecting(command, tools: tools) else { continue }
-            let launch = (pid > 0 && AgentIdentity.needsLaunch(command, tools: tools) ? inspect(pid) : nil) ?? AgentProcessLaunch(executable: command, arguments: [])
+            let launch: AgentProcessLaunch
+            if AgentIdentity.worthInspecting(command, tools: tools) {
+                launch = (pid > 0 && AgentIdentity.needsLaunch(command, tools: tools) ? inspect(pid) : nil) ?? AgentProcessLaunch(executable: command, arguments: [])
+            } else {
+                // A renamed title: only its real executable path, and only a confirmed install or package counts.
+                let name = URL(fileURLWithPath: command).lastPathComponent.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+                guard pid > 0, !shells.contains(name), let path = executablePath(pid), path.hasPrefix("/") else { continue }
+                let resolved = resolve(path).lowercased()
+                guard installs[path] != nil || installs[resolve(path)] != nil
+                        || tools.contains(where: { $0.packageMarkers.contains { resolved.contains($0) } }) else { continue }
+                launch = AgentProcessLaunch(executable: path, arguments: [])
+            }
             guard let tool = AgentIdentity.tool(launch: launch, tools: tools, installs: installs, resolve: resolve), tool.launchesInTerminal else { continue }
             // The job the shell started leads the TTY's foreground group; an agent it spawned does not replace it.
             let leads = pid > 0 && pid == group
@@ -140,6 +153,9 @@ public enum AgentProcessTable {
         return result
     }
 }
+
+/// Foreground processes that are never an agent, so their path is not looked up.
+let shells: Set<String> = ["zsh", "bash", "fish", "sh", "dash", "tcsh", "csh", "ksh", "nu", "login", "tmux", "screen", "ssh", "sudo", "su", "top", "less", "man", "vim", "nvim", "git"]
 
 /// Which tools ProfileDock adds by itself, and which it only offers.
 public enum AgentAutoAdd {

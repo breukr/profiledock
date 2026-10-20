@@ -97,7 +97,7 @@ actor TerminalClient {
             let data = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
             guard process.terminationStatus == 0 else { throw CompanionError.message("Running coding terminals could not be detected.") }
             // Script-based CLIs run as node or python; their argv names the script. The environment is never read.
-            return TerminalAgent.processes(String(data: data, encoding: .utf8) ?? "", installs: installs, inspect: DockModel.launch(pid:), resolve: { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path })
+            return TerminalAgent.processes(String(data: data, encoding: .utf8) ?? "", installs: installs, inspect: DockModel.launch(pid:), executablePath: DockModel.executablePath(pid:), resolve: { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path })
         }.value
         return windows.map { var value = $0; value.agent = agents[value.tty]; return value }
     }

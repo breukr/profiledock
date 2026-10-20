@@ -231,6 +231,14 @@ final class DockModel: ObservableObject {
 
     static func arguments(pid: pid_t) -> [String]? { launch(pid: pid)?.arguments }
 
+    /// The kernel's executable path of one process, without its arguments.
+    nonisolated static func executablePath(pid: pid_t) -> String? {
+        guard pid > 0 else { return nil }
+        var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
+        guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
+        return String(cString: buffer)
+    }
+
     /// Executable path and argv of one process. Only argv is decoded; environment entries are skipped.
     nonisolated static func launch(pid: pid_t) -> AgentProcessLaunch? {
         guard pid > 0 else { return nil }

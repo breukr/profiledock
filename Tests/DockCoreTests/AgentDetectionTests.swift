@@ -96,6 +96,20 @@ final class AgentDetectionTests: XCTestCase {
         XCTAssertFalse(inspected.contains(900))
         XCTAssertFalse(inspected.contains(700), "a plain command is matched by name; its argv may hold a prompt")
 
+        // A tool that renames its process title is found by its executable path, never by guessing from the title.
+        let renamed = """
+          300 300 ttys012 S+ kimi-code
+          400 400 ttys013 S+ my-server
+          500 500 ttys014 S+ -zsh
+        """
+        let paths: [Int32: String] = [300: "/Users/f/.kimi-code/bin/kimi", 400: "/Users/f/bin/my-server", 500: "/bin/zsh"]
+        let kimi = fixture("kimi", executables: ["kimi"], markers: ["/.kimi-code/"], ambiguous: ["kimi"])
+        var looked: [Int32] = []
+        let found2 = AgentProcessTable.agents(renamed, tools: tools + [kimi], inspect: { _ in nil }, executablePath: { looked.append($0); return paths[$0] }, resolve: { $0 })
+        XCTAssertEqual(found2["/dev/ttys012"]?.tool.id, "kimi")
+        XCTAssertNil(found2["/dev/ttys013"])
+        XCTAssertFalse(looked.contains(500), "shells are skipped")
+
         // With tpgid, the job the shell started wins even when an agent it spawned has a lower pid.
         let grouped = """
           9000 9000 ttys011 S+ /Users/f/.local/bin/claude
@@ -295,14 +309,17 @@ final class AgentLiveReport: XCTestCase {
                 + (agent.configPath.map { " config: \($0)" } ?? "") + (agent.isInstalled ? "" : " (used before, not installed)"))
         }
         let ps = Process(), pipe = Pipe()
-        ps.executableURL = URL(fileURLWithPath: "/bin/ps"); ps.arguments = ["-axo", "pid=,tty=,stat=,comm="]; ps.standardOutput = pipe
+        ps.executableURL = URL(fileURLWithPath: "/bin/ps"); ps.arguments = ["-axo", "pid=,tpgid=,tty=,stat=,comm="]; ps.standardOutput = pipe
         try ps.run(); let data = pipe.fileHandleForReading.readDataToEndOfFile(); ps.waitUntilExit()
-        let agents = AgentProcessTable.agents(String(decoding: data, as: UTF8.self), inspect: { pid in
+        let agents = AgentProcessTable.agents(String(decoding: data, as: UTF8.self), installs: InstalledAgent.installs(AgentDetector.installed(scan)), inspect: { pid in
             var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]; var size = 0
             guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 0 else { return nil }
             var buffer = Data(count: size)
             guard buffer.withUnsafeMutableBytes({ sysctl(&mib, 3, $0.baseAddress, &size, nil, 0) }) == 0 else { return nil }
             return ProcessIdentity.launch(from: buffer.prefix(size))
+        }, executablePath: { pid in
+            var buffer = [CChar](repeating: 0, count: 4096)
+            return proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 ? String(cString: buffer) : nil
         }, resolve: { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path })
         lines += ["", "# Foreground agents in TTYs", ""] + agents.values.sorted { $0.tty < $1.tty }.map { "- \($0.tty): \($0.tool.name) (pid \($0.pid))" }
         try (lines.joined(separator: "\n") + "\n").write(toFile: output, atomically: true, encoding: .utf8)
