@@ -17,9 +17,9 @@ Checked 2026-10-20 unless noted. "Reused" rows were verified for PR #18 and re-r
 ## Automatic adding
 
 - A running desktop agent app (Grok Bot, T3 Code, Conductor, Antigravity, Kiro, Cursor, Windsurf / Devin, Trae, and Claude Desktop) gets a tile with the existing sign-in. An instance started with its own `--user-data-dir` is treated as someone else's and left alone.
-- Editors and terminals that are not mainly agents (Zed, Warp) and installed CLIs are offered with one click in **Settings → Agents** and at the top of **Add Profile**.
+- Editors and terminals that are not mainly agents (Zed, Warp) and installed CLIs are offered with one click in **Settings → Coding Agents** and at the top of **Add Profile**.
 - Coding terminals keep appearing on their own while **Automatically find coding terminals** is on.
-- Removing an automatic entry adds the tool to a dismissed list, so it is not added again until you add it by hand. Hiding keeps the entry. **Settings → Agents → Add running agent apps automatically** turns automatic adding off.
+- Removing an automatic entry adds the tool to a dismissed list, so it is not added again until you add it by hand. Hiding keeps the entry. **Settings → Coding Agents → Add running agent apps** turns automatic adding off.
 
 ## Coverage table
 

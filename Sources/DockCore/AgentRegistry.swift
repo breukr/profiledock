@@ -59,7 +59,7 @@ public struct AgentTool: Sendable, Equatable, Identifiable {
         case .environmentDirectory(let variable):
             return Self.isolatedNotice(name: name, mechanism: "folder (\(variable))") + Self.detailSentence(detail)
         case .userDataDirectory:
-            return "Opens its own \(name) window with a separate sign-in and app data in Account Dock. Both accounts can stay open at the same time. Sign in from \(name) the first time it opens. ProfileDock does not store the API key or token." + Self.detailSentence(detail)
+            return "Opens its own \(name) window with a separate sign-in and app data, kept by ProfileDock. Both accounts can stay open at the same time. Sign in from \(name) the first time it opens. ProfileDock does not store the API key or token." + Self.detailSentence(detail)
         case .unsupported(let reason):
             return "Separate accounts aren't supported for \(name). ProfileDock can open it, and it keeps using the sign-in already on this Mac. \(reason)"
         }
@@ -79,7 +79,7 @@ public struct AgentTool: Sendable, Equatable, Identifiable {
     }
 
     private static func isolatedNotice(name: String, mechanism: String) -> String {
-        "This profile has its own \(name) \(mechanism) in Account Dock. Sign in from \(name) the first time it opens. ProfileDock does not store the API key or token."
+        "This profile has its own \(name) \(mechanism), kept in ProfileDock's app data. Sign in from \(name) the first time it opens. ProfileDock does not store the API key or token."
     }
     private static func detailSentence(_ detail: String?) -> String {
         guard let detail, !detail.isEmpty else { return "" }
@@ -157,7 +157,7 @@ public enum AgentRegistry {
         tool(id: "opencode", name: "OpenCode", executables: ["opencode"], configHomeEnvironment: "XDG_DATA_HOME",
              defaultConfigDirectory: ".local/share/opencode", configMarkers: [".config/opencode"],
              authNote: "auth.json in $XDG_DATA_HOME/opencode (later releases move it into opencode.db in the same folder). OPENCODE_CONFIG and OPENCODE_DB do not move the sign-in.",
-             isolation: .environmentDirectory(variable: "XDG_DATA_HOME"), interface: .terminal, color: "3ECF8E",
+             isolation: .environmentDirectory(variable: "XDG_DATA_HOME"), interface: .terminal, color: "1F8A5B",
              documentation: "https://opencode.ai/docs/cli/",
              detail: "Programs that OpenCode starts from this tab also see that data folder.",
              packageMarkers: ["node_modules/opencode-ai/", "/cellar/opencode/"], installDirectories: [".opencode/bin"], installHint: "brew install sst/tap/opencode"),
@@ -170,7 +170,7 @@ public enum AgentRegistry {
         tool(id: "aider", name: "Aider", executables: ["aider"], configMarkers: [".aider.conf.yml"],
              authNote: "API keys in .aider.conf.yml or an env file the user already has. ProfileDock does not create those files or store keys.",
              isolation: .unsupported("Aider has no signed-in account directory. Chat history stays in the git repository."),
-             interface: .terminal, color: "14B8A6",
+             interface: .terminal, color: "0F766E",
              documentation: "https://aider.chat/docs/config/aider_conf.html",
              packageMarkers: ["/pipx/venvs/aider-chat/", "/uv/tools/aider-chat/"], installHint: "python -m pip install aider-install && aider-install"),
         tool(id: "amp", name: "Amp", executables: ["amp"], configMarkers: [".amp", ".config/amp"],
@@ -197,13 +197,13 @@ public enum AgentRegistry {
              applicationNames: ["Windsurf.app", "Devin.app"], defaultConfigDirectory: ".codeium/windsurf", configMarkers: [".devin"],
              authNote: "Login is the Devin or Windsurf account in the app, or an API key typed into its own settings. Package ids still use windsurf.",
              isolation: .unsupported("Devin Desktop has no documented config-directory variable, so ProfileDock only opens the installed app."),
-             interface: .desktop, color: "0EA5E9",
+             interface: .desktop, color: "0369A1",
              documentation: "https://docs.windsurf.com/windsurf/getting-started",
              addsWhenRunning: true),
         tool(id: "goose", name: "Goose", executables: ["goose"], defaultConfigDirectory: ".config/goose",
              authNote: "Provider keys are in the system keyring (service goose, account secrets). GOOSE_PATH_ROOT moves config and data but not that item. ProfileDock does not read either.",
              isolation: .unsupported("Goose keeps provider keys in one Keychain item for this Mac. Moving its config folder does not move that item."),
-             interface: .terminal, color: "E8A317",
+             interface: .terminal, color: "9A6700",
              documentation: "https://block.github.io/goose/",
              installHint: "brew install block-goose-cli"),
         // Added 2026-10-20 from vendor docs and source; see docs/AGENT-COVERAGE.md.
@@ -227,7 +227,7 @@ public enum AgentRegistry {
         tool(id: "kilo", name: "Kilo Code CLI", executables: ["kilo", "kilocode"], configHomeEnvironment: "XDG_DATA_HOME",
              defaultConfigDirectory: ".local/share/kilo", configMarkers: [".config/kilo"],
              authNote: "auth.json in $XDG_DATA_HOME/kilo. KILO_CONFIG_DIR moves settings only. Kilo is built on OpenCode and stores data the same way.",
-             isolation: .environmentDirectory(variable: "XDG_DATA_HOME"), interface: .terminal, color: "F8F675",
+             isolation: .environmentDirectory(variable: "XDG_DATA_HOME"), interface: .terminal, color: "6E6A12",
              documentation: "https://kilo.ai/docs/cli",
              detail: "Programs that Kilo starts from this tab also see that data folder.",
              packageMarkers: ["node_modules/@kilocode/cli/", "/cellar/kilo/"], installHint: "npm install -g @kilocode/cli"),
@@ -243,7 +243,7 @@ public enum AgentRegistry {
              packageMarkers: ["node_modules/@continuedev/cli/"], ambiguousExecutables: ["cn"], installHint: "npm install -g @continuedev/cli"),
         tool(id: "openhands", name: "OpenHands CLI", executables: ["openhands"], configHomeEnvironment: "OPENHANDS_PERSISTENCE_DIR", defaultConfigDirectory: ".openhands",
              authNote: "agent_settings.json (model key) and cloud/api_key.txt in OPENHANDS_PERSISTENCE_DIR (normally ~/.openhands).",
-             isolation: .environmentDirectory(variable: "OPENHANDS_PERSISTENCE_DIR"), interface: .terminal, color: "C9B974",
+             isolation: .environmentDirectory(variable: "OPENHANDS_PERSISTENCE_DIR"), interface: .terminal, color: "786A2A",
              documentation: "https://docs.openhands.dev/openhands/usage/cli/installation",
              packageMarkers: ["/uv/tools/openhands/", "/pipx/venvs/openhands/"], installHint: "uv tool install openhands --python 3.12"),
         tool(id: "vibe", name: "Mistral Vibe", executables: ["vibe"], configHomeEnvironment: "VIBE_HOME", defaultConfigDirectory: ".vibe",
@@ -275,13 +275,13 @@ public enum AgentRegistry {
         tool(id: "codebuff", name: "Codebuff", executables: ["codebuff"], defaultConfigDirectory: ".config/manicode",
              authNote: "credentials.json in ~/.config/manicode.",
              isolation: .unsupported("Its folder setting is undocumented outside the source and not used by every code path."),
-             interface: .terminal, color: "00C853",
+             interface: .terminal, color: "00813A",
              documentation: "https://www.codebuff.com/docs",
              packageMarkers: ["node_modules/codebuff/"], installHint: "npm install -g codebuff"),
         tool(id: "junie", name: "Junie CLI", executables: ["junie"], defaultConfigDirectory: ".junie",
              authNote: "JetBrains Account sign-in. JUNIE_HOME moves ~/.junie, but where the sign-in is kept is not documented.",
              isolation: .unsupported("JetBrains does not document whether JUNIE_HOME moves the sign-in."),
-             interface: .terminal, color: "47E54B",
+             interface: .terminal, color: "1E7F2E",
              documentation: "https://www.jetbrains.com/help/junie/junie-cli.html",
              packageMarkers: ["node_modules/@jetbrains/junie/"], installHint: "npm install -g @jetbrains/junie"),
         tool(id: "antigravity-cli", name: "Antigravity CLI", executables: ["agy"], defaultConfigDirectory: ".gemini/antigravity-cli",
@@ -337,7 +337,7 @@ public enum AgentRegistry {
              defaultConfigDirectory: ".warp",
              authNote: "The Warp sign-in is in the macOS Keychain. WARP_API_KEY is for headless use; ProfileDock does not set it.",
              isolation: .unsupported("Warp's data-profile setting only works in development builds."),
-             interface: .desktop, color: "01A4FF",
+             interface: .desktop, color: "0369C9",
              documentation: "https://docs.warp.dev")
     ]
 
@@ -642,8 +642,9 @@ public enum AgentProfiles {
         profile.provider = .agent
         profile.agentID = tool.id
         profile.color = tool.color
-        // Desktop apps show their installed app icon with the profile color as a dot.
-        profile.dockIconStyle = tool.launchesInTerminal || tool.bundleIdentifiers.isEmpty ? .initials : .dot
+        // Desktop apps show their installed app icon with the profile color as a dot. Terminal tools show the
+        // Terminal mark in the tool's color with the tool's badge, the same as a discovered coding tab.
+        profile.dockIconStyle = tool.launchesInTerminal ? .chatgpt : tool.bundleIdentifiers.isEmpty ? .initials : .dot
         profile.terminalAgent = tool.launchesInTerminal ? TerminalAgent(rawValue: tool.id) : nil
         profile.isolatedAgentHome = separate && tool.supportsIsolatedProfiles ? true : nil
         return profile

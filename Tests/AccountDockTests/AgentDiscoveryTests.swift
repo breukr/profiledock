@@ -88,7 +88,7 @@ final class AgentDiscoveryTests: XCTestCase {
         for _ in 0..<50 where model.messageRecovery == nil { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertEqual(model.messageRecovery?.title, "Open Anyway")
         XCTAssertEqual(model.messageRecovery?.opensAnyway, true)
-        XCTAssertTrue(model.message?.contains("`pi`") == true)
+        XCTAssertTrue(model.message?.contains("“pi”") == true)
         model.installedAgents = [InstalledAgent(tool: try XCTUnwrap(pi.agentTool), executablePath: "/opt/homebrew/bin/pi", applicationPath: nil, configPath: nil, evidence: [.executable])]
         XCTAssertEqual(model.agentAvailability(pi), .installed)
         XCTAssertEqual(model.state(pi), "Closed")
@@ -114,6 +114,14 @@ final class AgentDiscoveryTests: XCTestCase {
         model.autoAdd(running: [grokBot])
         await settle()
         XCTAssertEqual(model.preferences.profiles.filter { $0.agentID == "grok-bot" }.map(\.name), ["Work"])
+    }
+
+    @MainActor func testNotNowHidesSuggestionsButKeepsAutomaticAdding() async throws {
+        let model = DockModel(home: try home())
+        model.preferences.hiddenAgentOffers = ["grok-bot"]
+        model.autoAdd(running: [grokBot])
+        await settle()
+        XCTAssertEqual(model.preferences.profiles.map(\.agentID), ["grok-bot"])
     }
 
     @MainActor func testTheSettingAlsoStopsTheStartupClaudeDesktopEntry() async throws {
