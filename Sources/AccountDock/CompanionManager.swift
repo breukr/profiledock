@@ -11,6 +11,7 @@ import DockCore
     var terminalError: String?
     /// Coding sessions in other terminal apps and in tmux.
     var hostedWindows: [TerminalWindow] = []
+    var hostedError = false
     init(model: DockModel) { self.model = model }
     func start() {
         guard timer == nil else { return }
@@ -48,14 +49,17 @@ import DockCore
             // Automation they are found here too, so they still appear and can be brought forward.
             let scripted = !self.windows.isEmpty || (self.terminalError == nil && self.terminalStarted != nil)
             if terminals {
-                let hosted = (try? await TerminalClient.shared.hostedSessions(installs: InstalledAgent.installs(model.installedAgents ?? []), skip: { host in
-                    scripted && host.applicationPath.flatMap { Bundle(path: $0)?.bundleIdentifier } == "com.apple.Terminal"
-                })) ?? []
-                let known = Set(self.windows.map(\.tty))
-                self.hostedWindows = hosted.filter { !known.contains($0.tty) }
-            } else { self.hostedWindows = [] }
+                do {
+                    let hosted = try await TerminalClient.shared.hostedSessions(installs: InstalledAgent.installs(model.installedAgents ?? []), skip: { host in
+                        scripted && host.applicationPath.flatMap { Bundle(path: $0)?.bundleIdentifier } == "com.apple.Terminal"
+                    })
+                    let known = Set(self.windows.map(\.tty))
+                    self.hostedWindows = hosted.filter { !known.contains($0.tty) }
+                    self.hostedError = false
+                } catch { self.hostedError = true }  // A failed scan keeps the last result instead of dropping every tile.
+            } else { self.hostedWindows = []; self.hostedError = false }
             guard !Task.isCancelled else { return }
-            model.reconcileDiscoveredTerminals(includeTerminalApp: self.terminalError == nil)
+            model.reconcileDiscoveredTerminals(includeTerminalApp: self.terminalError == nil, includeHosted: !self.hostedError)
             model.rememberCompanionSessions()
             model.refresh()
             model.companionRevision += 1
@@ -101,12 +105,12 @@ import DockCore
     }
     /// Only an authoritative scan removes automatically discovered entries. Saved projects stay intact.
     /// `includeTerminalApp` is false when Terminal.app could not be read; its entries are then left as they are.
-    func reconcileDiscoveredTerminals(includeTerminalApp: Bool = true) {
+    func reconcileDiscoveredTerminals(includeTerminalApp: Bool = true, includeHosted: Bool = true) {
         var profiles = preferences.profiles
         // A tab that a saved profile opened belongs to that profile, so it is never listed twice.
         let saved = Set(profiles.filter { $0.discoveredTerminal != true }.compactMap { companions.window(for: $0)?.id })
         profiles.removeAll { profile in
-            guard profile.discoveredTerminal == true, includeTerminalApp || profile.terminalHost != nil else { return false }
+            guard profile.discoveredTerminal == true, profile.terminalHost == nil ? includeTerminalApp : includeHosted else { return false }
             guard let window = companions.window(for: profile) else { return true }
             return window.agent == nil || saved.contains(window.id)
         }
@@ -117,7 +121,8 @@ import DockCore
                 let number = window.tty.replacingOccurrences(of: "/dev/ttys", with: "")
                 let id = "terminal-\(host.replacingOccurrences(of: ".", with: "-"))-\(Int(started))-\(number)"
                 guard Profile.validID(id), !(preferences.hiddenProfileIDs ?? []).contains(id) else { continue }
-                var profile = Profile(id: id, name: "\(window.agent!.label) · \(window.title)", color: window.agent?.tool?.color ?? "546E7A")
+                // Named like Terminal.app entries; the host app shows on the tile's status line.
+                var profile = Profile(id: id, name: "\(window.agent!.label) · \(number)", color: window.agent?.tool?.color ?? "546E7A")
                 profile.provider = .terminal; profile.discoveredTerminal = true
                 // The host app's own icon with the agent's badge.
                 profile.dockIconStyle = .dot
@@ -226,7 +231,8 @@ import DockCore
         for profile in preferences.profiles where profile.kind.usesTerminal || (profile.kind == .agent && profile.agentTool?.launchesInTerminal == true) {
             guard let agent = companions.window(for: profile)?.agent,
                   profile.kind != .agent || agent.rawValue == profile.agentID,
-                  let app = applications.first(where: { $0.bundleIdentifier == (profile.terminalHost ?? "com.apple.Terminal") }),
+                  let app = companions.window(for: profile)?.hostProcess.flatMap({ pid in applications.first { $0.processIdentifier == pid } })
+                    ?? applications.first(where: { $0.bundleIdentifier == (profile.terminalHost ?? "com.apple.Terminal") }),
                   let running = RunningProfileApplication(app) else { continue }
             result[profile.id] = [running]
         }
@@ -481,7 +487,9 @@ import DockCore
             message = "\(profile.name) runs inside \(host) on \(window.tty.replacingOccurrences(of: "/dev/", with: "")). Switch to its pane in your terminal."
             return
         }
-        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: host).first(where: { !$0.isTerminated }) else {
+        // The exact instance that owns this session; another account's window of the same app stays where it is.
+        guard let app = window.hostProcess.flatMap(NSRunningApplication.init(processIdentifier:))
+                ?? NSRunningApplication.runningApplications(withBundleIdentifier: host).first(where: { !$0.isTerminated }) else {
             showProfileMessage("\(window.title) is not running anymore.", for: profile, actionTitle: "Refresh"); return
         }
         markCompanionRead(profile)
@@ -502,8 +510,12 @@ import DockCore
 
     func closeCompanion(_ profile: Profile) {
         guard !closing.contains(profile.id) else { return }
-        if profile.terminalHost != nil {
-            showProfileMessage("Close this session in \(companions.window(for: profile)?.title ?? "its terminal"). ProfileDock only closes Terminal.app windows.", for: profile, actionTitle: "Show Session")
+        if let host = profile.terminalHost {
+            if host == "com.apple.Terminal" {
+                showProfileMessage("To close Terminal tabs from ProfileDock, allow it to control Terminal in Privacy & Security → Automation.", for: profile, actionTitle: "Open Privacy Settings", url: Self.automationSettings)
+            } else {
+                showProfileMessage("Close this session in \(companions.window(for: profile)?.title ?? "its terminal"). ProfileDock closes only Terminal.app windows.", for: profile, actionTitle: "Show Session")
+            }
             return
         }
         if profile.kind == .claude {

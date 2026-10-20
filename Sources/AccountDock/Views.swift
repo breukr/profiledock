@@ -274,6 +274,8 @@ struct IslandView: View {
                         Text(warning.text).font(.system(size: 10, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.8).foregroundStyle(.orange)
                     } else if model.opening.contains(profile.id) {
                         Text("Opening…").font(.system(size: 10)).lineLimit(1).foregroundStyle(.white.opacity(0.75))
+                    } else if profile.terminalHost != nil, let host = model.companions.window(for: profile)?.title, activityText(taskState) == nil {
+                        Text("In \(host)").font(.system(size: 10)).lineLimit(1).foregroundStyle(.white.opacity(0.75))
                     } else {
                     Text(activityText(taskState) ?? (active ? "Active" : (isOpen ? "Open" : (index < 9 ? "⌥⌘\(index + 1)" : "Open"))))
                         .font(.system(size: 10, weight: (taskState?.working ?? 0) > 0 ? .semibold : .regular))

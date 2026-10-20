@@ -200,10 +200,20 @@ final class HostedTerminalTests: XCTestCase {
         model.reconcileDiscoveredTerminals()
         model.reconcileDiscoveredTerminals()
         let found = model.preferences.profiles.filter { $0.discoveredTerminal == true }
-        XCTAssertEqual(found.map(\.name), ["Claude Code · iTerm2", "OpenCode · tmux"])
+        XCTAssertEqual(found.map(\.name), ["Claude Code · 001", "OpenCode · 003"])
         XCTAssertEqual(found.map(\.terminalHost), ["com.googlecode.iterm2", "tmux"])
         XCTAssertEqual(model.liveTerminalProfiles.count, 2)
         XCTAssertEqual(model.state(found[1]), "Running in tmux")
+        // Hosted sessions keep their state while Terminal.app itself cannot be read.
+        model.companions.terminalError = TerminalClientError.automationDenied.localizedDescription
+        XCTAssertEqual(model.state(found[0]), "Running in iTerm2")
+        model.companions.terminalError = nil
+        // A failed process scan keeps the tiles.
+        model.reconcileDiscoveredTerminals(includeHosted: false)
+        model.companions.hostedWindows = []
+        model.reconcileDiscoveredTerminals(includeHosted: false)
+        XCTAssertEqual(model.preferences.profiles.filter { $0.discoveredTerminal == true }.count, 2)
+        model.companions.hostedWindows = [iterm, tmux]
         XCTAssertEqual(model.terminalAgent(for: found[0]), .claude)
         // A Terminal.app tab with the same TTY number is a different session.
         XCTAssertFalse(TerminalWindow(windowID: 503, tty: "/dev/ttys001", title: "Fixture", selected: false, front: false, agent: .claude).matches(found[0], processStarted: 1000))

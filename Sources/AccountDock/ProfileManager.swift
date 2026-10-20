@@ -92,7 +92,7 @@ extension DockModel {
         }
         if profile.kind == .agent { return nil }
         // A session in another terminal app shows that app's icon; tmux and screen show Terminal's.
-        if let host = profile.terminalHost, host.contains(".") { return NSWorkspace.shared.urlForApplication(withBundleIdentifier: host) }
+        if let host = profile.terminalHost, host.contains(".") { return cachedApplicationPath([host]).map { URL(fileURLWithPath: $0) } }
         if profile.kind != .codex { return NSWorkspace.shared.urlForApplication(withBundleIdentifier: profile.kind.bundleIdentifier) }
         if let path = profile.applicationPath {
             let url = URL(fileURLWithPath: path)

@@ -12,6 +12,8 @@ struct TerminalWindow: Codable, Identifiable, Equatable, Sendable {
     var host: String? = nil
     /// When the agent process started, which identifies a hosted session across refreshes.
     var agentStarted: Double? = nil
+    /// The host app's main process, when known, so only that instance is brought forward.
+    var hostProcess: Int32? = nil
     var suggestionLabel: String { [agent?.label ?? "", title, tty].joined(separator: " · ") }
     var id: String { "\(host ?? "terminal"):\(windowID):\(tty)" }
     func matches(_ profile: Profile, processStarted: Double?) -> Bool {
@@ -140,13 +142,15 @@ actor TerminalClient {
             let data = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
             guard process.terminationStatus == 0 else { throw CompanionError.message("Running coding terminals could not be detected.") }
             let rows = ProcessRow.rows(String(decoding: data, as: UTF8.self))
+            let applications = Set(NSWorkspace.shared.runningApplications.map(\.processIdentifier))
             return AgentHosts.sessions(rows: rows, installs: installs, inspect: DockModel.launch(pid:), executablePath: DockModel.executablePath(pid:),
-                                       resolve: { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path }, skip: skip).map { session in
-                let bundle = session.host.applicationPath.flatMap { Bundle(path: $0)?.bundleIdentifier }
-                let name = session.host.multiplexer ?? session.host.applicationPath.map { HostApps.name(path: $0) } ?? "terminal"
+                                       resolve: { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path },
+                                       isApplication: { applications.contains($0) }, skip: skip).compactMap { session in
+                guard let host = session.host.applicationPath.flatMap({ Bundle(path: $0)?.bundleIdentifier }) ?? session.host.bundleIdentifier ?? session.host.multiplexer else { return nil }
+                let name = session.host.multiplexer ?? HostApps.short[host] ?? session.host.applicationPath.map { HostApps.name(path: $0) } ?? host
                 return TerminalWindow(windowID: Int(session.pid), tty: session.tty, title: name, selected: false, front: false,
-                                      agent: TerminalAgent(rawValue: session.tool.id), host: bundle ?? session.host.multiplexer ?? "terminal",
-                                      agentStarted: ClaudeProcess.startTime(session.pid))
+                                      agent: TerminalAgent(rawValue: session.tool.id), host: host,
+                                      agentStarted: ClaudeProcess.startTime(session.pid), hostProcess: session.host.processIdentifier)
             }
         }.value
     }

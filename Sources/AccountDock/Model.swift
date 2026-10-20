@@ -501,7 +501,7 @@ final class DockModel: ObservableObject {
     func state(_ profile: Profile) -> String {
         if closing.contains(profile.id) { return "Closing…" }
         if opening.contains(profile.id) { return "Opening…" }
-        if profile.kind.usesTerminal, companions.terminalError != nil { return "Status unavailable" }
+        if profile.kind.usesTerminal, profile.terminalHost == nil, companions.terminalError != nil { return "Status unavailable" }
         if profile.kind.usesTerminal, let window = companions.window(for: profile), window.agent == nil { return "No coding session" }
         if profile.terminalHost != nil, let window = companions.window(for: profile) { return "Running in \(window.title)" }
         if agentAvailability(profile) == .missing { return "Not installed" }
