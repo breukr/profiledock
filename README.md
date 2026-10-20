@@ -48,7 +48,7 @@ Add a tool from **Profiles → Add Profile → App**. Where the tool supports it
 | Windsurf / Devin Desktop | Windsurf.app or Devin.app (`com.exafunction.windsurf`), `~/.codeium/windsurf` | No. ProfileDock opens the installed app. |
 | Goose (`goose`) | `goose`, `~/.config/goose` | No. Provider keys are one Keychain item for this Mac. |
 
-**New in [1.5.0](docs/RELEASE-NOTES-1.5.0.md):** Claude Desktop and automatic coding-terminal discovery, clearer drag-to-reorder feedback, configurable grid columns and rows, and independent switches for the Terminals and Usage Insights sections. Choose any combination of 1–12 columns and rows from the notch grid menu or Appearance settings.
+**New in [1.6.0](docs/RELEASE-NOTES-1.6.0.md):** Grok Bot, Hermes and other coding agents, with separate accounts where the tool supports them. Separate Claude Desktop accounts, live Claude usage with saved resets, and sign-in reminders with one-click Reconnect.
 
 Requires **macOS 14+**, an **Apple Silicon Mac (M1 or newer)**, and the **current [ChatGPT desktop app](https://chatgpt.com/download/)**. ChatGPT Classic is not supported. ProfileDock does not include or redistribute ChatGPT. Intel Macs can use the older v1.0.1 release; new releases target Apple Silicon.
 
