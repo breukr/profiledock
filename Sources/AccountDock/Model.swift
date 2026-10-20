@@ -37,11 +37,19 @@ struct Preferences: Codable {
     var signInReminders: Bool?
     /// Connection keys whose sign-in reminders were turned off from the notice.
     var mutedSignInReminders: [String]?
+    /// Nil means on: running agent apps get a tile with the sign-in already on this Mac.
+    var autoAddAgents: Bool?
+    /// Tools whose automatic entry was removed. They are not added again until added by hand.
+    var dismissedAgentTools: [String]?
 }
 
 struct ProfileMessageRecovery: Equatable {
     let profileID: String
     let title: String
+    /// Opens this page instead of retrying, for example Privacy settings or an install guide.
+    var url: URL? = nil
+    /// Launches a terminal tool by its command name even though no install was found.
+    var opensAnyway = false
 }
 
 @MainActor
@@ -72,8 +80,16 @@ final class DockModel: ObservableObject {
     @Published var updatingApplications: Set<String> = []
     @Published var nativeDockOperations: Set<String> = []
     @Published var nativeDockProgress: [String: NativeDockStage] = [:]
+    /// The latest agent tool scan. Nil until the first background scan finishes.
+    @Published var installedAgents: [InstalledAgent]?
+    /// Separate desktop accounts whose own status file says they are signed out.
+    @Published var agentsNeedingSignIn: Set<String> = []
+    var agentScanTask: Task<Void, Never>?
+    var agentScannedAt: Date?
+    /// Tools being added automatically, so one refresh does not add them twice.
+    var autoAddingTools: Set<String> = []
     let home: URL
-    private let tracksApplications: Bool
+    nonisolated let tracksApplications: Bool
     private var readinessTimer: Timer?
     private var readinessAttempts = 0
     private(set) var refreshCount = 0
@@ -171,7 +187,8 @@ final class DockModel: ObservableObject {
             if FileManager.default.fileExists(atPath: settingsURL.path) {
                 preferences = try JSONDecoder().decode(Preferences.self, from: Data(contentsOf: settingsURL))
             }
-            let saved = preferences.profiles.filter { Profile.validID($0.id) && ($0.discoveredTerminal == true || FileManager.default.fileExists(atPath: $0.home(in: home).path)) }
+            // Agent entries with the shared sign-in have no folder of their own; a separate one recreates its folder when it opens.
+            let saved = preferences.profiles.filter { Profile.validID($0.id) && ($0.discoveredTerminal == true || $0.kind == .agent || FileManager.default.fileExists(atPath: $0.home(in: home).path)) }
             let discovered = try ProfileCatalog.discover(home: home).filter { !(preferences.hiddenProfileIDs ?? []).contains($0.id) }
             preferences.profiles = ProfileCatalog.merge(discovered: discovered + saved.filter { item in !discovered.contains(where: { $0.id == item.id }) }, saved: saved)
             preferences.scale = min(1.3, max(0.85, preferences.scale))
@@ -182,6 +199,7 @@ final class DockModel: ObservableObject {
         // Decode existing logos once at startup, before the first hover needs them.
         for profile in preferences.profiles { _ = image(for: profile) }
         refresh()
+        if tracksApplications { scanAgents(force: true) }
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(workspaceChanged), name: NSWorkspace.didActivateApplicationNotification, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(workspaceChanged), name: NSWorkspace.didLaunchApplicationNotification, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(workspaceChanged), name: NSWorkspace.didTerminateApplicationNotification, object: nil)
@@ -195,7 +213,10 @@ final class DockModel: ObservableObject {
             return
         }
         guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-              ["com.openai.codex", "com.anthropic.claudefordesktop", "com.apple.Terminal"].contains(app.bundleIdentifier ?? "") || app.bundleIdentifier?.hasPrefix(NativeDock.prefix) == true else { return }
+              ["com.openai.codex", "com.anthropic.claudefordesktop", "com.apple.Terminal"].contains(app.bundleIdentifier ?? "") || app.bundleIdentifier?.hasPrefix(NativeDock.prefix) == true
+                || Self.agentBundleIdentifiers.contains(app.bundleIdentifier ?? "") else { return }
+        // An agent app that was just installed or moved shows up in the next scan; one that quit may have signed in.
+        if Self.agentBundleIdentifiers.contains(app.bundleIdentifier ?? "") { scanAgents(force: notification.name == NSWorkspace.didTerminateApplicationNotification) }
         readinessAttempts = 0
         refresh()
     }
@@ -208,7 +229,18 @@ final class DockModel: ObservableObject {
         if activeProfile != active { activeProfile = active }
     }
 
-    static func arguments(pid: pid_t) -> [String]? {
+    static func arguments(pid: pid_t) -> [String]? { launch(pid: pid)?.arguments }
+
+    /// The kernel's executable path of one process, without its arguments.
+    nonisolated static func executablePath(pid: pid_t) -> String? {
+        guard pid > 0 else { return nil }
+        var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
+        guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
+        return String(cString: buffer)
+    }
+
+    /// Executable path and argv of one process. Only argv is decoded; environment entries are skipped.
+    nonisolated static func launch(pid: pid_t) -> AgentProcessLaunch? {
         guard pid > 0 else { return nil }
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
         var size = 0
@@ -216,7 +248,7 @@ final class DockModel: ObservableObject {
         var data = Data(count: size)
         let status = data.withUnsafeMutableBytes { sysctl(&mib, 3, $0.baseAddress, &size, nil, 0) }
         guard status == 0 else { return nil }
-        return ProcessIdentity.arguments(from: data.prefix(size))
+        return ProcessIdentity.launch(from: data.prefix(size))
     }
 
     func refresh(applications: [NSRunningApplication]? = nil, preparingNativePID: pid_t? = nil) {
@@ -255,7 +287,9 @@ final class DockModel: ObservableObject {
             guard let id else { continue }
             result[id, default: []].append(app)
         }
-        result.merge(companionApplications(applications ?? NSWorkspace.shared.runningApplications)) { _, new in new }
+        let workspace = applications ?? NSWorkspace.shared.runningApplications
+        result.merge(companionApplications(workspace)) { _, new in new }
+        autoAddRunningAgents(workspace)
         // Avoid invalidating every SwiftUI view when only an unrelated application activates.
         if running.mapValues({ $0.map(\.processIdentifier).sorted() }) != result.mapValues({ $0.map(\.processIdentifier).sorted() }) { running = result }
         if unreadableProcesses != unreadable { unreadableProcesses = unreadable }
@@ -279,9 +313,9 @@ final class DockModel: ObservableObject {
         }
     }
 
-    func showProfileMessage(_ text: String, for profile: Profile, actionTitle: String = "Try Again") {
+    func showProfileMessage(_ text: String, for profile: Profile, actionTitle: String = "Try Again", url: URL? = nil, opensAnyway: Bool = false) {
         message = text
-        messageRecovery = ProfileMessageRecovery(profileID: profile.id, title: actionTitle)
+        messageRecovery = ProfileMessageRecovery(profileID: profile.id, title: actionTitle, url: url, opensAnyway: opensAnyway)
     }
 
     func retryMessage(selectProfile: ((Profile) -> Void)? = nil) {
@@ -289,7 +323,12 @@ final class DockModel: ObservableObject {
         message = nil
         // Resolve the current profile by identity: reordering, renaming or removing an
         // account must never make a recovery button open a different account.
+        if let url = recovery?.url { NSWorkspace.shared.open(url); return }
         guard let recovery, let profile = preferences.profiles.first(where: { $0.id == recovery.profileID }) else { return }
+        // Remembered: the user's own shell finds this tool, so it is not reported missing again.
+        if recovery.opensAnyway, var changed = preferences.profiles.first(where: { $0.id == profile.id }) {
+            changed.opensByCommandName = true; update(changed)
+        }
         if let selectProfile { selectProfile(profile) }
         else { select(profile) }
     }
@@ -453,6 +492,8 @@ final class DockModel: ObservableObject {
         if opening.contains(profile.id) { return "Opening…" }
         if profile.kind.usesTerminal, companions.terminalError != nil { return "Status unavailable" }
         if profile.kind.usesTerminal, let window = companions.window(for: profile), window.agent == nil { return "No coding session" }
+        if agentAvailability(profile) == .missing { return "Not installed" }
+        if agentsNeedingSignIn.contains(profile.id), running[profile.id]?.isEmpty != false { return "Sign-in needed" }
         if activeProfile == profile.id { return "Active" }
         return running[profile.id]?.isEmpty == false ? "Open" : "Closed"
     }

@@ -10,7 +10,16 @@ final class AgentRegistryTests: XCTestCase {
         for id in ["claude", "claude-desktop", "codex", "grok-bot", "grok", "hermes", "gemini", "opencode", "copilot", "aider", "amp", "cursor-cli", "cursor", "windsurf", "goose"] {
             XCTAssertNotNil(AgentRegistry.tool(id: id), id)
         }
-        XCTAssertEqual(AgentRegistry.tools.filter(\.supportsIsolatedProfiles).map(\.id), ["grok-bot", "grok", "hermes", "gemini", "opencode"])
+        // Only tools whose own docs or source show a folder that holds the sign-in.
+        XCTAssertEqual(AgentRegistry.tools.filter(\.supportsIsolatedProfiles).map(\.id),
+                       ["grok-bot", "grok", "hermes", "gemini", "opencode", "pi", "qwen", "crush", "kilo", "cline", "continue", "openhands", "vibe", "kimi"])
+        for tool in AgentRegistry.tools where !tool.ambiguousExecutables.isEmpty {
+            XCTAssertFalse(tool.packageMarkers.isEmpty, "\(tool.id) needs a package marker for its shared command name")
+        }
+        for tool in AgentRegistry.tools where tool.addsWhenRunning {
+            XCTAssertFalse(tool.launchesInTerminal, tool.id)
+            XCTAssertFalse(tool.bundleIdentifiers.isEmpty, tool.id)
+        }
         var seen: [String] = []
         for tool in AgentRegistry.tools {
             XCTAssertFalse(tool.name.isEmpty)
@@ -46,7 +55,8 @@ final class AgentRegistryTests: XCTestCase {
         ttys017 S+ /opt/bin/aider
         ttys018 S+ amp
         ttys019 S+ /Users/fixture/.local/bin/cursor-agent
-        ttys020 S+ /Users/fixture/.local/bin/agent
+        ttys020 S+ /Users/fixture/.local/share/cursor-agent/versions/1/agent
+        ttys025 S+ /usr/local/bin/agent
         ttys021 S+ /Users/fixture/.local/bin/goose
         ttys022 S /opt/bin/grok
         ttys023 S+ /bin/zsh
@@ -65,6 +75,8 @@ final class AgentRegistryTests: XCTestCase {
         XCTAssertEqual(found["/dev/ttys019"], found["/dev/ttys020"])
         XCTAssertEqual(found["/dev/ttys019"]?.rawValue, "cursor-cli")
         XCTAssertEqual(found["/dev/ttys021"]?.rawValue, "goose")
+        // `agent` is Cursor CLI only from Cursor's own install folder.
+        XCTAssertNil(found["/dev/ttys025"])
         XCTAssertNil(found["/dev/ttys022"])
         XCTAssertNil(found["/dev/ttys023"])
         XCTAssertNil(found["/dev/ttys024"])
@@ -98,6 +110,7 @@ final class AgentRegistryTests: XCTestCase {
         try FileManager.default.createDirectory(at: root.appendingPathComponent(".hermes"), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
         try Data().write(to: bin.appendingPathComponent("grok"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.appendingPathComponent("grok").path)
         let grokBot = root.appendingPathComponent("Applications/Grok Bot.app/Contents")
         try FileManager.default.createDirectory(at: grokBot, withIntermediateDirectories: true)
         try #"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.anysphere.sand</string><key>CFBundleName</key><string>Grok Bot</string></dict></plist>"#
@@ -216,6 +229,7 @@ final class AgentRegistryTests: XCTestCase {
         let grokBin = root.appendingPathComponent(".grok/bin")
         try FileManager.default.createDirectory(at: grokBin, withIntermediateDirectories: true)
         try Data().write(to: grokBin.appendingPathComponent("grok"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: grokBin.appendingPathComponent("grok").path)
         let grok = try XCTUnwrap(AgentRegistry.tool(id: "grok"))
         XCTAssertEqual(AgentProbe.executable(for: grok, home: root, path: "/usr/bin:/bin"), grokBin.appendingPathComponent("grok").standardizedFileURL.path)
         XCTAssertNil(AgentProbe.executable(for: hermes, home: root, path: "/usr/bin:/bin"))

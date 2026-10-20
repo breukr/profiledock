@@ -23,6 +23,10 @@ public struct Profile: Identifiable, Codable, Equatable, Sendable {
     public var separateClaudeAccount: Bool?
     /// Hidden profiles keep their app, sign-in and history; only the strip, shortcuts and menu skip them.
     public var hiddenFromStrip: Bool?
+    /// Added by ProfileDock because the app was running. Always the existing sign-in.
+    public var addedAutomatically: Bool?
+    /// The user chose Open Anyway: their own shell finds this terminal tool outside the usual install folders.
+    public var opensByCommandName: Bool?
     public var kind: ProfileProvider { provider ?? .codex }
     public var usesSeparateClaudeAccount: Bool { kind == .claude && separateClaudeAccount == true }
     public var agentTool: AgentTool? {
@@ -154,13 +158,17 @@ public enum ProfileCatalog {
 
 public enum ProcessIdentity {
     /// Decode only argv from KERN_PROCARGS2. Never parse or expose environment entries.
-    public static func arguments(from data: Data) -> [String]? {
+    public static func arguments(from data: Data) -> [String]? { launch(from: data)?.arguments }
+
+    /// The kernel's executable path and argv from KERN_PROCARGS2. Decoding stops before the environment.
+    public static func launch(from data: Data) -> AgentProcessLaunch? {
         let bytes = [UInt8](data)
         guard bytes.count > 4 else { return nil }
         let count = Int(UInt32(bytes[0]) | UInt32(bytes[1]) << 8 | UInt32(bytes[2]) << 16 | UInt32(bytes[3]) << 24)
         guard count > 0 && count < 8192 else { return nil }
         var cursor = 4
-        guard let executableEnd = bytes[cursor...].firstIndex(of: 0) else { return nil }
+        guard let executableEnd = bytes[cursor...].firstIndex(of: 0),
+              let executable = String(bytes: bytes[cursor..<executableEnd], encoding: .utf8) else { return nil }
         cursor = executableEnd + 1
         while cursor < bytes.count && bytes[cursor] == 0 { cursor += 1 }
         var result: [String] = []
@@ -170,11 +178,11 @@ public enum ProcessIdentity {
             result.append(argument)
             cursor = end + 1
         }
-        return result
+        return AgentProcessLaunch(executable: executable, arguments: result)
     }
 
     /// nil: no user-data argument. .some(nil): an argument that cannot identify a profile.
-    static func userDataPath(_ arguments: [String]) -> String?? {
+    public static func userDataPath(_ arguments: [String]) -> String?? {
         var userDataPath: String?
         for (index, argument) in arguments.enumerated().dropFirst() {
             if argument.hasPrefix("--user-data-dir=") {

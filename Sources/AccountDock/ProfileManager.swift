@@ -80,7 +80,11 @@ extension DockModel {
     func applicationURL(for profile: Profile) -> URL? {
         if profile.kind == .agent, let tool = profile.agentTool {
             if tool.launchesInTerminal { return NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") }
-            if let url = tool.bundleIdentifiers.lazy.compactMap({ NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }).first { return url }
+            // The scan already chose one copy among renamed, duplicate and trashed ones.
+            if let installedAgents {
+                return installedAgents.first { $0.id == tool.id }?.applicationPath.map { URL(fileURLWithPath: $0) }
+            }
+            if let url = tool.bundleIdentifiers.lazy.compactMap({ NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }).first(where: { !AgentApplications.excluded($0.path) }) { return url }
             // Renamed builds (Windsurf / Devin) can be found by their app name.
             return [URL(fileURLWithPath: "/Applications"), home.appendingPathComponent("Applications")].lazy
                 .flatMap { root in tool.applicationNames.map { root.appendingPathComponent($0) } }
@@ -161,7 +165,9 @@ extension DockModel {
 
     func removeProfile(_ profile: Profile, trashData: Bool) throws {
         refresh()
-        guard running[profile.id]?.isEmpty != false, !opening.contains(profile.id), !nativeDockOperations.contains(profile.id) else { throw AppOperationError.message("Close this profile before removing it.") }
+        // A shared desktop agent entry owns no data, so an app that is always open (an editor) can lose its tile while it runs.
+        let ownsNothing = profile.kind == .agent && !profile.usesIsolatedAgentHome && profile.agentTool?.launchesInTerminal == false
+        guard ownsNothing || running[profile.id]?.isEmpty != false, !opening.contains(profile.id), !nativeDockOperations.contains(profile.id) else { throw AppOperationError.message("Close this profile before removing it.") }
         if trashData && (!profile.id.hasPrefix("profile-") || !Profile.validID(profile.id)) {
             throw AppOperationError.message("Imported profiles can be removed from ProfileDock, but their original data is kept.")
         }
@@ -196,6 +202,7 @@ extension DockModel {
             }
         }
         preferences.profiles.removeAll { $0.id == profile.id }
+        rememberDismissal(of: profile)
         var retained = profile; retained.launcherPath = nil; retained.dockApplicationPath = nil
         preferences.removedProfiles = (preferences.removedProfiles ?? []).filter { $0.id != profile.id } + [retained]
         preferences.hiddenProfileIDs = Array(Set((preferences.hiddenProfileIDs ?? []) + [profile.id]))
