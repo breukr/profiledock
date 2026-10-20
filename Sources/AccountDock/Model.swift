@@ -492,6 +492,7 @@ final class DockModel: ObservableObject {
         if opening.contains(profile.id) { return "Opening…" }
         if profile.kind.usesTerminal, companions.terminalError != nil { return "Status unavailable" }
         if profile.kind.usesTerminal, let window = companions.window(for: profile), window.agent == nil { return "No coding session" }
+        if profile.terminalHost != nil, let window = companions.window(for: profile) { return "Running in \(window.title)" }
         if agentAvailability(profile) == .missing { return "Not installed" }
         if agentsNeedingSignIn.contains(profile.id), running[profile.id]?.isEmpty != false { return "Sign-in needed" }
         if activeProfile == profile.id { return "Active" }

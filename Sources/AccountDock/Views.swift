@@ -287,7 +287,8 @@ struct IslandView: View {
             .help("\(profile.name) · \(model.state(profile)) · ⌥⌘\(index + 1)\n" + (model.tileWarning(profile).map { $0.fix + "\n" } ?? "") + activityHelp(taskState, profile: profile))
             .accessibilityLabel("\(profile.name), \(model.state(profile)). " + activityHelp(taskState, profile: profile))
             .overlay(alignment: .topTrailing) {
-                if isOpen {
+                // ProfileDock closes only Terminal.app windows; other terminal apps keep control of their sessions.
+                if isOpen && profile.terminalHost == nil {
                     Button { model.requestQuit(profile) } label: {
                         Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).foregroundStyle(.white.opacity(0.9))
                             .frame(width: 20, height: 20).background(Color(white: 0.22), in: Circle())
@@ -311,7 +312,7 @@ struct IslandView: View {
                             .font(.system(size: 9)).buttonStyle(.plain).foregroundStyle(.white.opacity(0.75)).help(error.message)
                     }
                 } else {
-                    Text(profile.kind == .agent ? profile.tileCaption : (profile.kind == .codex || profile.usesClaudeAccountUsage) ? (snapshot == nil ? "Loading usage…" : "No usage data") : (profile.kind == .terminal ? "Terminal window" : profile.usesSeparateClaudeAccount ? "Separate account · usage not reported yet" : "Usage not reported yet"))
+                    Text(profile.kind == .agent ? profile.tileCaption : (profile.kind == .codex || profile.usesClaudeAccountUsage) ? (snapshot == nil ? "Loading usage…" : "No usage data") : (profile.kind == .terminal ? (profile.terminalHost == nil ? "Terminal window" : "In \(model.companions.window(for: profile)?.title ?? "another terminal")") : profile.usesSeparateClaudeAccount ? "Separate account · usage not reported yet" : "Usage not reported yet"))
                         .font(.system(size: 10)).foregroundStyle(.white.opacity(0.45))
                 }
             }

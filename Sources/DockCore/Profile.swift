@@ -25,6 +25,8 @@ public struct Profile: Identifiable, Codable, Equatable, Sendable {
     public var hiddenFromStrip: Bool?
     /// Added by ProfileDock because the app was running. Always the existing sign-in.
     public var addedAutomatically: Bool?
+    /// The app that owns a discovered session outside Terminal.app (its bundle id), or `tmux` / `screen`.
+    public var terminalHost: String?
     /// The user chose Open Anyway: their own shell finds this terminal tool outside the usual install folders.
     public var opensByCommandName: Bool?
     public var kind: ProfileProvider { provider ?? .codex }

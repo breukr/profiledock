@@ -322,6 +322,15 @@ final class AgentLiveReport: XCTestCase {
             return proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 ? String(cString: buffer) : nil
         }, resolve: { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path })
         lines += ["", "# Foreground agents in TTYs", ""] + agents.values.sorted { $0.tty < $1.tty }.map { "- \($0.tty): \($0.tool.name) (pid \($0.pid))" }
+        let hostsTable = Process(), hostsPipe = Pipe()
+        hostsTable.executableURL = URL(fileURLWithPath: "/bin/ps"); hostsTable.arguments = ["-axo", "pid=,ppid=,tpgid=,tty=,stat=,comm="]; hostsTable.standardOutput = hostsPipe
+        try hostsTable.run(); let rowsData = hostsPipe.fileHandleForReading.readDataToEndOfFile(); hostsTable.waitUntilExit()
+        let rows = ProcessRow.rows(String(decoding: rowsData, as: UTF8.self))
+        let ttys = Set(rows.map(\.tty).filter { $0.hasPrefix("ttys") }).sorted()
+        lines += ["", "# Host of each TTY", ""] + ttys.map { tty in
+            let host = AgentHosts.host(of: "/dev/" + tty, rows: rows)
+            return "- \(tty): " + (host.multiplexer ?? host.applicationPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "none")
+        }
         try (lines.joined(separator: "\n") + "\n").write(toFile: output, atomically: true, encoding: .utf8)
     }
 }
