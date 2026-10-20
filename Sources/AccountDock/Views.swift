@@ -274,6 +274,8 @@ struct IslandView: View {
                         Text(warning.text).font(.system(size: 10, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.8).foregroundStyle(.orange)
                     } else if model.opening.contains(profile.id) {
                         Text("Opening…").font(.system(size: 10)).lineLimit(1).foregroundStyle(.white.opacity(0.75))
+                    } else if profile.terminalHost != nil, let host = model.companions.window(for: profile)?.title, activityText(taskState) == nil {
+                        Text("In \(host)").font(.system(size: 10)).lineLimit(1).foregroundStyle(.white.opacity(0.75))
                     } else {
                     Text(activityText(taskState) ?? (active ? "Active" : (isOpen ? "Open" : (index < 9 ? "⌥⌘\(index + 1)" : "Open"))))
                         .font(.system(size: 10, weight: (taskState?.working ?? 0) > 0 ? .semibold : .regular))
@@ -289,7 +291,8 @@ struct IslandView: View {
             .help("\(profile.name) · \(model.state(profile)) · ⌥⌘\(index + 1)\n" + (model.tileWarning(profile).map { $0.fix + "\n" } ?? "") + activityHelp(taskState, profile: profile))
             .accessibilityLabel("\(profile.name), \(model.state(profile)). " + activityHelp(taskState, profile: profile))
             .overlay(alignment: .topTrailing) {
-                if isOpen {
+                // ProfileDock closes only Terminal.app windows; other terminal apps keep control of their sessions.
+                if isOpen && profile.terminalHost == nil {
                     Button { model.requestQuit(profile) } label: {
                         Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).foregroundStyle(.white.opacity(0.9))
                             .frame(width: 20, height: 20).background(Color(white: 0.22), in: Circle())

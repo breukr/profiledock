@@ -9,6 +9,9 @@ import DockCore
     var sessions: [ClaudeSession] = []
     var terminalStarted: Double?
     var terminalError: String?
+    /// Coding sessions in other terminal apps and in tmux.
+    var hostedWindows: [TerminalWindow] = []
+    var hostedError = false
     init(model: DockModel) { self.model = model }
     func start() {
         guard timer == nil else { return }
@@ -42,14 +45,30 @@ import DockCore
                     self.terminalError = nil
                 } catch { self.windows = []; self.terminalError = error.localizedDescription }
             } else { self.windows = []; self.terminalStarted = nil; self.terminalError = nil }
+            // Other terminal apps and tmux. Terminal.app tabs come from its scripting while that works; without
+            // Automation they are found here too, so they still appear and can be brought forward.
+            let scripted = !self.windows.isEmpty || (self.terminalError == nil && self.terminalStarted != nil)
+            if terminals {
+                do {
+                    let hosted = try await TerminalClient.shared.hostedSessions(installs: InstalledAgent.installs(model.installedAgents ?? []), skip: { host in
+                        scripted && host.applicationPath.flatMap { Bundle(path: $0)?.bundleIdentifier } == "com.apple.Terminal"
+                    })
+                    let known = Set(self.windows.map(\.tty))
+                    self.hostedWindows = hosted.filter { !known.contains($0.tty) }
+                    self.hostedError = false
+                } catch { self.hostedError = true }  // A failed scan keeps the last result instead of dropping every tile.
+            } else { self.hostedWindows = []; self.hostedError = false }
             guard !Task.isCancelled else { return }
-            if self.terminalError == nil { model.reconcileDiscoveredTerminals() }
+            model.reconcileDiscoveredTerminals(includeTerminalApp: self.terminalError == nil, includeHosted: !self.hostedError)
             model.rememberCompanionSessions()
             model.refresh()
             model.companionRevision += 1
         }
     }
-    func window(for profile: Profile) -> TerminalWindow? { windows.first { $0.matches(profile, processStarted: terminalStarted) } }
+    func window(for profile: Profile) -> TerminalWindow? {
+        if profile.terminalHost != nil { return hostedWindows.first { $0.matches(profile, processStarted: nil) } }
+        return windows.first { $0.matches(profile, processStarted: terminalStarted) }
+    }
     func sessions(for profile: Profile) -> [ClaudeSession] {
         if profile.kind == .claude {
             let configDirectory = model.flatMap { profile.claudeConfigDirectory(in: $0.home)?.standardizedFileURL.path }
@@ -85,16 +104,34 @@ import DockCore
         preferences.terminalsExpanded = expanded; save(); companions.refresh()
     }
     /// Only an authoritative scan removes automatically discovered entries. Saved projects stay intact.
-    func reconcileDiscoveredTerminals() {
+    /// `includeTerminalApp` is false when Terminal.app could not be read; its entries are then left as they are.
+    func reconcileDiscoveredTerminals(includeTerminalApp: Bool = true, includeHosted: Bool = true) {
         var profiles = preferences.profiles
         // A tab that a saved profile opened belongs to that profile, so it is never listed twice.
         let saved = Set(profiles.filter { $0.discoveredTerminal != true }.compactMap { companions.window(for: $0)?.id })
         profiles.removeAll { profile in
-            guard profile.discoveredTerminal == true else { return false }
+            guard profile.discoveredTerminal == true, profile.terminalHost == nil ? includeTerminalApp : includeHosted else { return false }
             guard let window = companions.window(for: profile) else { return true }
             return window.agent == nil || saved.contains(window.id)
         }
-        if preferences.discoverTerminals != false, let started = companions.terminalStarted {
+        if preferences.discoverTerminals != false {
+            for window in companions.hostedWindows where window.agent != nil {
+                guard let started = window.agentStarted, let host = window.host,
+                      !profiles.contains(where: { window.matches($0, processStarted: nil) }) else { continue }
+                let number = window.tty.replacingOccurrences(of: "/dev/ttys", with: "")
+                let id = "terminal-\(host.replacingOccurrences(of: ".", with: "-"))-\(Int(started))-\(number)"
+                guard Profile.validID(id), !(preferences.hiddenProfileIDs ?? []).contains(id) else { continue }
+                // Named like Terminal.app entries; the host app shows on the tile's status line.
+                var profile = Profile(id: id, name: "\(window.agent!.label) · \(number)", color: window.agent?.tool?.color ?? "546E7A")
+                profile.provider = .terminal; profile.discoveredTerminal = true
+                // The host app's own icon with the agent's badge.
+                profile.dockIconStyle = .dot
+                profile.terminalTTY = window.tty; profile.terminalWindowID = window.windowID
+                profile.terminalProcessStarted = started; profile.terminalAgent = window.agent; profile.terminalHost = host
+                profiles.append(profile)
+            }
+        }
+        if includeTerminalApp, preferences.discoverTerminals != false, let started = companions.terminalStarted {
             for window in companions.windows where window.agent != nil {
                 guard !profiles.contains(where: { window.matches($0, processStarted: started) }) else { continue }
                 let id = "terminal-\(Int(started))-\(window.windowID)-\(window.tty.split(separator: "/").last ?? "tab")"
@@ -194,7 +231,8 @@ import DockCore
         for profile in preferences.profiles where profile.kind.usesTerminal || (profile.kind == .agent && profile.agentTool?.launchesInTerminal == true) {
             guard let agent = companions.window(for: profile)?.agent,
                   profile.kind != .agent || agent.rawValue == profile.agentID,
-                  let app = applications.first(where: { $0.bundleIdentifier == "com.apple.Terminal" }),
+                  let app = companions.window(for: profile)?.hostProcess.flatMap({ pid in applications.first { $0.processIdentifier == pid } })
+                    ?? applications.first(where: { $0.bundleIdentifier == (profile.terminalHost ?? "com.apple.Terminal") }),
                   let running = RunningProfileApplication(app) else { continue }
             result[profile.id] = [running]
         }
@@ -234,6 +272,7 @@ import DockCore
             if tool.launchesInTerminal { openTerminalAgent(profile, tool: tool) } else { openDesktopAgent(profile, tool: tool) }
             return
         }
+        if let host = profile.terminalHost { selectHosted(profile, host: host); return }
         opening.insert(profile.id)
         Task {
             defer { opening.remove(profile.id); companions.refresh() }
@@ -441,8 +480,44 @@ import DockCore
             if self.opening.remove(profile.id) != nil { self.showProfileMessage("\(profile.name) has not appeared yet. Check its \(appName) window before trying again.", for: profile) }
         }
     }
+    /// iTerm2 selects the exact session; other apps come forward; tmux and screen say where the session is.
+    func selectHosted(_ profile: Profile, host: String) {
+        guard let window = companions.window(for: profile) else { showProfileMessage("This coding session has ended.", for: profile, actionTitle: "Refresh"); return }
+        if host == "tmux" || host == "screen" {
+            message = "\(profile.name) runs inside \(host) on \(window.tty.replacingOccurrences(of: "/dev/", with: "")). Switch to its pane in your terminal."
+            return
+        }
+        // The exact instance that owns this session; another account's window of the same app stays where it is.
+        guard let app = window.hostProcess.flatMap(NSRunningApplication.init(processIdentifier:))
+                ?? NSRunningApplication.runningApplications(withBundleIdentifier: host).first(where: { !$0.isTerminated }) else {
+            showProfileMessage("\(window.title) is not running anymore.", for: profile, actionTitle: "Refresh"); return
+        }
+        markCompanionRead(profile)
+        if host == "com.googlecode.iterm2" {
+            Task {
+                do { try await TerminalClient.shared.selectInITerm(tty: window.tty) }
+                catch TerminalClientError.automationDenied {
+                    NSApp.yieldActivation(to: app); _ = app.activate(options: [.activateAllWindows])
+                    showProfileMessage("To switch to this exact iTerm2 session, allow ProfileDock to control iTerm2 in Privacy & Security → Automation.", for: profile, actionTitle: "Open Privacy Settings", url: Self.automationSettings)
+                } catch { NSApp.yieldActivation(to: app); _ = app.activate(options: [.activateAllWindows]) }
+            }
+            return
+        }
+        // Ghostty, Warp and editor terminals have no scripting for tabs, so the app comes forward as it was.
+        NSApp.yieldActivation(to: app)
+        _ = app.activate(options: [.activateAllWindows])
+    }
+
     func closeCompanion(_ profile: Profile) {
         guard !closing.contains(profile.id) else { return }
+        if let host = profile.terminalHost {
+            if host == "com.apple.Terminal" {
+                showProfileMessage("To close Terminal tabs from ProfileDock, allow it to control Terminal in Privacy & Security → Automation.", for: profile, actionTitle: "Open Privacy Settings", url: Self.automationSettings)
+            } else {
+                showProfileMessage("Close this session in \(companions.window(for: profile)?.title ?? "its terminal"). ProfileDock closes only Terminal.app windows.", for: profile, actionTitle: "Show Session")
+            }
+            return
+        }
         if profile.kind == .claude {
             if running[profile.id]?.first?.terminate() == false { showProfileMessage("Claude could not close. Check its window for a confirmation.", for: profile, actionTitle: "Show Window") }
             return

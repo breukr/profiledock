@@ -127,6 +127,10 @@ final class AgentRenderingTests: XCTestCase {
         if let work = model.preferences.profiles.first(where: { $0.name == "Work" }) { model.agentsNeedingSignIn = [work.id] }
         model.companions.terminalStarted = 42
         model.companions.windows = [TerminalWindow(windowID: 7, tty: "/dev/ttys007", title: "Fixture", selected: false, front: false, agent: TerminalAgent(rawValue: "opencode"))]
+        model.companions.hostedWindows = [
+            TerminalWindow(windowID: 503, tty: "/dev/ttys011", title: "VS Code", selected: false, front: false, agent: .claude, host: "com.microsoft.VSCode", agentStarted: 1000),
+            TerminalWindow(windowID: 702, tty: "/dev/ttys012", title: "tmux", selected: false, front: false, agent: TerminalAgent(rawValue: "hermes"), host: "tmux", agentStarted: 2000)
+        ]
         model.reconcileDiscoveredTerminals()
 
         let schemes: [(String, ColorScheme)] = [("light", .light), ("dark", .dark)]

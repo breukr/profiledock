@@ -12,6 +12,18 @@ Saved projects remain in Profiles settings so they can be reopened. Hidden termi
 
 Drag the dotted handle on a tile or profile row to reorder it. A floating card follows the pointer, the original fades, and an insertion line indicates before/after the highlighted destination. Escape cancels. Reduced Motion disables movement animations. The new order is saved when you drop; cancelling or dropping outside keeps the old order. Hover over the page arrows while dragging to reach another page. Move earlier/later actions remain available through the tile menu and accessibility actions.
 
+## Other terminal apps
+
+Coding sessions in other terminals appear in the **Terminals** section too, found by their TTY: iTerm2, Ghostty, Warp, Alacritty, kitty, WezTerm, the terminals inside VS Code, Cursor, Zed and Claude, and panes inside tmux or screen. ProfileDock reads the same process facts as for Terminal.app plus each process's parent, and walks up from the session to the app that owns it. Each tile shows that app's icon with the agent's badge and **Running in** the app's name.
+
+- **iTerm2:** clicking the tile selects that exact session through iTerm2's scripting. macOS asks once for permission to control iTerm2; without it the app comes forward and a notice links to Privacy settings.
+- **Other apps:** Ghostty, Warp and editor terminals have no scripting for tabs, so ProfileDock brings the app forward as it was.
+- **tmux and screen:** a pane cannot be selected from outside, so the tile says which TTY it is on.
+- **Opening and closing:** new sessions always open in Terminal.app, and ProfileDock closes only Terminal.app windows. Other apps keep control of their own sessions.
+- **Terminal.app without Automation:** its coding sessions are still found this way and can be brought forward, though not selected or closed by tab.
+
+SSH sessions to other machines and agents running without a terminal (for example inside Claude Desktop's own Code view) are not included.
+
 ## Grid layout
 
 Use the grid icon in the expanded strip to choose Automatic or set your own Columns and Rows. **Settings → Appearance → Grid layout** exposes the same controls with a visual preview. Dimensions mean columns × rows per page, with 1–12 of each. The choice persists across restarts and applies to both the apps and terminal sections, which have independent page controls.

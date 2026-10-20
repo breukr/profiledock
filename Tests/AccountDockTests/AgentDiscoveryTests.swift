@@ -187,3 +187,61 @@ final class AgentDiscoveryTests: XCTestCase {
         XCTAssertEqual(TerminalClientError.automationDenied.errorDescription?.contains("Automation"), true)
     }
 }
+
+final class HostedTerminalTests: XCTestCase {
+    @MainActor func testSessionsInOtherTerminalAppsAppearOnceAndLeaveWithTheAgent() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("ProfileDockTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let model = DockModel(home: home)
+        let iterm = TerminalWindow(windowID: 503, tty: "/dev/ttys001", title: "iTerm2", selected: false, front: false, agent: .claude, host: "com.googlecode.iterm2", agentStarted: 1000)
+        let tmux = TerminalWindow(windowID: 702, tty: "/dev/ttys003", title: "tmux", selected: false, front: false, agent: TerminalAgent(rawValue: "opencode"), host: "tmux", agentStarted: 2000)
+        model.companions.hostedWindows = [iterm, tmux]
+        model.reconcileDiscoveredTerminals()
+        model.reconcileDiscoveredTerminals()
+        let found = model.preferences.profiles.filter { $0.discoveredTerminal == true }
+        XCTAssertEqual(found.map(\.name), ["Claude Code · 001", "OpenCode · 003"])
+        XCTAssertEqual(found.map(\.terminalHost), ["com.googlecode.iterm2", "tmux"])
+        XCTAssertEqual(model.liveTerminalProfiles.count, 2)
+        XCTAssertEqual(model.state(found[1]), "Running in tmux")
+        // Hosted sessions keep their state while Terminal.app itself cannot be read.
+        model.companions.terminalError = TerminalClientError.automationDenied.localizedDescription
+        XCTAssertEqual(model.state(found[0]), "Running in iTerm2")
+        model.companions.terminalError = nil
+        // A failed process scan keeps the tiles.
+        model.reconcileDiscoveredTerminals(includeHosted: false)
+        model.companions.hostedWindows = []
+        model.reconcileDiscoveredTerminals(includeHosted: false)
+        XCTAssertEqual(model.preferences.profiles.filter { $0.discoveredTerminal == true }.count, 2)
+        model.companions.hostedWindows = [iterm, tmux]
+        XCTAssertEqual(model.terminalAgent(for: found[0]), .claude)
+        // A Terminal.app tab with the same TTY number is a different session.
+        XCTAssertFalse(TerminalWindow(windowID: 503, tty: "/dev/ttys001", title: "Fixture", selected: false, front: false, agent: .claude).matches(found[0], processStarted: 1000))
+        // A new agent in the same TTY is a new session; the old entry leaves with its process.
+        model.companions.hostedWindows = [TerminalWindow(windowID: 900, tty: "/dev/ttys001", title: "iTerm2", selected: false, front: false, agent: .claude, host: "com.googlecode.iterm2", agentStarted: 3000)]
+        model.reconcileDiscoveredTerminals()
+        XCTAssertEqual(model.preferences.profiles.filter { $0.discoveredTerminal == true }.map(\.terminalProcessStarted), [3000])
+        // Selecting a tmux session explains where it is instead of failing silently.
+        model.companions.hostedWindows = [tmux]
+        model.reconcileDiscoveredTerminals()
+        let pane = try XCTUnwrap(model.preferences.profiles.first { $0.terminalHost == "tmux" })
+        model.select(pane)
+        XCTAssertTrue(model.message?.contains("tmux") == true)
+    }
+
+    @MainActor func testTerminalEntriesStayWhileTerminalCannotBeRead() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("ProfileDockTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let model = DockModel(home: home)
+        model.companions.terminalStarted = 42
+        model.companions.windows = [TerminalWindow(windowID: 1, tty: "/dev/ttys001", title: "Fixture", selected: true, front: true, agent: .codex)]
+        model.reconcileDiscoveredTerminals()
+        XCTAssertEqual(model.preferences.profiles.count, 1)
+        model.companions.windows = []
+        model.reconcileDiscoveredTerminals(includeTerminalApp: false)
+        XCTAssertEqual(model.preferences.profiles.count, 1, "an unreadable Terminal is not an empty one")
+        model.reconcileDiscoveredTerminals()
+        XCTAssertEqual(model.preferences.profiles.count, 0)
+    }
+}

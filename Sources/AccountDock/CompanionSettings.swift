@@ -39,7 +39,7 @@ struct ActivityConnectionsView: View {
             Toggle("Expand terminals in the strip", isOn: Binding(get: { model.preferences.terminalsExpanded != false }, set: model.setTerminalsExpanded)).disabled(model.preferences.showTerminalsSection == false)
             Text("\(model.liveTerminalProfiles.count) coding terminals found. Open Terminal.app tabs appear automatically while a coding agent is running. Closed sessions disappear.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Text("Allow Terminal access if macOS asks. Other terminal apps, SSH and background sessions are not included.")
+            Text("Allow Terminal access if macOS asks. Sessions in iTerm2, Ghostty, Warp, editor terminals and tmux appear too; SSH and background sessions are not included.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let error = model.companions.terminalError { Text(error).font(.caption).foregroundStyle(.orange) }
         }

@@ -72,7 +72,7 @@ extension AgentTool {
     /// From the last refresh, so list rows never query running apps themselves.
     func isRunning(_ tool: AgentTool) -> Bool {
         if tool.bundleIdentifiers.contains(where: runningBundles.contains) { return true }
-        return companions.windows.contains { $0.agent?.rawValue == tool.id }
+        return (companions.windows + companions.hostedWindows).contains { $0.agent?.rawValue == tool.id }
     }
     /// Home folder paths read as `~/…` in the interface.
     func displayPath(_ path: String) -> String {
