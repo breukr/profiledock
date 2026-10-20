@@ -38,7 +38,7 @@ Add a tool from **Profiles → Add Profile**. Where the tool supports it, choose
 | Yes | ChatGPT / Codex, Claude Desktop, Grok Bot, Grok Build, Hermes, Gemini CLI, OpenCode, pi, Qwen Code, Crush, Kilo Code CLI, Cline CLI, Continue CLI, OpenHands CLI, Mistral Vibe, Kimi Code |
 | Existing sign-in only | GitHub Copilot CLI, Aider, Amp, Cursor CLI, Cursor, Windsurf / Devin, Goose, Factory Droid, Augment Auggie, Codebuff, Junie CLI, Antigravity CLI, Kiro CLI, T3 Code, Conductor, Antigravity, Kiro, Trae, Zed, Warp |
 
-**New in [1.5.0](docs/RELEASE-NOTES-1.5.0.md):** Claude Desktop and automatic coding-terminal discovery, clearer drag-to-reorder feedback, configurable grid columns and rows, and independent switches for the Terminals and Usage Insights sections. Choose any combination of 1–12 columns and rows from the notch grid menu or Appearance settings.
+**New in [1.6.0](docs/RELEASE-NOTES-1.6.0.md):** Grok Bot, Hermes and other coding agents, with separate accounts where the tool supports them. Separate Claude Desktop accounts, live Claude usage with saved resets, and sign-in reminders with one-click Reconnect.
 
 Requires **macOS 14+**, an **Apple Silicon Mac (M1 or newer)**, and the **current [ChatGPT desktop app](https://chatgpt.com/download/)**. ChatGPT Classic is not supported. ProfileDock does not include or redistribute ChatGPT. Intel Macs can use the older v1.0.1 release; new releases target Apple Silicon.
 
