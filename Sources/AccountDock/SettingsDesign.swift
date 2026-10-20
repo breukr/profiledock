@@ -120,7 +120,7 @@ struct SettingsNotice: View {
             Image(systemName: symbol).font(.system(size: compact ? 14 : 16))
                 .foregroundStyle(tint).accessibilityHidden(true).padding(.top, 1)
             VStack(alignment: .leading, spacing: 8) {
-                Text(text).font(compact ? .system(size: 11) : .callout)
+                Text(text).font(compact ? .system(size: 11) : .callout).textSelection(.enabled)
                     .foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
                 if let actionTitle, let action {

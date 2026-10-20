@@ -74,10 +74,12 @@ struct AddProfileSheet: View {
     @State private var source: URL?
     @State private var creating = false
     @State private var error: String?
+    /// The tab list's own message, kept apart so polling never hides an error from Create.
+    @State private var listError: String?
 
     private var items: [AddItem] {
         let claudeCLI = model.installedAgent("claude")?.executablePath != nil
-        let claudeApp = NSWorkspace.shared.urlForApplication(withBundleIdentifier: ProfileProvider.claude.bundleIdentifier) != nil
+        let claudeApp = model.cachedApplicationPath([ProfileProvider.claude.bundleIdentifier]) != nil
         var result = [
             AddItem(choice: .codex, title: "ChatGPT / Codex", detail: model.defaultApplication.map { "Separate sign-in · " + $0.lastPathComponent } ?? "Not installed",
                     installed: model.defaultApplication != nil, tool: AgentRegistry.tool(id: "codex"), bundleIdentifier: "com.openai.codex", keywords: ["chatgpt", "codex", "openai"]),
@@ -150,7 +152,7 @@ struct AddProfileSheet: View {
             if choice != nil { form } else {
                 Text("Choose an app or coding tool above.").font(.callout).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
             }
-            if let error {
+            if let error = error ?? listError {
                 // The color is only the icon, so the message keeps full contrast in light mode.
                 Label { Text(error).fixedSize(horizontal: false, vertical: true) } icon: { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
                     .font(.callout)
@@ -192,7 +194,7 @@ struct AddProfileSheet: View {
             }
             Spacer(minLength: 8)
             if let tool = item.tool, item.choice.provider == .agent {
-                Text(tool.supportsIsolatedProfiles ? "Separate accounts" : "Existing sign-in").font(.caption).foregroundStyle(.secondary)
+                if !tool.accountSummary.isEmpty { Text(tool.accountSummary).font(.caption).foregroundStyle(.secondary) }
             }
         }
         .padding(.vertical, 3).tag(item.id).id(item.id)
@@ -201,8 +203,8 @@ struct AddProfileSheet: View {
     }
 
     @ViewBuilder private func itemIcon(_ item: AddItem) -> some View {
-        if let bundle = item.bundleIdentifier, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)).resizable().frame(width: 26, height: 26).accessibilityHidden(true)
+        if let bundle = item.bundleIdentifier, let path = model.cachedApplicationPath([bundle]) {
+            Image(nsImage: model.cachedIcon(path)).resizable().frame(width: 26, height: 26).accessibilityHidden(true)
         } else if let tool = item.tool {
             AgentIcon(model: model, tool: tool, size: 26)
         } else {
@@ -214,7 +216,7 @@ struct AddProfileSheet: View {
         guard force || id != selection else { return }
         selection = id
         let value = AddChoice(id: id)
-        terminalSelection = ""; terminalWindows = []; error = nil
+        terminalSelection = ""; terminalWindows = []; error = nil; listError = nil
         if value.provider == .claude, !force { separateClaude = hasSharedClaude }
         // Start from the sign-in already on this Mac; a desktop app that already has that entry offers a separate account.
         if let tool = value.toolID.flatMap(AgentRegistry.tool(id:)), !force { separateAgent = !tool.launchesInTerminal && hasSharedAgent(tool) }
@@ -235,14 +237,17 @@ struct AddProfileSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(choiceDescription).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let tool = selectedTool, model.installedAgent(tool.id)?.isInstalled != true, model.installedAgents != nil {
-                Label {
-                    Text("\(tool.name) isn’t installed. You can add it now; it shows Not installed until it is." + (tool.installHint.map { " Install it with \($0)." } ?? ""))
-                        .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                } icon: { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
-                .font(.caption)
+                VStack(alignment: .leading, spacing: 6) {
+                    Label {
+                        Text("\(tool.name) isn’t installed. You can add it now; it shows Not installed until it is.").fixedSize(horizontal: false, vertical: true)
+                    } icon: { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
+                    .font(.caption)
+                    if let hint = tool.installHint { InstallCommand(tool: tool, command: hint) }
+                }
             }
             LabeledContent("Profile name") {
-                TextField("For example, Personal or Work", text: Binding(get: { name }, set: { name = $0; nameEdited = true }))
+                // Only a real change counts as editing; an emptied field follows the chosen tool again.
+                TextField("For example, Personal or Work", text: Binding(get: { name }, set: { if $0 != name { name = $0; nameEdited = !$0.isEmpty } }))
                     .textFieldStyle(.roundedBorder).focused($focus, equals: .name).accessibilityLabel("Profile name")
             }
             if kind == .codex {
@@ -363,16 +368,16 @@ struct AddProfileSheet: View {
         }
     }
     private func refreshTerminals() async {
-        guard !loadingWindows, kind.usesTerminal else { return }
+        guard kind.usesTerminal else { return }
         let requestedKind = kind
         loadingWindows = true
-        defer { loadingWindows = false }
+        defer { if requestedKind == kind { loadingWindows = false } }
         do {
             let windows = try await TerminalClient.shared.windows().filter { $0.agent != nil && (requestedKind != .claudeCode || $0.agent == .claude) }
             guard requestedKind == kind, !Task.isCancelled else { return }
             terminalWindows = windows
             if !windows.contains(where: { $0.id == terminalSelection }) { terminalSelection = "" }
-            error = windows.isEmpty && requestedKind == .terminal ? "No open coding terminals. Start a coding agent in Terminal; this list updates by itself." : nil
-        } catch { if requestedKind == kind { self.error = error.localizedDescription; terminalWindows = []; terminalSelection = "" } }
+            listError = windows.isEmpty && requestedKind == .terminal ? "No open coding terminals. Start a coding agent in Terminal; this list updates by itself." : nil
+        } catch { if requestedKind == kind { listError = error.localizedDescription; terminalWindows = []; terminalSelection = "" } }
     }
 }

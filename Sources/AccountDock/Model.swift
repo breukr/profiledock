@@ -41,6 +41,8 @@ struct Preferences: Codable {
     var autoAddAgents: Bool?
     /// Tools whose automatic entry was removed. They are not added again until added by hand.
     var dismissedAgentTools: [String]?
+    /// Installed tools the user asked not to be suggested. Automatic adding is not affected.
+    var hiddenAgentOffers: [String]?
 }
 
 struct ProfileMessageRecovery: Equatable {
@@ -88,6 +90,13 @@ final class DockModel: ObservableObject {
     var agentScannedAt: Date?
     /// Tools being added automatically, so one refresh does not add them twice.
     var autoAddingTools: Set<String> = []
+    /// Bundle ids of running apps from the last refresh, so views never query running apps themselves.
+    @Published var runningBundles: Set<String> = []
+    /// Launch Services and icon lookups, done once per bundle id or path instead of in every view update.
+    var applicationPathCache: [String: String] = [:]
+    var missingApplicationCache: Set<String> = []
+    var iconCache: [String: NSImage] = [:]
+    var toolArtworkCache: [String: NSImage] = [:]
     let home: URL
     nonisolated let tracksApplications: Bool
     private var readinessTimer: Timer?
@@ -288,6 +297,8 @@ final class DockModel: ObservableObject {
             result[id, default: []].append(app)
         }
         let workspace = applications ?? NSWorkspace.shared.runningApplications
+        let bundles = Set(workspace.compactMap { $0.isTerminated ? nil : $0.bundleIdentifier })
+        if bundles != runningBundles { runningBundles = bundles; missingApplicationCache.removeAll() }
         result.merge(companionApplications(workspace)) { _, new in new }
         autoAddRunningAgents(workspace)
         // Avoid invalidating every SwiftUI view when only an unrelated application activates.

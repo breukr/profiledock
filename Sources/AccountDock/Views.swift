@@ -50,6 +50,8 @@ struct ProfileBadge: View {
     var activity: ActivitySummary?
     var activityVisible = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Badges are outlined in the color behind them: black in the strip, the window color in Settings.
+    private var ring: Color { showStatus ? .black : Color(nsColor: .windowBackgroundColor) }
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -74,7 +76,7 @@ struct ProfileBadge: View {
             if showStatus, let warning = model.tileWarning(profile) {
                 Image(systemName: warning.symbol).font(.system(size: max(9, size * 0.17), weight: .bold)).foregroundStyle(.black)
                     .frame(width: max(16, size * 0.34), height: max(16, size * 0.34)).background(.orange, in: Circle())
-                    .overlay(Circle().stroke(.black, lineWidth: 2)).offset(x: -4, y: 4)
+                    .overlay(Circle().stroke(ring, lineWidth: 2)).offset(x: -4, y: 4)
                     .accessibilityLabel(warning.text)
             }
         }
@@ -82,7 +84,7 @@ struct ProfileBadge: View {
             if let agent = model.terminalAgent(for: profile) ?? model.savedTerminalTool(profile) {
                 Image(nsImage: model.terminalAgentArtwork(agent)).resizable()
                     .frame(width: max(16, size * 0.36), height: max(16, size * 0.36))
-                    .clipShape(Circle()).overlay(Circle().stroke(.black, lineWidth: 2))
+                    .clipShape(Circle()).overlay(Circle().stroke(ring, lineWidth: 2))
                     .offset(x: 4, y: -4)
                     .accessibilityLabel("\(agent.label) terminal")
                     .help("\(agent.label) is running in this Terminal tab")
@@ -93,7 +95,7 @@ struct ProfileBadge: View {
                 Text(badge).font(.system(size: 10, weight: .bold, design: .rounded)).monospacedDigit()
                     .foregroundStyle(.white).padding(.horizontal, 5).frame(minWidth: 19, minHeight: 19)
                     .background(Color(red: 0.93, green: 0.24, blue: 0.24), in: Capsule())
-                    .overlay(Capsule().stroke(.black, lineWidth: 2)).offset(x: -7, y: -5)
+                    .overlay(Capsule().stroke(ring, lineWidth: 2)).offset(x: -7, y: -5)
                     .accessibilityLabel("\(activity.unread ?? 0) completed tasks with unread results")
             }
         }
@@ -101,7 +103,7 @@ struct ProfileBadge: View {
             if let activity, activity.waiting > 0 {
                 Image(systemName: "pause.fill").font(.system(size: 8, weight: .bold)).foregroundStyle(.black)
                     .frame(width: 20, height: 20).background(.orange, in: Circle())
-                    .overlay(Circle().stroke(.black, lineWidth: 2)).offset(x: -6, y: 4)
+                    .overlay(Circle().stroke(ring, lineWidth: 2)).offset(x: -6, y: 4)
                     .accessibilityLabel("\(activity.waiting) tasks waiting for you")
             }
         }
@@ -327,7 +329,11 @@ struct IslandView: View {
                 presentation.toggleResetDetails(profile.id)
             }
             .help(resetHelp(snapshot))
-            } else { Text(profile.kind == .agent ? (profile.agentTool?.name ?? profile.tileCaption) : profile.tileCaption).font(.system(size: 10)).foregroundStyle(.white.opacity(0.55)).frame(height: 20) }
+            } else {
+                // The tool's name only where the profile's own name does not already say it.
+                let footer = profile.kind == .agent ? (profile.agentTool?.name ?? profile.tileCaption) : profile.tileCaption
+                Text(footer == profile.name ? " " : footer).font(.system(size: 10)).foregroundStyle(.white.opacity(0.55)).frame(height: 20)
+            }
             if let snapshot, entry?.error != nil || usage.now.timeIntervalSince(snapshot.fetchedAt) > (profile.usesClaudeAccountUsage ? 360 : 90) {
                 Text("Updated \(Self.age(snapshot.fetchedAt, now: usage.now)) ago")
                     .font(.system(size: 8)).foregroundStyle(.orange.opacity(0.9))

@@ -262,9 +262,11 @@ struct SettingsView: View {
                         Text(profile.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(.primary).lineLimit(1)
                         HStack(spacing: 5) {
                             ProfileStateMark(model: model, profile: profile)
-                            Text(model.state(profile))
+                            // The state is the one fact that must stay readable in a narrow window.
+                            Text(model.state(profile)).fixedSize().layoutPriority(2)
                             Text("·")
                             Text(profile.kind != .codex ? profile.listDetail : profile.dockApplicationPath != nil ? "Custom Dock icon" : profile.applicationPath == nil ? "Shared app" : "Separate app")
+                                .layoutPriority(1)
                             if !profile.isShownInStrip { Text("·"); Text("Hidden from strip") }
                             if profile.addedAutomatically == true { Text("·"); Text("Added automatically") }
                         }.font(.caption).foregroundStyle(.secondary).lineLimit(1)
