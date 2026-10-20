@@ -308,3 +308,19 @@ final class AgentLiveReport: XCTestCase {
         try (lines.joined(separator: "\n") + "\n").write(toFile: output, atomically: true, encoding: .utf8)
     }
 }
+
+final class AgentBadgeContrastTests: XCTestCase {
+    /// White monograms on each tool's color stay readable: at least 3:1, the WCAG minimum for large text and icons.
+    func testToolColorsKeepWhiteMonogramsReadable() {
+        func luminance(_ hex: String) -> Double {
+            let value = UInt32(hex, radix: 16) ?? 0
+            return [Double((value >> 16) & 255), Double((value >> 8) & 255), Double(value & 255)].map { channel -> Double in
+                let c = channel / 255
+                return c <= 0.03928 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+            }.enumerated().map { [0.2126, 0.7152, 0.0722][$0.offset] * $0.element }.reduce(0, +)
+        }
+        for tool in AgentRegistry.tools {
+            XCTAssertGreaterThanOrEqual(1.05 / (luminance(tool.color) + 0.05), 3, tool.id)
+        }
+    }
+}

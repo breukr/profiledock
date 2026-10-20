@@ -91,6 +91,8 @@ final class CompanionRenderingTests: XCTestCase {
 }
 
 final class AgentRenderingTests: XCTestCase {
+    /// `PROFILEDOCK_RENDER_AGENTS=<dir> swift test --filter AgentRenderingTests` writes every agent surface with fictional
+    /// profiles: narrow, normal and wide; scales 0.85, 1 and 1.3; light and dark.
     @MainActor func testAgentProfilesDesktopLayouts() async throws {
         guard let path = ProcessInfo.processInfo.environment["PROFILEDOCK_RENDER_AGENTS"] else { throw XCTSkip("Opt-in agent previews") }
         let directory = URL(fileURLWithPath: path)
@@ -102,34 +104,112 @@ final class AgentRenderingTests: XCTestCase {
         var codex = Profile(id: "default", name: "Personal", color: "377CF6"); codex.dockIconStyle = .chatgpt
         try FileManager.default.createDirectory(at: codex.home(in: home), withIntermediateDirectories: true)
         model.preferences.profiles = [codex]
-        try model.createAgentProfile(toolID: "grok-bot", name: "Grok Bot", project: nil, separate: false)
+        try model.createAgentProfile(toolID: "grok-bot", name: "Grok Bot", project: nil, separate: false, automatic: true)
         try model.createAgentProfile(toolID: "grok-bot", name: "Work", project: nil, separate: true)
         try model.createAgentProfile(toolID: "hermes", name: "Hermes", project: home, separate: false)
         try model.createAgentProfile(toolID: "gemini", name: "Client", project: home, separate: true)
-        try model.createAgentProfile(toolID: "cursor", name: "Cursor", project: nil, separate: false)
+        try model.createAgentProfile(toolID: "pi", name: "pi", project: home, separate: false)
+        try model.createAgentProfile(toolID: "t3code", name: "T3 Code", project: nil, separate: false, automatic: true)
+        let installed: [(String, String?, String?, String?)] = [
+            ("claude", "\(home.path)/.local/bin/claude", nil, nil), ("codex", "/opt/homebrew/bin/codex", "/Applications/Codex.app", nil),
+            ("grok-bot", nil, "/Applications/Grok Bot.app", nil), ("hermes", "\(home.path)/.local/bin/hermes", nil, nil),
+            ("gemini", "\(home.path)/.nvm/versions/node/v22.11.0/bin/gemini", nil, nil), ("opencode", "/opt/homebrew/bin/opencode", nil, nil),
+            ("kimi", "\(home.path)/.kimi-code/bin/kimi", nil, nil), ("qwen", "/opt/homebrew/bin/qwen", nil, nil),
+            ("t3code", nil, "/Applications/T3 Code (Alpha).app", nil), ("antigravity", nil, "/Applications/Antigravity.app", nil),
+            ("crush", nil, nil, "\(home.path)/.config/crush"), ("droid", nil, nil, "\(home.path)/.factory")
+        ]
+        model.installedAgents = installed.compactMap { id, command, app, config in
+            AgentRegistry.tool(id: id).map { InstalledAgent(tool: $0, executablePath: command, applicationPath: app, configPath: config,
+                                                            evidence: [command.map { _ in .executable }, app.map { _ in .application }, config.map { _ in .config }].compactMap { $0 },
+                                                            applications: app.map { [AgentApplication(path: $0, bundleIdentifier: nil, name: "Fixture")] } ?? []) }
+        }
+        model.agentScannedAt = .distantFuture
+        if let work = model.preferences.profiles.first(where: { $0.name == "Work" }) { model.agentsNeedingSignIn = [work.id] }
         model.companions.terminalStarted = 42
         model.companions.windows = [TerminalWindow(windowID: 7, tty: "/dev/ttys007", title: "Fixture", selected: false, front: false, agent: TerminalAgent(rawValue: "opencode"))]
         model.reconcileDiscoveredTerminals()
-        for (width, columns) in [(680.0, 4), (1040.0, 6)] {
-            let presentation = IslandPresentation(expanded: true)
-            presentation.profileColumns = columns; presentation.profileRows = 2
-            let view = IslandView(model: model, usage: usage, activity: activity, insights: insights, presentation: presentation, notchHeight: 0, settings: {}, drag: { _, _ in }).background(.black)
-            try await render(view, size: CGSize(width: width, height: 640), to: directory.appendingPathComponent("agents-strip-\(Int(width)).png"))
+
+        let schemes: [(String, ColorScheme)] = [("light", .light), ("dark", .dark)]
+        let scales = [0.85, 1.0, 1.3]
+        for (width, columns) in [(480.0, 3), (680.0, 4), (1040.0, 6)] {
+            for scale in scales {
+                model.preferences.scale = scale
+                for (name, scheme) in schemes {
+                    let presentation = IslandPresentation(expanded: true)
+                    presentation.profileColumns = columns; presentation.profileRows = 3
+                    let view = IslandView(model: model, usage: usage, activity: activity, insights: insights, presentation: presentation, notchHeight: 0, settings: {}, drag: { _, _ in }).background(.black)
+                    try await render(view, size: CGSize(width: width, height: 760), scheme: scheme, to: directory.appendingPathComponent("strip-\(Int(width))-\(scale)-\(name).png"))
+                }
+            }
         }
-        let settings = SettingsView(model: model, loginItem: LoginItemModel(), activity: activity, updates: AppUpdates(), selfUpdates: ProfileDockUpdates(), insights: insights, cues: ActivityCues(), chooseImage: { _ in })
-        try await render(settings, size: CGSize(width: 920, height: 700), to: directory.appendingPathComponent("agents-settings.png"))
-        for (tool, separate) in [("grok-bot", true), ("hermes", false), ("copilot", false)] {
-            try await render(AddProfileSheet(model: model, toolID: tool, separate: separate).background(Color(nsColor: .windowBackgroundColor)), size: CGSize(width: 560, height: 520), to: directory.appendingPathComponent("add-\(tool).png"))
+        model.preferences.scale = 1
+        let sizes = [CGSize(width: 760, height: 560), CGSize(width: 920, height: 700), CGSize(width: 1280, height: 800)]
+        for destination in [SettingsDestination.profiles, .agents] {
+            for size in sizes {
+                for zoom in scales {
+                    for (name, scheme) in schemes {
+                        let view = SettingsView(model: model, loginItem: LoginItemModel(), activity: activity, updates: AppUpdates(), selfUpdates: ProfileDockUpdates(), insights: insights, cues: ActivityCues(), chooseImage: { _ in }, destination: destination)
+                        try await render(view, size: size, scheme: scheme, zoom: zoom, to: directory.appendingPathComponent("\(destination == .agents ? "agents" : "profiles")-\(Int(size.width))-\(zoom)-\(name).png"))
+                    }
+                }
+            }
         }
-        for profile in model.preferences.profiles where profile.kind == .agent {
-            try await render(CompanionDetails(model: model, profile: profile).padding(20).background(Color(nsColor: .windowBackgroundColor)), size: CGSize(width: 560, height: 260), to: directory.appendingPathComponent("details-\(profile.name).png"))
+        for (label, start, separate) in [("detected", "hermes", false), ("separate", "gemini", true), ("missing", "pi", false), ("codex", "codex", false)] {
+            for zoom in scales {
+                for (name, scheme) in schemes {
+                    let sheet = AddProfileSheet(model: model, start: start, separate: separate).background(Color(nsColor: .windowBackgroundColor))
+                    // A sheet keeps its width when the display zooms, so the canvas grows with it.
+                    try await render(sheet, size: CGSize(width: 640 * zoom, height: 720 * zoom), scheme: scheme, zoom: zoom, to: directory.appendingPathComponent("add-\(label)-\(zoom)-\(name).png"))
+                }
+            }
+        }
+        for profile in model.preferences.profiles where profile.kind == .agent && profile.usesIsolatedAgentHome {
+            for (name, scheme) in schemes {
+                var trash = true
+                let sheet = RemoveProfileSheet(model: model, profile: profile, trashData: Binding(get: { trash }, set: { trash = $0 }), done: {}).background(Color(nsColor: .windowBackgroundColor))
+                try await render(sheet, size: CGSize(width: 480, height: 320), scheme: scheme, to: directory.appendingPathComponent("remove-\(profile.name)-\(name).png"))
+            }
+        }
+        // Errors and empty states: a missing tool's notice, denied Terminal access, a first run with tools found, and a scan in progress.
+        if let pi = model.preferences.profiles.first(where: { $0.agentID == "pi" }) { model.select(pi) }
+        model.companions.terminalError = TerminalClientError.automationDenied.localizedDescription
+        for zoom in scales {
+            for (name, scheme) in schemes {
+                try await render(VStack { ProfileMessageNotice(model: model) }.padding(20).background(Color(nsColor: .windowBackgroundColor)),
+                                 size: CGSize(width: 760, height: 160), scheme: scheme, zoom: zoom, to: directory.appendingPathComponent("error-missing-\(zoom)-\(name).png"))
+                try await render(SettingsView(model: model, loginItem: LoginItemModel(), activity: activity, updates: AppUpdates(), selfUpdates: ProfileDockUpdates(), insights: insights, cues: ActivityCues(), chooseImage: { _ in }, destination: .agents),
+                                 size: CGSize(width: 920, height: 700), scheme: scheme, zoom: zoom, to: directory.appendingPathComponent("error-automation-\(zoom)-\(name).png"))
+            }
+        }
+        model.message = nil
+        let firstHome = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: firstHome) }
+        let first = DockModel(home: firstHome)
+        first.installedAgents = model.installedAgents; first.agentScannedAt = .distantFuture
+        let scanning = DockModel(home: firstHome)
+        scanning.agentScanTask = Task {}
+        for zoom in scales {
+            for (name, scheme) in schemes {
+                for size in sizes {
+                    try await render(SettingsView(model: first, loginItem: LoginItemModel(), activity: activity, updates: AppUpdates(), selfUpdates: ProfileDockUpdates(), insights: insights, cues: ActivityCues(), chooseImage: { _ in }, destination: .profiles),
+                                     size: size, scheme: scheme, zoom: zoom, to: directory.appendingPathComponent("empty-first-run-\(Int(size.width))-\(zoom)-\(name).png"))
+                }
+                try await render(SettingsView(model: scanning, loginItem: LoginItemModel(), activity: activity, updates: AppUpdates(), selfUpdates: ProfileDockUpdates(), insights: insights, cues: ActivityCues(), chooseImage: { _ in }, destination: .agents),
+                                 size: CGSize(width: 920, height: 700), scheme: scheme, zoom: zoom, to: directory.appendingPathComponent("empty-scanning-\(zoom)-\(name).png"))
+                let empty = IslandView(model: first, usage: usage, activity: activity, insights: insights, presentation: IslandPresentation(expanded: true), notchHeight: 0, settings: {}, drag: { _, _ in }).background(.black)
+                try await render(empty, size: CGSize(width: 680, height: 320), scheme: scheme, zoom: zoom, to: directory.appendingPathComponent("empty-strip-\(zoom)-\(name).png"))
+            }
         }
     }
-    @MainActor private func render<V: View>(_ view: V, size: CGSize, to url: URL) async throws {
-        let host = NSHostingView(rootView: view.environment(\.colorScheme, .dark).frame(width: size.width, height: size.height, alignment: .topLeading))
+    /// `zoom` lays the view out at a smaller or larger size and magnifies it, like zooming the display.
+    @MainActor private func render<V: View>(_ view: V, size: CGSize, scheme: ColorScheme, zoom: CGFloat = 1, to url: URL) async throws {
+        let content = view.environment(\.colorScheme, scheme).frame(width: size.width / zoom, height: size.height / zoom, alignment: .topLeading)
+            .scaleEffect(zoom, anchor: .topLeading).frame(width: size.width, height: size.height, alignment: .topLeading)
+        let host = NSHostingView(rootView: content)
         let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
         window.isReleasedWhenClosed = false; window.contentView = host; host.frame = CGRect(origin: .zero, size: size)
-        host.layoutSubtreeIfNeeded(); try await Task.sleep(for: .milliseconds(150)); host.layoutSubtreeIfNeeded()
+        host.layoutSubtreeIfNeeded(); try await Task.sleep(for: .milliseconds(350)); host.layoutSubtreeIfNeeded()
         let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: bitmap)
         try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: url)

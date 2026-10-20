@@ -25,7 +25,9 @@ enum AgentAvailability: Equatable {
             let (installed, signedOut) = await Task.detached(priority: .utility) { () -> ([InstalledAgent], Set<String>) in
                 // Launch Services knows renamed and duplicate copies without reading every app in /Applications.
                 let applications = live ? Self.launchServicesApplications() : []
-                let scan = AgentProbe.scan(home: home, applications: applications, applicationRoots: live ? nil : [home.appendingPathComponent("Applications")])
+                // A preview or test home never looks at this Mac's own PATH or apps.
+                let scan = live ? AgentProbe.scan(home: home, applications: applications)
+                    : AgentProbe.scan(home: home, path: "", applicationRoots: [home.appendingPathComponent("Applications")])
                 let signedOut = Set(statuses.filter { AgentProbe.signedIn($0.1, userData: $0.2) == false }.map(\.0))
                 return (AgentDetector.installed(scan), signedOut)
             }.value
@@ -73,7 +75,7 @@ enum AgentAvailability: Equatable {
         if !tool.launchesInTerminal {
             return "\(tool.name) isn’t installed. Install it in Applications, then try again."
         }
-        let command = tool.preferredExecutable.map { "`\($0)`" } ?? tool.name
+        let command = tool.preferredExecutable.map { "“\($0)”" } ?? tool.name
         let install = tool.installHint.map { " Install it with \($0), then try again." } ?? " Install it, then try again."
         return "ProfileDock can’t find \(command) in the usual install folders." + install
     }
@@ -173,6 +175,20 @@ enum AgentAvailability: Equatable {
         NSWorkspace.shared.open([file], withApplicationAt: terminal, configuration: configuration) { _, error in
             if error != nil { try? FileManager.default.removeItem(at: file) }
         }
+    }
+
+    /// A problem a tile shows instead of its shortcut, with the fix for its tooltip.
+    func tileWarning(_ profile: Profile) -> (text: String, symbol: String, fix: String)? {
+        guard profile.kind == .agent, running[profile.id]?.isEmpty != false, !opening.contains(profile.id), let tool = profile.agentTool else { return nil }
+        if agentAvailability(profile) == .missing { return ("Not installed", "exclamationmark", missingToolMessage(tool)) }
+        if agentsNeedingSignIn.contains(profile.id) { return ("Sign-in needed", "person.fill", "Open \(profile.name) and sign in with the account for this profile.") }
+        return nil
+    }
+
+    /// A saved terminal tool shows its badge even before a tab runs it, like a discovered tab does.
+    func savedTerminalTool(_ profile: Profile) -> TerminalAgent? {
+        guard profile.kind == .agent, let tool = profile.agentTool, tool.launchesInTerminal else { return nil }
+        return TerminalAgent(rawValue: tool.id)
     }
 
     static let automationSettings = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")!

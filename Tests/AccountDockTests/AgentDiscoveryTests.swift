@@ -88,7 +88,7 @@ final class AgentDiscoveryTests: XCTestCase {
         for _ in 0..<50 where model.messageRecovery == nil { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertEqual(model.messageRecovery?.title, "Open Anyway")
         XCTAssertEqual(model.messageRecovery?.opensAnyway, true)
-        XCTAssertTrue(model.message?.contains("`pi`") == true)
+        XCTAssertTrue(model.message?.contains("“pi”") == true)
         model.installedAgents = [InstalledAgent(tool: try XCTUnwrap(pi.agentTool), executablePath: "/opt/homebrew/bin/pi", applicationPath: nil, configPath: nil, evidence: [.executable])]
         XCTAssertEqual(model.agentAvailability(pi), .installed)
         XCTAssertEqual(model.state(pi), "Closed")

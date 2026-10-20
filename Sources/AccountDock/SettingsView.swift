@@ -20,6 +20,9 @@ struct SettingsView: View {
     @State private var section: SettingsDestination?
     @State private var navigationQuery = ""
     @State private var adding = false
+    /// Add Profile opened on one tool from Coding Agents.
+    @State private var addingTool: AddStart?
+    private struct AddStart: Identifiable { let id: String }
     @State private var editing: Profile?
     @State private var removing: Profile?
     @State private var trashData = false
@@ -59,22 +62,11 @@ struct SettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .profileDockShowAbout)) { _ in navigate(.about) }
         .onReceive(NotificationCenter.default.publisher(for: .profileDockAddProfile)) { _ in navigate(.profiles); adding = true }
         .sheet(isPresented: $adding) { AddProfileSheet(model: model) }
+        .sheet(item: $addingTool) { start in AddProfileSheet(model: model, start: start.id) }
         .sheet(item: $editing) { profile in
             ProfileSettingsSheet(model: model, profileID: profile.id) { editing = nil; manageContext(for: profile.id) }
         }
-        .sheet(item: $removing) { profile in
-            VStack(alignment: .leading, spacing: 18) {
-                Text("Remove \(profile.name)?").font(.title2.weight(.semibold))
-                Text("The profile will disappear from ProfileDock. Its chats and sign-in data stay on this Mac unless you choose to move them to the Trash.")
-                if profile.kind == .codex && profile.id.hasPrefix("profile-") { Toggle("Also move this profile's data and managed app copy to the Trash", isOn: $trashData) }
-                HStack { Spacer(); Button("Cancel") { removing = nil }.keyboardShortcut(.cancelAction)
-                    Button("Remove", role: .destructive) {
-                        do { try model.removeProfile(profile, trashData: trashData); removing = nil }
-                        catch { model.message = error.localizedDescription; removing = nil }
-                    }
-                }
-            }.padding(28).frame(width: 460)
-        }
+        .sheet(item: $removing) { profile in RemoveProfileSheet(model: model, profile: profile, trashData: $trashData) { removing = nil } }
         .alert("Update the selected ChatGPT apps?", isPresented: $confirmingUpdate) {
             Button("Cancel", role: .cancel) {}
             Button("Download & update") { updates.install(groups: selectedGroups, model: model, activity: activity) }
@@ -136,6 +128,7 @@ struct SettingsView: View {
     @ViewBuilder private var pageContent: some View {
         switch destination {
         case .profiles: profiles
+        case .agents: AgentsSettingsView(model: model) { addingTool = AddStart(id: $0 ?? "codex") }
         case .search: ContextSettingsView(model: model, mode: .search) { manageContext() }
         case .insights: insightsSettings
         case .updates: updateSettings
@@ -160,6 +153,7 @@ struct SettingsView: View {
             }
             Button("Add Profile") { adding = true }.buttonStyle(.borderedProminent)
                 .keyboardShortcut("n", modifiers: .command)
+            if destination == .profiles { FoundAgentsCard(model: model, compact: true) { navigate(.agents) }.frame(width: 360) }
             Button("Import or Restore Profiles…") { model.restoreImportedProfiles() }.buttonStyle(.borderless)
         }
         .frame(maxWidth: 360).padding(.vertical, 24)
@@ -225,6 +219,7 @@ struct SettingsView: View {
 
     private var profiles: some View {
         VStack(alignment: .leading, spacing: 14) {
+            FoundAgentsCard(model: model) { navigate(.agents) }
             if model.preferences.profiles.isEmpty {
                 ContentUnavailableView("Add your first profile", systemImage: "person.crop.circle.badge.plus", description: Text("Keep work and personal accounts together, with a separate sign-in for each."))
             } else {
@@ -266,11 +261,12 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 5) {
                         Text(profile.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(.primary).lineLimit(1)
                         HStack(spacing: 5) {
-                            Circle().fill(isOpen ? Color.green : Color.secondary.opacity(0.5)).frame(width: 5, height: 5)
+                            ProfileStateMark(model: model, profile: profile)
                             Text(model.state(profile))
                             Text("·")
                             Text(profile.kind != .codex ? profile.listDetail : profile.dockApplicationPath != nil ? "Custom Dock icon" : profile.applicationPath == nil ? "Shared app" : "Separate app")
                             if !profile.isShownInStrip { Text("·"); Text("Hidden from strip") }
+                            if profile.addedAutomatically == true { Text("·"); Text("Added automatically") }
                         }.font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }.contentShape(Rectangle())
@@ -325,7 +321,6 @@ struct SettingsView: View {
         }
         Section {
             Button("Remove profile…", systemImage: "trash", role: .destructive) { trashData = false; removing = profile }
-                .disabled(model.running[profile.id]?.isEmpty == false)
         }
 
     }
@@ -655,204 +650,3 @@ struct SettingsView: View {
 
 }
 
-private struct AddChoice: Hashable {
-    var provider: ProfileProvider
-    var toolID: String?
-    static let codex = AddChoice(provider: .codex, toolID: nil)
-}
-
-struct AddProfileSheet: View {
-    @ObservedObject var model: DockModel
-    @Environment(\.dismiss) var dismiss
-    @State private var name = ""
-    @FocusState private var nameFocused: Bool
-    @State private var choice = AddChoice.codex
-    init(model: DockModel) { self.model = model }
-    /// Starts on one registry tool, for visual checks of its account choice.
-    init(model: DockModel, toolID: String, separate: Bool) {
-        self.model = model
-        _choice = State(initialValue: AddChoice(provider: .agent, toolID: toolID))
-        _separateAgent = State(initialValue: separate)
-    }
-    private var kind: ProfileProvider { choice.provider }
-    private var selectedTool: AgentTool? { choice.toolID.flatMap { AgentRegistry.tool(id: $0) } }
-    @State private var project: URL?
-    @State private var terminalWindows: [TerminalWindow] = []
-    @State private var terminalSelection = ""
-    @State private var loadingWindows = false
-    @State private var separate = false
-    @State private var separateClaude = false
-    @State private var separateAgent = false
-    @State private var source: URL?
-    @State private var creating = false
-    @State private var error: String?
-    var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Text("Add Profile").font(.title2.weight(.semibold))
-            Picker("App", selection: $choice) {
-                ForEach(ProfileProvider.allCases.filter { $0 != .agent }, id: \.self) { provider in
-                    Text(provider.label).tag(AddChoice(provider: provider, toolID: nil))
-                }
-                Section("Desktop apps") {
-                    ForEach(AgentRegistry.addable.filter { !$0.launchesInTerminal }) { tool in
-                        Text(tool.name).tag(AddChoice(provider: .agent, toolID: tool.id))
-                    }
-                }
-                Section("Terminal agents") {
-                    ForEach(AgentRegistry.addable.filter(\.launchesInTerminal)) { tool in
-                        Text(tool.name).tag(AddChoice(provider: .agent, toolID: tool.id))
-                    }
-                }
-            }
-            Text(choiceDescription).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Profile name").font(.subheadline.weight(.medium))
-                TextField("For example, Personal or Work", text: $name).textFieldStyle(.roundedBorder)
-                    .focused($nameFocused).accessibilityLabel("Profile name")
-            }
-            if kind == .codex {
-            Picker("Application", selection: $separate) {
-                Text("Shared installation · recommended").tag(false)
-                Text("Separate installation").tag(true)
-            }.pickerStyle(.radioGroup)
-            Text(separate ? "Copies the ChatGPT app so you can update this profile independently. Uses more disk space. It does not create another account or subscription." : "Uses your existing ChatGPT installation. Your sign-in, chats and settings are still separate; only the app files and update schedule are shared.")
-                .font(.caption).foregroundStyle(.secondary)
-            HStack {
-                Menu {
-                    ForEach(model.installedApplications, id: \.path) { application in
-                        Button { source = application } label: {
-                            Label(application.lastPathComponent, systemImage: source == application || (source == nil && model.defaultApplication == application) ? "checkmark" : "app")
-                        }
-                    }
-                    Divider()
-                    Button("Browse Applications…") {
-                        let panel = NSOpenPanel(); panel.allowedContentTypes = [.applicationBundle]
-                        panel.directoryURL = URL(fileURLWithPath: "/Applications")
-                        panel.canChooseDirectories = false
-                        panel.begin { response in if response == .OK { source = panel.url } }
-                    }
-                } label: {
-                    Label((source ?? model.defaultApplication)?.lastPathComponent ?? "Choose App…", systemImage: "app")
-                }.accessibilityLabel("Choose App")
-                Spacer()
-            }
-
-            } else if kind == .claude {
-                Picker("Account", selection: $separateClaude) {
-                    Text("Existing Claude sign-in").tag(false).disabled(hasSharedClaude)
-                    Text("Separate Claude account").tag(true)
-                }.pickerStyle(.radioGroup)
-                Text(separateClaude ? "Opens its own Claude window with a separate sign-in, chats and Claude Code settings. Both accounts can stay open at the same time. Sign in with the other account the first time it opens." : "Uses the Claude Desktop sign-in you already have.")
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            } else if kind == .agent, let tool = selectedTool {
-                if tool.supportsIsolatedProfiles {
-                    Picker("Account", selection: $separateAgent) {
-                        Text("Existing \(tool.name) sign-in").tag(false).disabled(!tool.launchesInTerminal && hasSharedAgent(tool))
-                        Text("Separate \(tool.name) account").tag(true)
-                    }.pickerStyle(.radioGroup)
-                }
-                Text(separateAgent && tool.supportsIsolatedProfiles ? tool.accountNotice : tool.sharedNotice)
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                if tool.launchesInTerminal {
-                    HStack {
-                        Text(project?.path ?? model.home.path).font(.caption).lineLimit(2)
-                        Spacer()
-                        Button("Choose folder…") {
-                            let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true
-                            panel.begin { if $0 == .OK { project = panel.url } }
-                        }
-                    }
-                }
-            } else if kind.usesTerminal {
-                HStack {
-                    Text(project?.path ?? model.home.path).font(.caption).lineLimit(2)
-                    Spacer()
-                    Button("Choose folder…") {
-                        let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true
-                        panel.begin { if $0 == .OK { project = panel.url } }
-                    }
-                }
-                Button("Find coding terminals…") {
-                    Task { await refreshTerminals() }
-                }.disabled(loadingWindows)
-                if !terminalWindows.isEmpty {
-                    Picker("Tab", selection: $terminalSelection) {
-                        Text(kind == .terminal ? "Choose a coding terminal" : "New Claude Code window when opened").tag("")
-                        ForEach(terminalWindows) { window in Text(window.suggestionLabel).tag(window.id) }
-                    }
-                }
-            }
-            if let error { Text(error).font(.callout).foregroundStyle(.orange) }
-            if creating { ProgressView("Creating your profile…").controlSize(.small) }
-            HStack {
-                Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Create profile") {
-                    creating = true; error = nil
-                    Task {
-                        do {
-                            if kind == .codex { try await model.createProfile(name: name, separateApp: separate, source: source) }
-                            else if kind == .agent, let toolID = choice.toolID { try model.createAgentProfile(toolID: toolID, name: name, project: project, separate: separateAgent) }
-                            else {
-                                var window: TerminalWindow?
-                                if kind.usesTerminal, !terminalSelection.isEmpty {
-                                    window = try await TerminalClient.shared.windows().first { $0.id == terminalSelection && $0.agent != nil }
-                                    guard window != nil else { throw CompanionError.message("That coding session has closed. Refresh the terminal list.") }
-                                }
-                                if kind == .terminal, window == nil { throw CompanionError.message("Choose an open coding terminal first.") }
-                                try model.createCompanion(kind: kind, name: name, project: project, window: window, separateAccount: separateClaude)
-                            }
-                            model.companions.refresh(); dismiss()
-                        }
-                        catch { self.error = error.localizedDescription }
-                        creating = false
-                    }
-                }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(ProfileLaunch.newProfile(name: name) == nil || (kind == .terminal && terminalSelection.isEmpty))
-            }
-        }.padding(28).frame(width: 560).disabled(creating).interactiveDismissDisabled(creating).onAppear { nameFocused = true }
-            .onChange(of: choice) { _, value in
-                terminalSelection = ""; terminalWindows = []; error = nil
-                if value.provider == .claude { separateClaude = hasSharedClaude }
-                // Start from the sign-in already on this Mac; a desktop app that already has that entry offers a separate account.
-                if let tool = value.toolID.flatMap(AgentRegistry.tool(id:)) { separateAgent = !tool.launchesInTerminal && hasSharedAgent(tool) }
-            }
-            .task(id: choice) {
-                guard kind.usesTerminal else { return }
-                while !Task.isCancelled {
-                    await refreshTerminals()
-                    do { try await Task.sleep(for: .seconds(3)) } catch { return }
-                }
-            }
-    }
-    private var hasSharedClaude: Bool { model.preferences.profiles.contains { $0.kind == .claude && !$0.usesSeparateClaudeAccount } }
-    private func hasSharedAgent(_ tool: AgentTool) -> Bool {
-        model.preferences.profiles.contains { $0.kind == .agent && $0.agentID == tool.id && !$0.usesIsolatedAgentHome }
-    }
-    private var choiceDescription: String {
-        if let selectedTool {
-            return selectedTool.launchesInTerminal
-                ? "Opens \(selectedTool.name) in a new Terminal tab, in the project folder you choose."
-                : "Adds \(selectedTool.name) to the strip. ProfileDock opens the app you already installed."
-        }
-        switch kind {
-        case .codex: return "Create a separate Codex sign-in, history and settings."
-        case .claude: return "Add Claude Desktop to the strip, with your existing sign-in or a separate account."
-        case .terminal: return "Choose an open Terminal tab running a coding agent. It appears in the strip only while that session is open."
-        case .claudeCode: return "Save a Claude Code project. It appears in the strip while Claude runs in its Terminal tab."
-        case .agent: return ""
-        }
-    }
-    private func refreshTerminals() async {
-        guard !loadingWindows, kind.usesTerminal else { return }
-        let requestedKind = kind
-        loadingWindows = true
-        defer { loadingWindows = false }
-        do {
-            let windows = try await TerminalClient.shared.windows().filter { $0.agent != nil && (requestedKind != .claudeCode || $0.agent == .claude) }
-            guard requestedKind == kind, !Task.isCancelled else { return }
-            terminalWindows = windows
-            if !windows.contains(where: { $0.id == terminalSelection }) { terminalSelection = "" }
-            error = windows.isEmpty ? "No open coding terminals. Start a coding agent in Terminal, then try again." : nil
-        } catch { if requestedKind == kind { self.error = error.localizedDescription; terminalWindows = []; terminalSelection = "" } }
-    }
-}
