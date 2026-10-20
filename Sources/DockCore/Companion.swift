@@ -28,8 +28,9 @@ public struct TerminalAgent: Hashable, Codable, Sendable {
 
     /// Only foreground agents count, never window titles, idle shells, stopped jobs or prompts.
     /// Without an inspector, process names alone decide, so script-based CLIs that run under `node` or `python` are missed.
-    public static func processes(_ table: String, installs: [String: String] = [:], inspect: (Int32) -> AgentProcessLaunch? = { _ in nil }, resolve: (String) -> String = { $0 }) -> [String: TerminalAgent] {
-        AgentProcessTable.agents(table, installs: installs, inspect: inspect, resolve: resolve).mapValues { TerminalAgent(rawValue: $0.tool.id) }
+    public static func processes(_ table: String, installs: [String: String] = [:], inspect: (Int32) -> AgentProcessLaunch? = { _ in nil },
+                                 executablePath: (Int32) -> String? = { _ in nil }, resolve: (String) -> String = { $0 }) -> [String: TerminalAgent] {
+        AgentProcessTable.agents(table, installs: installs, inspect: inspect, executablePath: executablePath, resolve: resolve).mapValues { TerminalAgent(rawValue: $0.tool.id) }
     }
 }
 
