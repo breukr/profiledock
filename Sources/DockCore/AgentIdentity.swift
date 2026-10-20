@@ -1,0 +1,148 @@
+import Foundation
+
+/// What a running process was started as: the kernel's executable path and its argv. Never its environment.
+public struct AgentProcessLaunch: Sendable, Equatable {
+    public var executable: String
+    public var arguments: [String]
+    public init(executable: String, arguments: [String]) {
+        self.executable = executable
+        self.arguments = arguments
+    }
+}
+
+/// Decides which registry tool a process is without guessing. A command name that several programs share
+/// (`pi`, `agent`, `cn`, `droid`) needs its resolved install path to name the tool's package.
+public enum AgentIdentity {
+    /// Runtimes that npm, pip and Bun commands run under. The command itself is then the script in argv.
+    public static func isInterpreter(_ name: String) -> Bool {
+        let name = name.lowercased()
+        return ["node", "bun", "deno", "ruby"].contains(name) || name.range(of: "^python[0-9.]*$", options: .regularExpression) != nil
+    }
+
+    /// Flags that take the next argument as their value, so it is not the script.
+    private static let valueFlags: Set<String> = ["-r", "--require", "--import", "--loader", "--experimental-loader", "-X", "-W", "--env-file", "--conditions", "-C"]
+    /// Inline code has no script to identify.
+    private static let inlineFlags: Set<String> = ["-e", "--eval", "-p", "--print", "-c"]
+
+    /// The script an interpreter runs, from argv only. `python -m tool` gives the module name and no path.
+    public static func script(arguments: [String]) -> (name: String, path: String?)? {
+        var index = 1
+        while index < arguments.count {
+            let argument = arguments[index]
+            if inlineFlags.contains(argument) { return nil }
+            if argument == "-m", index + 1 < arguments.count {
+                let module = arguments[index + 1].split(separator: ".").first.map(String.init) ?? arguments[index + 1]
+                return (module.replacingOccurrences(of: "_", with: "-"), nil)
+            }
+            if valueFlags.contains(argument) { index += 2; continue }
+            // `bun run <script>` and `bun x <package>`.
+            if (argument == "run" || argument == "x") && index == 1 { index += 1; continue }
+            if argument.hasPrefix("-") { index += 1; continue }
+            var name = URL(fileURLWithPath: argument).lastPathComponent
+            for suffix in [".js", ".mjs", ".cjs", ".ts", ".mts", ".py"] where name.hasSuffix(suffix) {
+                name = String(name.dropLast(suffix.count))
+            }
+            return (name, argument)
+        }
+        return nil
+    }
+
+    /// `resolve` follows symlinks of an absolute path; tests pass a table instead of the file system.
+    public static func tool(launch: AgentProcessLaunch, tools: [AgentTool] = AgentRegistry.tools, resolve: (String) -> String) -> AgentTool? {
+        var name = URL(fileURLWithPath: launch.executable).lastPathComponent.lowercased()
+        var paths = [launch.executable]
+        if isInterpreter(name) {
+            if let script = script(arguments: launch.arguments) {
+                name = script.name.lowercased()
+                if let path = script.path { paths.insert(path, at: 0) }
+            } else {
+                // Inline code or no script: only a bundled runtime inside a tool's own folder can identify it.
+                name = ""
+            }
+        }
+        let candidates = paths.flatMap { path -> [String] in
+            guard path.hasPrefix("/") else { return [path.lowercased()] }
+            return [path.lowercased(), resolve(path).lowercased()]
+        }
+        let marked = tools.filter { tool in tool.packageMarkers.contains { marker in candidates.contains { $0.contains(marker) } } }
+        if marked.count == 1 { return marked[0] }
+        if marked.count > 1 { return marked.first { $0.executables.contains(name) } }
+        guard !name.isEmpty, let tool = tools.first(where: { $0.executables.contains(name) }) else { return nil }
+        return tool.ambiguousExecutables.contains(name) ? nil : tool
+    }
+
+    /// Whether a process name could be an agent at all, so only those are inspected further.
+    public static func worthInspecting(_ name: String, tools: [AgentTool] = AgentRegistry.tools) -> Bool {
+        let name = URL(fileURLWithPath: name).lastPathComponent.lowercased()
+        return isInterpreter(name) || tools.contains { $0.executables.contains(name) }
+    }
+}
+
+/// A foreground agent in one TTY, from `ps -axo pid=,tty=,stat=,comm=`.
+public struct AgentTerminalProcess: Sendable, Equatable {
+    public var pid: Int32
+    public var tty: String
+    public var tool: AgentTool
+}
+
+public enum AgentProcessTable {
+    /// Only foreground, running or sleeping processes count, never idle shells, stopped jobs or zombies.
+    /// When several agents share a TTY's foreground group, the earliest process (the one the shell started) wins.
+    public static func agents(_ table: String, tools: [AgentTool] = AgentRegistry.tools,
+                              inspect: (Int32) -> AgentProcessLaunch?, resolve: (String) -> String) -> [String: AgentTerminalProcess] {
+        var result: [String: AgentTerminalProcess] = [:]
+        for line in table.split(separator: "\n") {
+            let trimmed = line.drop { $0.isWhitespace }
+            var fields = trimmed.split(maxSplits: 3, whereSeparator: { $0.isWhitespace }).map(String.init)
+            // Older callers omit the pid column.
+            var pid: Int32 = 0
+            if fields.count == 4, let value = Int32(fields[0]) { pid = value; fields.removeFirst() }
+            else { fields = trimmed.split(maxSplits: 2, whereSeparator: { $0.isWhitespace }).map(String.init) }
+            guard fields.count == 3, fields[1].contains("+"), !fields[1].contains("T"), !fields[1].contains("Z") else { continue }
+            let tty = "/dev/" + fields[0]
+            guard ClaudeSession.validTTY(tty) else { continue }
+            let command = fields[2].trimmingCharacters(in: .whitespaces)
+            guard AgentIdentity.worthInspecting(command, tools: tools) else { continue }
+            let launch = (pid > 0 ? inspect(pid) : nil) ?? AgentProcessLaunch(executable: command, arguments: [])
+            guard let tool = AgentIdentity.tool(launch: launch, tools: tools, resolve: resolve), tool.launchesInTerminal else { continue }
+            if let existing = result[tty], existing.pid <= pid { continue }
+            result[tty] = AgentTerminalProcess(pid: pid, tty: tty, tool: tool)
+        }
+        return result
+    }
+}
+
+/// Which tools ProfileDock adds by itself, and which it only offers.
+public enum AgentAutoAdd {
+    public struct RunningApp: Sendable, Equatable {
+        public var bundleIdentifier: String
+        public var arguments: [String]?
+        public init(bundleIdentifier: String, arguments: [String]?) {
+            self.bundleIdentifier = bundleIdentifier
+            self.arguments = arguments
+        }
+    }
+
+    /// A running desktop agent with the shared sign-in (no `--user-data-dir`) and no saved entry yet.
+    /// Separate accounts are never created here. A tool the user removed stays removed.
+    public static func toolsToAdd(running: [RunningApp], profiles: [Profile], dismissed: Set<String>, tools: [AgentTool] = AgentRegistry.tools) -> [AgentTool] {
+        var result: [AgentTool] = []
+        for app in running {
+            guard let tool = tools.first(where: { $0.addsWhenRunning && !$0.legacy && $0.bundleIdentifiers.contains(app.bundleIdentifier) }),
+                  !dismissed.contains(tool.id), !result.contains(where: { $0.id == tool.id }),
+                  !profiles.contains(where: { $0.kind == .agent && $0.agentID == tool.id && !$0.usesIsolatedAgentHome }) else { continue }
+            // An unreadable process or one started with its own data folder may be another account: leave it alone.
+            guard let arguments = app.arguments, ProcessIdentity.userDataPath(arguments) == nil else { continue }
+            result.append(tool)
+        }
+        return result
+    }
+
+    /// Installed tools without any entry, for one-click adding. Config folders alone are not offered.
+    public static func offers(installed: [InstalledAgent], profiles: [Profile], dismissed: Set<String>) -> [InstalledAgent] {
+        installed.filter { agent in
+            !agent.tool.legacy && agent.isInstalled && !dismissed.contains(agent.tool.id)
+                && !profiles.contains { $0.kind == .agent && $0.agentID == agent.tool.id }
+        }
+    }
+}

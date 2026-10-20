@@ -26,19 +26,10 @@ public struct TerminalAgent: Hashable, Codable, Sendable {
         try container.encode(rawValue)
     }
 
-    /// Only foreground CLI executables count, never window titles, arguments or idle shells.
-    public static func processes(_ table: String) -> [String: TerminalAgent] {
-        var result: [String: TerminalAgent] = [:]
-        for line in table.split(separator: "\n") {
-            let fields = line.split(maxSplits: 2, whereSeparator: { $0.isWhitespace })
-            guard fields.count == 3, fields[1].contains("+"), !fields[1].contains("T"), !fields[1].contains("Z") else { continue }
-            let tty = "/dev/" + fields[0]
-            guard ClaudeSession.validTTY(tty) else { continue }
-            let executable = URL(fileURLWithPath: String(fields[2]).trimmingCharacters(in: .whitespaces)).lastPathComponent
-            guard let tool = AgentDetector.foregroundTool(executablePath: executable) else { continue }
-            result[tty] = TerminalAgent(rawValue: tool.id)
-        }
-        return result
+    /// Only foreground agents count, never window titles, idle shells, stopped jobs or prompts.
+    /// Without an inspector, process names alone decide, so script-based CLIs that run under `node` or `python` are missed.
+    public static func processes(_ table: String, inspect: (Int32) -> AgentProcessLaunch? = { _ in nil }, resolve: (String) -> String = { $0 }) -> [String: TerminalAgent] {
+        AgentProcessTable.agents(table, inspect: inspect, resolve: resolve).mapValues { TerminalAgent(rawValue: $0.tool.id) }
     }
 }
 

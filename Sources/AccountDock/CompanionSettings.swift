@@ -33,9 +33,11 @@ struct ActivityConnectionsView: View {
             Toggle("Automatically find coding terminals", isOn: Binding(get: { model.preferences.discoverTerminals != false }, set: {
                 model.preferences.discoverTerminals = $0; model.save(); model.companions.refresh()
             }))
+            Toggle("Add running agent apps automatically", isOn: Binding(get: { model.preferences.autoAddAgents != false }, set: model.setAutoAddAgents))
+                .help("Running agent apps such as Grok Bot or T3 Code get a tile with the sign-in already on this Mac. A removed tile stays removed.")
             Toggle("Show terminals section", isOn: Binding(get: { model.preferences.showTerminalsSection != false }, set: { model.preferences.showTerminalsSection = $0; model.save() }))
             Toggle("Expand terminals in the strip", isOn: Binding(get: { model.preferences.terminalsExpanded != false }, set: model.setTerminalsExpanded)).disabled(model.preferences.showTerminalsSection == false)
-            Text("\(model.liveTerminalProfiles.count) coding terminals found. Open Terminal.app tabs appear automatically while Claude Code or Codex is running. Closed sessions disappear.")
+            Text("\(model.liveTerminalProfiles.count) coding terminals found. Open Terminal.app tabs appear automatically while a coding agent is running. Closed sessions disappear.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Text("Allow Terminal access if macOS asks. Other terminal apps, SSH and background sessions are not included.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)

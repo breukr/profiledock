@@ -16,6 +16,11 @@ struct TerminalWindow: Codable, Identifiable, Equatable, Sendable {
     }
 }
 
+enum TerminalClientError: LocalizedError, Equatable {
+    case automationDenied
+    var errorDescription: String? { "Allow ProfileDock to control Terminal in System Settings → Privacy & Security → Automation, then try again." }
+}
+
 actor TerminalClient {
     static let shared = TerminalClient()
     // No terminal contents are read. Arguments cross the script boundary as argv, never executable source.
@@ -73,7 +78,8 @@ actor TerminalClient {
             process.waitUntilExit(); timeout.cancel()
             guard process.terminationStatus == 0 else {
                 let detail = String(data: error, encoding: .utf8) ?? ""
-                throw CompanionError.message(detail.contains("1743") ? "Allow ProfileDock to control Terminal in System Settings → Privacy & Security → Automation, then try again." : "Terminal could not complete the request. \(detail.trimmingCharacters(in: .whitespacesAndNewlines).prefix(400))")
+                if detail.contains("1743") { throw TerminalClientError.automationDenied }
+                throw CompanionError.message("Terminal could not complete the request. \(detail.trimmingCharacters(in: .whitespacesAndNewlines).prefix(400))")
             }
             return result
         }.value
@@ -84,12 +90,13 @@ actor TerminalClient {
         let agents = try await Task.detached(priority: .utility) {
             let process = Process(), output = Pipe()
             process.executableURL = URL(fileURLWithPath: "/bin/ps")
-            process.arguments = ["-axo", "tty=,stat=,comm="]
+            process.arguments = ["-axo", "pid=,tty=,stat=,comm="]
             process.standardOutput = output; process.standardError = FileHandle.nullDevice
             try process.run()
             let data = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
             guard process.terminationStatus == 0 else { throw CompanionError.message("Running coding terminals could not be detected.") }
-            return TerminalAgent.processes(String(data: data, encoding: .utf8) ?? "")
+            // Script-based CLIs run as node or python; their argv names the script. The environment is never read.
+            return TerminalAgent.processes(String(data: data, encoding: .utf8) ?? "", inspect: DockModel.launch(pid:), resolve: { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path })
         }.value
         return windows.map { var value = $0; value.agent = agents[value.tty]; return value }
     }

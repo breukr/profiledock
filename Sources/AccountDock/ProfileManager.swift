@@ -80,7 +80,11 @@ extension DockModel {
     func applicationURL(for profile: Profile) -> URL? {
         if profile.kind == .agent, let tool = profile.agentTool {
             if tool.launchesInTerminal { return NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") }
-            if let url = tool.bundleIdentifiers.lazy.compactMap({ NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }).first { return url }
+            // The scan already chose one copy among renamed, duplicate and trashed ones.
+            if let installedAgents {
+                return installedAgents.first { $0.id == tool.id }?.applicationPath.map { URL(fileURLWithPath: $0) }
+            }
+            if let url = tool.bundleIdentifiers.lazy.compactMap({ NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }).first(where: { !AgentApplications.excluded($0.path) }) { return url }
             // Renamed builds (Windsurf / Devin) can be found by their app name.
             return [URL(fileURLWithPath: "/Applications"), home.appendingPathComponent("Applications")].lazy
                 .flatMap { root in tool.applicationNames.map { root.appendingPathComponent($0) } }
@@ -196,6 +200,7 @@ extension DockModel {
             }
         }
         preferences.profiles.removeAll { $0.id == profile.id }
+        rememberDismissal(of: profile)
         var retained = profile; retained.launcherPath = nil; retained.dockApplicationPath = nil
         preferences.removedProfiles = (preferences.removedProfiles ?? []).filter { $0.id != profile.id } + [retained]
         preferences.hiddenProfileIDs = Array(Set((preferences.hiddenProfileIDs ?? []) + [profile.id]))
