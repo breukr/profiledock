@@ -202,6 +202,26 @@ final class ActivityMetadataTests: XCTestCase {
         XCTAssertEqual(metadata.candidates, ["one", "root"])
     }
 
+    func testClosedStateDatabaseWithoutWALSidecarsStaysReadable() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let profile = Profile(id: "default", name: "Fixture", color: "000000")
+        let directory = profile.home(in: home)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let state = directory.appendingPathComponent("state_5.sqlite")
+        try database(state, sql: "CREATE TABLE threads (id TEXT, archived INTEGER, source TEXT, agent_path TEXT, thread_source TEXT); INSERT INTO threads VALUES ('one',0,'vscode',NULL,NULL),('child',0,'exec','/root/child',NULL),('archived',1,'vscode',NULL,NULL);")
+        let history = directory.appendingPathComponent("thread_history_1.sqlite")
+        try database(history, sql: "CREATE TABLE thread_turns (thread_id TEXT, rollout_ordinal INTEGER, status TEXT); INSERT INTO thread_turns VALUES ('one',1,'inProgress');")
+        try removeFixtureWALSidecars(state); try removeFixtureWALSidecars(history)
+        try writeAuth(directory, account: "first")
+        let before = try Data(contentsOf: state)
+        let metadata = try ActivityMetadata.read(profile: profile, home: home)
+        XCTAssertEqual(metadata.roots, ["one"])
+        XCTAssertEqual(metadata.candidates, ["one"])
+        XCTAssertEqual(try Data(contentsOf: state), before, "Reading must not change the database")
+        for suffix in ["-wal", "-shm"] { XCTAssertFalse(FileManager.default.fileExists(atPath: state.path + suffix), "Reading must not create sidecars") }
+    }
+
     private func removeFixtureWALSidecars(_ path: URL) throws {
         try database(path, sql: "PRAGMA journal_mode=WAL; PRAGMA wal_checkpoint(TRUNCATE);")
         for suffix in ["-wal", "-shm"] {

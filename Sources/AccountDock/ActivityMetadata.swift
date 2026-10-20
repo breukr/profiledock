@@ -92,8 +92,23 @@ struct ActivityMetadata {
     }
 
     private static func strings(database: URL, sql: String) throws -> Set<String> {
+        do { return try query(location: database.path, flags: 0, sql: sql) }
+        catch ActivityReadError.database(let code) where code & 0xff == SQLITE_CANTOPEN && !FileManager.default.fileExists(atPath: database.path + "-wal") {
+            // The desktop closes its databases when idle, which removes the WAL sidecars, and macOS then refuses to read
+            // the WAL database the usual way (the error appears when the query is prepared). With no -wal file there is
+            // no uncheckpointed state to miss, so an immutable read is exact. A live WAL never takes this path, and the
+            // database is never opened writable.
+            var components = URLComponents()
+            components.scheme = "file"; components.path = database.path
+            components.queryItems = [URLQueryItem(name: "mode", value: "ro"), URLQueryItem(name: "immutable", value: "1")]
+            guard let uri = components.string else { throw ActivityReadError.database(code) }
+            return try query(location: uri, flags: SQLITE_OPEN_URI, sql: sql)
+        }
+    }
+
+    private static func query(location: String, flags: Int32, sql: String) throws -> Set<String> {
         var handle: OpaquePointer?
-        let opened = sqlite3_open_v2(database.path, &handle, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil)
+        let opened = sqlite3_open_v2(location, &handle, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX | flags, nil)
         guard opened == SQLITE_OK, let handle else {
             if let handle { sqlite3_close(handle) }; throw ActivityReadError.database(opened)
         }
