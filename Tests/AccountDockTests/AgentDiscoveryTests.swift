@@ -74,7 +74,7 @@ final class AgentDiscoveryTests: XCTestCase {
         XCTAssertFalse(model.preferences.profiles.contains { $0.kind == .claude })
     }
 
-    @MainActor func testMissingToolsShowNotInstalledWithTheFix() throws {
+    @MainActor func testMissingToolsShowNotInstalledWithTheFix() async throws {
         let model = DockModel(home: try home())
         try model.createAgentProfile(toolID: "pi", name: "pi", project: nil, separate: false)
         let pi = try XCTUnwrap(model.preferences.profiles.first)
@@ -83,14 +83,46 @@ final class AgentDiscoveryTests: XCTestCase {
         XCTAssertEqual(model.agentAvailability(pi), .missing)
         XCTAssertEqual(model.state(pi), "Not installed")
         XCTAssertTrue(model.missingToolMessage(try XCTUnwrap(pi.agentTool)).contains("npm install -g @earendil-works/pi-coding-agent"))
-        // Opening shows the fix and offers to try the user's own shell instead of failing silently.
+        // Opening looks again off the main thread, then shows the fix and offers the user's own shell.
         model.select(pi)
+        for _ in 0..<50 where model.messageRecovery == nil { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertEqual(model.messageRecovery?.title, "Open Anyway")
         XCTAssertEqual(model.messageRecovery?.opensAnyway, true)
         XCTAssertTrue(model.message?.contains("`pi`") == true)
         model.installedAgents = [InstalledAgent(tool: try XCTUnwrap(pi.agentTool), executablePath: "/opt/homebrew/bin/pi", applicationPath: nil, configPath: nil, evidence: [.executable])]
         XCTAssertEqual(model.agentAvailability(pi), .installed)
         XCTAssertEqual(model.state(pi), "Closed")
+        // Open Anyway is remembered, and a tab running the tool always counts as installed.
+        model.installedAgents = []
+        model.retryMessage()
+        XCTAssertEqual(model.preferences.profiles.first?.opensByCommandName, true)
+        XCTAssertEqual(model.agentAvailability(try XCTUnwrap(model.preferences.profiles.first)), .installed)
+        var bound = try XCTUnwrap(model.preferences.profiles.first); bound.opensByCommandName = nil
+        bound.terminalTTY = "/dev/ttys004"; bound.terminalWindowID = 4; bound.terminalProcessStarted = 42; model.update(bound)
+        model.companions.terminalStarted = 42
+        model.companions.windows = [TerminalWindow(windowID: 4, tty: "/dev/ttys004", title: "Fixture", selected: true, front: true, agent: TerminalAgent(rawValue: "pi"))]
+        XCTAssertEqual(model.agentAvailability(bound), .installed)
+    }
+
+    @MainActor func testAddingASeparateAccountDoesNotUndoARemovedSharedTile() async throws {
+        let model = DockModel(home: try home())
+        model.autoAdd(running: [grokBot])
+        await settle()
+        try model.removeProfile(try XCTUnwrap(model.preferences.profiles.first), trashData: false)
+        try model.createAgentProfile(toolID: "grok-bot", name: "Work", project: nil, separate: true)
+        XCTAssertEqual(model.preferences.dismissedAgentTools, ["grok-bot"])
+        model.autoAdd(running: [grokBot])
+        await settle()
+        XCTAssertEqual(model.preferences.profiles.filter { $0.agentID == "grok-bot" }.map(\.name), ["Work"])
+    }
+
+    @MainActor func testTheSettingAlsoStopsTheStartupClaudeDesktopEntry() async throws {
+        let model = DockModel(home: try home())
+        model.setAutoAddAgents(false)
+        model.autoAdd(running: [AgentAutoAdd.RunningApp(bundleIdentifier: "com.anthropic.claudefordesktop", arguments: ["Claude"])])
+        await settle()
+        XCTAssertFalse(model.preferences.profiles.contains { $0.kind == .claude })
+        XCTAssertTrue(model.needsClaudeDesktopEntry)
     }
 
     @MainActor func testSeparateDesktopAccountsReportSignInNeededFromTheirStatusFile() throws {
@@ -129,10 +161,21 @@ final class AgentDiscoveryTests: XCTestCase {
         XCTAssertTrue(model.liveTerminalProfiles.isEmpty)
     }
 
-    @MainActor func testCommandFileFallbackRunsTheSameCommandAndDeletesItself() throws {
-        let command = "cd -- '/Work' && HERMES_HOME='/x' hermes"
-        let inner = command + "; exec \"${SHELL:-/bin/zsh}\" -l"
-        XCTAssertEqual(ClaudeBridgeSettings.shellQuote(inner), "'cd -- '\\''/Work'\\'' && HERMES_HOME='\\''/x'\\'' hermes; exec \"${SHELL:-/bin/zsh}\" -l'")
+    func testCommandFileFallbackRunsTheSameCommandAndDeletesItself() throws {
+        let root = try home().appendingPathComponent("Folder With 'Quotes'")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let marker = root.appendingPathComponent("ran")
+        let command = try XCTUnwrap(AgentLaunch.shellCommand(project: root.path, environment: ["HERMES_HOME": root.path], executable: "/usr/bin/touch"))
+        let file = root.appendingPathComponent("launch.command")
+        // `exec $SHELL -l` keeps the tab open afterwards; with no input that shell ends at once here.
+        try Data(AgentLaunch.commandFile(command: command + " ran").utf8).write(to: file)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh"); process.arguments = [file.path]
+        process.environment = ["SHELL": "/bin/sh", "PATH": "/usr/bin:/bin"]
+        process.standardInput = FileHandle.nullDevice; process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
+        try process.run(); process.waitUntilExit()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path), "the command ran in the project folder")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path), "the file removed itself")
         XCTAssertEqual(TerminalClientError.automationDenied.errorDescription?.contains("Automation"), true)
     }
 }

@@ -84,19 +84,20 @@ actor TerminalClient {
             return result
         }.value
     }
-    func windows() async throws -> [TerminalWindow] {
+    /// `installs` are the commands the last scan confirmed, so a vendor install of a shared name is recognized.
+    func windows(installs: [String: String] = [:]) async throws -> [TerminalWindow] {
         let windows = try JSONDecoder().decode([TerminalWindow].self, from: await run(["list"]))
         guard !windows.isEmpty else { return [] }
         let agents = try await Task.detached(priority: .utility) {
             let process = Process(), output = Pipe()
             process.executableURL = URL(fileURLWithPath: "/bin/ps")
-            process.arguments = ["-axo", "pid=,tty=,stat=,comm="]
+            process.arguments = ["-axo", "pid=,tpgid=,tty=,stat=,comm="]
             process.standardOutput = output; process.standardError = FileHandle.nullDevice
             try process.run()
             let data = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
             guard process.terminationStatus == 0 else { throw CompanionError.message("Running coding terminals could not be detected.") }
             // Script-based CLIs run as node or python; their argv names the script. The environment is never read.
-            return TerminalAgent.processes(String(data: data, encoding: .utf8) ?? "", inspect: DockModel.launch(pid:), resolve: { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path })
+            return TerminalAgent.processes(String(data: data, encoding: .utf8) ?? "", installs: installs, inspect: DockModel.launch(pid:), resolve: { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path })
         }.value
         return windows.map { var value = $0; value.agent = agents[value.tty]; return value }
     }

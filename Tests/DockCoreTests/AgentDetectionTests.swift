@@ -7,7 +7,7 @@ final class AgentDetectionTests: XCTestCase {
         AgentTool(id: id, name: id.capitalized, executables: executables, bundleIdentifiers: bundles, applicationNames: [], configHomeEnvironment: nil,
                   defaultConfigDirectory: "", configMarkers: [], authNote: "Fixture", isolation: isolation, interface: interface, legacy: false,
                   color: "000000", documentation: "https://example.com", detail: nil, packageMarkers: markers, ambiguousExecutables: ambiguous,
-                  installDirectories: [], installHint: nil, addsWhenRunning: addsWhenRunning, signInStatus: nil)
+                  installDirectories: [], installHint: nil, addsWhenRunning: addsWhenRunning, signInStatus: nil, vendorInstalls: [])
     }
     private var tools: [AgentTool] {
         [fixture("pi", executables: ["pi"], markers: ["node_modules/@fixture/pi-agent/"], ambiguous: ["pi"]),
@@ -41,6 +41,14 @@ final class AgentDetectionTests: XCTestCase {
         XCTAssertNil(identify("/opt/homebrew/bin/node", ["node", "/Work/server.js"]))
         XCTAssertNil(identify("/opt/homebrew/bin/node", ["node"]))
         XCTAssertNil(identify("/opt/homebrew/bin/python3", []))
+        // Someone's own script named like a tool is not that tool.
+        XCTAssertNil(identify("/usr/bin/python3", ["python3", "gemini.py"]))
+        XCTAssertNil(identify("/usr/bin/python3", ["python3", "/Work/claude.py"]))
+        XCTAssertNil(identify("/opt/homebrew/bin/node", ["node", "./aider.js"]))
+        XCTAssertNil(identify("/opt/homebrew/bin/node", ["node", "/Work/scripts/hermes.mjs"]))
+        XCTAssertNil(identify("/opt/homebrew/bin/node", ["node", "aider"]))
+        // Unless its package proves it.
+        XCTAssertEqual(identify("/opt/homebrew/bin/node", ["node", "/Users/f/.nvm/versions/node/v22.1.0/lib/node_modules/@google/gemini-cli/dist/index.js"]), "gemini")
     }
 
     func testSharedCommandNamesNeedTheirPackageAndNeverGuess() {
@@ -86,6 +94,64 @@ final class AgentDetectionTests: XCTestCase {
         XCTAssertEqual(found.count, 3)
         XCTAssertFalse(inspected.contains(200))
         XCTAssertFalse(inspected.contains(900))
+        XCTAssertFalse(inspected.contains(700), "a plain command is matched by name; its argv may hold a prompt")
+
+        // With tpgid, the job the shell started wins even when an agent it spawned has a lower pid.
+        let grouped = """
+          9000 9000 ttys011 S+ /Users/f/.local/bin/claude
+           120 9000 ttys011 S+ /Users/f/.local/bin/aider
+        """
+        XCTAssertEqual(AgentProcessTable.agents(grouped, tools: tools, inspect: { _ in nil }, resolve: resolve)["/dev/ttys011"]?.tool.id, "claude")
+        // A confirmed vendor install identifies a shared name.
+        let droid = fixture("droid", executables: ["droid"], ambiguous: ["droid"])
+        XCTAssertNil(AgentIdentity.tool(launch: AgentProcessLaunch(executable: "/Users/f/.local/bin/droid", arguments: []), tools: [droid], resolve: { $0 }))
+        XCTAssertEqual(AgentIdentity.tool(launch: AgentProcessLaunch(executable: "/Users/f/.local/bin/droid", arguments: []), tools: [droid], installs: ["/Users/f/.local/bin/droid": "droid"], resolve: { $0 })?.id, "droid")
+    }
+
+    func testVendorInstallsCountOnlyWithTheVendorsFolderAndShimsUseTheirPackage() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fm = FileManager.default
+        func executable(_ path: String) throws {
+            let url = root.appendingPathComponent(path)
+            try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("#!/bin/sh".utf8).write(to: url)
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        }
+        let droid = try XCTUnwrap(AgentRegistry.tool(id: "droid"))
+        try executable(".local/bin/droid")
+        XCTAssertNil(AgentDetector.installed(AgentProbe.scan(home: root, path: "", tools: [droid]), tools: [droid]).first?.executablePath,
+                     "another program's ~/.local/bin/droid")
+        try fm.createDirectory(at: root.appendingPathComponent(".factory"), withIntermediateDirectories: true)
+        XCTAssertEqual(AgentDetector.installed(AgentProbe.scan(home: root, path: "", tools: [droid]), tools: [droid]).first?.executablePath,
+                       root.appendingPathComponent(".local/bin/droid").path)
+
+        let pi = try XCTUnwrap(AgentRegistry.tool(id: "pi"))
+        try executable(".volta/bin/pi")
+        XCTAssertNil(AgentDetector.installed(AgentProbe.scan(home: root, path: "", tools: [pi]), tools: [pi]).first?.executablePath)
+        try fm.createDirectory(at: root.appendingPathComponent(".volta/tools/image/packages/@earendil-works/pi-coding-agent"), withIntermediateDirectories: true)
+        XCTAssertEqual(AgentDetector.installed(AgentProbe.scan(home: root, path: "", tools: [pi]), tools: [pi]).first?.executablePath,
+                       root.appendingPathComponent(".volta/bin/pi").path)
+    }
+
+    func testVersionManagerInstallsRunWithTheirOwnNodeInEveryShell() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fm = FileManager.default
+        let bin = root.appendingPathComponent(".nvm/versions/node/v22.11.0/bin")
+        let script = root.appendingPathComponent(".nvm/versions/node/v22.11.0/lib/node_modules/@google/gemini-cli/dist/index.js")
+        try fm.createDirectory(at: script.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fm.createDirectory(at: bin, withIntermediateDirectories: true)
+        try Data().write(to: script)
+        try fm.createSymbolicLink(at: bin.appendingPathComponent("gemini"), withDestinationURL: script)
+        XCTAssertNil(AgentLaunch.runtime(for: bin.appendingPathComponent("gemini").path), "no node beside it")
+        try Data().write(to: bin.appendingPathComponent("node"))
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.appendingPathComponent("node").path)
+        let node = try XCTUnwrap(AgentLaunch.runtime(for: bin.appendingPathComponent("gemini").path))
+        let command = try XCTUnwrap(AgentLaunch.shellCommand(project: "/Work", environment: ["GEMINI_CLI_HOME": "/x"], executable: bin.appendingPathComponent("gemini").path, runtime: node))
+        XCTAssertEqual(command, "cd -- '/Work' && GEMINI_CLI_HOME='/x' '\(node)' '\(bin.appendingPathComponent("gemini").path)'")
+        XCTAssertFalse(command.contains("PATH="), "no PATH assignment, which fish rejects")
+        XCTAssertNil(AgentLaunch.runtime(for: "/opt/homebrew/bin/gemini"))
     }
 
     func testVersionManagerAndUserBinFoldersAreSearchedNewestFirst() throws {
@@ -127,7 +193,7 @@ final class AgentDetectionTests: XCTestCase {
         XCTAssertNil(AgentDetector.installed(AgentProbe.scan(home: root, path: other.path, tools: tools), tools: tools).first { $0.id == "aider" })
     }
 
-    func testDuplicateAndRenamedAppsPreferTheApplicationsCopyAndSkipTrashAndInstallers() {
+    func testDuplicateAndRenamedAppsPreferTheApplicationsCopyAndSkipTrashAndOwnCopies() {
         let home = "/Users/f"
         let apps = [
             AgentApplication(path: "/Users/f/.Trash/Grok Bot.app", bundleIdentifier: "com.fixture.bot", name: "Grok Bot", version: "9.0"),
@@ -139,12 +205,13 @@ final class AgentDetectionTests: XCTestCase {
             AgentApplication(path: "/Users/f/Library/Application Support/Account Dock/Apps/x/Bot.app", bundleIdentifier: "com.fixture.bot", name: "Grok Bot", version: "99")
         ]
         let ordered = AgentApplications.ordered(apps, home: home).map(\.path)
-        XCTAssertEqual(ordered, ["/Applications/Bot Renamed.app", "/Applications/Bot (old).app", "/Users/f/Applications/Grok Bot.app", "/Users/f/Downloads/Grok Bot.app"])
+        // Read-only volumes (mounted installers) are dropped when Launch Services lists them; a path alone could be an external drive.
+        XCTAssertEqual(ordered, ["/Applications/Bot Renamed.app", "/Applications/Bot (old).app", "/Users/f/Applications/Grok Bot.app", "/Volumes/Grok Bot/Grok Bot.app", "/Users/f/Downloads/Grok Bot.app"])
         let bot = fixture("bot", executables: [], bundles: ["com.fixture.bot"], interface: .desktop)
         let input = AgentScanInput(homePath: home, pathDirectories: [], existingPaths: [], applications: apps)
         let installed = AgentDetector.installed(bot, in: input)
         XCTAssertEqual(installed?.applicationPath, "/Applications/Bot Renamed.app")
-        XCTAssertEqual(installed?.applications.count, 4)
+        XCTAssertEqual(installed?.applications.count, 5)
         XCTAssertTrue(installed?.isInstalled == true)
     }
 
@@ -200,6 +267,15 @@ final class AgentDetectionTests: XCTestCase {
         try Data(#"{"signedIn":"yes"}"#.utf8).write(to: root.appendingPathComponent("desktop-status.json"))
         XCTAssertNil(AgentProbe.signedIn(status, userData: root))
         try Data(repeating: 32, count: 70_000).write(to: root.appendingPathComponent("desktop-status.json"))
+        XCTAssertNil(AgentProbe.signedIn(status, userData: root))
+        // A link is never followed, and a pipe never blocks.
+        let elsewhere = root.appendingPathComponent("elsewhere.json")
+        try Data(#"{"signedIn":true}"#.utf8).write(to: elsewhere)
+        try FileManager.default.removeItem(at: root.appendingPathComponent("desktop-status.json"))
+        try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("desktop-status.json"), withDestinationURL: elsewhere)
+        XCTAssertNil(AgentProbe.signedIn(status, userData: root))
+        try FileManager.default.removeItem(at: root.appendingPathComponent("desktop-status.json"))
+        XCTAssertEqual(mkfifo(root.appendingPathComponent("desktop-status.json").path, 0o600), 0)
         XCTAssertNil(AgentProbe.signedIn(status, userData: root))
     }
 }

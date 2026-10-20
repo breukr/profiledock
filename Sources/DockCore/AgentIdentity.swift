@@ -24,6 +24,8 @@ public enum AgentIdentity {
     /// Inline code has no script to identify.
     private static let inlineFlags: Set<String> = ["-e", "--eval", "-p", "--print", "-c"]
 
+    static let sourceExtensions = [".js", ".mjs", ".cjs", ".ts", ".mts", ".py"]
+
     /// The script an interpreter runs, from argv only. `python -m tool` gives the module name and no path.
     public static func script(arguments: [String]) -> (name: String, path: String?)? {
         var index = 1
@@ -39,7 +41,7 @@ public enum AgentIdentity {
             if (argument == "run" || argument == "x") && index == 1 { index += 1; continue }
             if argument.hasPrefix("-") { index += 1; continue }
             var name = URL(fileURLWithPath: argument).lastPathComponent
-            for suffix in [".js", ".mjs", ".cjs", ".ts", ".mts", ".py"] where name.hasSuffix(suffix) {
+            for suffix in sourceExtensions where name.hasSuffix(suffix) {
                 name = String(name.dropLast(suffix.count))
             }
             return (name, argument)
@@ -48,12 +50,16 @@ public enum AgentIdentity {
     }
 
     /// `resolve` follows symlinks of an absolute path; tests pass a table instead of the file system.
-    public static func tool(launch: AgentProcessLaunch, tools: [AgentTool] = AgentRegistry.tools, resolve: (String) -> String) -> AgentTool? {
+    /// `installs` maps install paths the last scan confirmed (for example Factory's `~/.local/bin/droid`) to their tool.
+    public static func tool(launch: AgentProcessLaunch, tools: [AgentTool] = AgentRegistry.tools, installs: [String: String] = [:], resolve: (String) -> String) -> AgentTool? {
         var name = URL(fileURLWithPath: launch.executable).lastPathComponent.lowercased()
         var paths = [launch.executable]
         if isInterpreter(name) {
             if let script = script(arguments: launch.arguments) {
-                name = script.name.lowercased()
+                // Only an installed command counts by name: the absolute path a shebang passes, without a source
+                // extension. `python3 gemini.py` or `node ./codex.mjs` is someone's script, unless its package proves the tool.
+                let installed = script.path.map { path in path.hasPrefix("/") && !sourceExtensions.contains { path.lowercased().hasSuffix($0) } } ?? true
+                name = installed ? script.name.lowercased() : ""
                 if let path = script.path { paths.insert(path, at: 0) }
             } else {
                 // Inline code or no script: only a bundled runtime inside a tool's own folder can identify it.
@@ -64,6 +70,9 @@ public enum AgentIdentity {
             guard path.hasPrefix("/") else { return [path.lowercased()] }
             return [path.lowercased(), resolve(path).lowercased()]
         }
+        for path in paths where path.hasPrefix("/") {
+            if let id = installs[path] ?? installs[resolve(path)], let tool = tools.first(where: { $0.id == id }) { return tool }
+        }
         let marked = tools.filter { tool in tool.packageMarkers.contains { marker in candidates.contains { $0.contains(marker) } } }
         if marked.count == 1 { return marked[0] }
         if marked.count > 1 { return marked.first { $0.executables.contains(name) } }
@@ -71,10 +80,17 @@ public enum AgentIdentity {
         return tool.ambiguousExecutables.contains(name) ? nil : tool
     }
 
-    /// Whether a process name could be an agent at all, so only those are inspected further.
+    /// Whether a process name could be an agent at all, so only those are looked at further.
     public static func worthInspecting(_ name: String, tools: [AgentTool] = AgentRegistry.tools) -> Bool {
         let name = URL(fileURLWithPath: name).lastPathComponent.lowercased()
         return isInterpreter(name) || tools.contains { $0.executables.contains(name) }
+    }
+
+    /// Argv is read only where it decides the answer: a runtime running a script, or a shared command name that
+    /// needs its full executable path. `claude "<prompt>"` and other plain commands are matched by name alone.
+    public static func needsLaunch(_ name: String, tools: [AgentTool] = AgentRegistry.tools) -> Bool {
+        let name = URL(fileURLWithPath: name).lastPathComponent.lowercased()
+        return isInterpreter(name) || tools.contains { $0.ambiguousExecutables.contains(name) }
     }
 }
 
@@ -88,24 +104,37 @@ public struct AgentTerminalProcess: Sendable, Equatable {
 public enum AgentProcessTable {
     /// Only foreground, running or sleeping processes count, never idle shells, stopped jobs or zombies.
     /// When several agents share a TTY's foreground group, the earliest process (the one the shell started) wins.
-    public static func agents(_ table: String, tools: [AgentTool] = AgentRegistry.tools,
+    /// Lines are `pid tpgid tty stat comm`; older callers omit tpgid, or both numbers.
+    public static func agents(_ table: String, tools: [AgentTool] = AgentRegistry.tools, installs: [String: String] = [:],
                               inspect: (Int32) -> AgentProcessLaunch?, resolve: (String) -> String) -> [String: AgentTerminalProcess] {
         var result: [String: AgentTerminalProcess] = [:]
+        var leaders = Set<String>()
         for line in table.split(separator: "\n") {
             let trimmed = line.drop { $0.isWhitespace }
-            var fields = trimmed.split(maxSplits: 3, whereSeparator: { $0.isWhitespace }).map(String.init)
-            // Older callers omit the pid column.
-            var pid: Int32 = 0
-            if fields.count == 4, let value = Int32(fields[0]) { pid = value; fields.removeFirst() }
-            else { fields = trimmed.split(maxSplits: 2, whereSeparator: { $0.isWhitespace }).map(String.init) }
+            var fields = trimmed.split(maxSplits: 4, whereSeparator: { $0.isWhitespace }).map(String.init)
+            var pid: Int32 = 0, group: Int32 = -1
+            if fields.count == 5, let value = Int32(fields[0]), let foreground = Int32(fields[1]) {
+                pid = value; group = foreground; fields.removeFirst(2)
+            } else {
+                fields = trimmed.split(maxSplits: 3, whereSeparator: { $0.isWhitespace }).map(String.init)
+                if fields.count == 4, let value = Int32(fields[0]) { pid = value; fields.removeFirst() }
+                else { fields = trimmed.split(maxSplits: 2, whereSeparator: { $0.isWhitespace }).map(String.init) }
+            }
             guard fields.count == 3, fields[1].contains("+"), !fields[1].contains("T"), !fields[1].contains("Z") else { continue }
             let tty = "/dev/" + fields[0]
             guard ClaudeSession.validTTY(tty) else { continue }
             let command = fields[2].trimmingCharacters(in: .whitespaces)
             guard AgentIdentity.worthInspecting(command, tools: tools) else { continue }
-            let launch = (pid > 0 ? inspect(pid) : nil) ?? AgentProcessLaunch(executable: command, arguments: [])
-            guard let tool = AgentIdentity.tool(launch: launch, tools: tools, resolve: resolve), tool.launchesInTerminal else { continue }
-            if let existing = result[tty], existing.pid <= pid { continue }
+            let launch = (pid > 0 && AgentIdentity.needsLaunch(command, tools: tools) ? inspect(pid) : nil) ?? AgentProcessLaunch(executable: command, arguments: [])
+            guard let tool = AgentIdentity.tool(launch: launch, tools: tools, installs: installs, resolve: resolve), tool.launchesInTerminal else { continue }
+            // The job the shell started leads the TTY's foreground group; an agent it spawned does not replace it.
+            let leads = pid > 0 && pid == group
+            if let existing = result[tty] {
+                let existingLeads = leaders.contains(tty)
+                if existingLeads && !leads { continue }
+                if existingLeads == leads && existing.pid <= pid { continue }
+            }
+            if leads { leaders.insert(tty) }
             result[tty] = AgentTerminalProcess(pid: pid, tty: tty, tool: tool)
         }
         return result

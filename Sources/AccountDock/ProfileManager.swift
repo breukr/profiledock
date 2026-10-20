@@ -165,7 +165,9 @@ extension DockModel {
 
     func removeProfile(_ profile: Profile, trashData: Bool) throws {
         refresh()
-        guard running[profile.id]?.isEmpty != false, !opening.contains(profile.id), !nativeDockOperations.contains(profile.id) else { throw AppOperationError.message("Close this profile before removing it.") }
+        // A shared desktop agent entry owns no data, so an app that is always open (an editor) can lose its tile while it runs.
+        let ownsNothing = profile.kind == .agent && !profile.usesIsolatedAgentHome && profile.agentTool?.launchesInTerminal == false
+        guard ownsNothing || running[profile.id]?.isEmpty != false, !opening.contains(profile.id), !nativeDockOperations.contains(profile.id) else { throw AppOperationError.message("Close this profile before removing it.") }
         if trashData && (!profile.id.hasPrefix("profile-") || !Profile.validID(profile.id)) {
             throw AppOperationError.message("Imported profiles can be removed from ProfileDock, but their original data is kept.")
         }

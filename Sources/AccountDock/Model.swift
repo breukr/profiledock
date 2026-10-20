@@ -86,12 +86,10 @@ final class DockModel: ObservableObject {
     @Published var agentsNeedingSignIn: Set<String> = []
     var agentScanTask: Task<Void, Never>?
     var agentScannedAt: Date?
-    /// Profiles the user chose to open although their tool was not found.
-    var openAnyway: Set<String> = []
     /// Tools being added automatically, so one refresh does not add them twice.
     var autoAddingTools: Set<String> = []
     let home: URL
-    let tracksApplications: Bool
+    nonisolated let tracksApplications: Bool
     private var readinessTimer: Timer?
     private var readinessAttempts = 0
     private(set) var refreshCount = 0
@@ -217,8 +215,8 @@ final class DockModel: ObservableObject {
         guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
               ["com.openai.codex", "com.anthropic.claudefordesktop", "com.apple.Terminal"].contains(app.bundleIdentifier ?? "") || app.bundleIdentifier?.hasPrefix(NativeDock.prefix) == true
                 || Self.agentBundleIdentifiers.contains(app.bundleIdentifier ?? "") else { return }
-        // An agent app that was just installed or moved shows up in the next scan.
-        if Self.agentBundleIdentifiers.contains(app.bundleIdentifier ?? "") { scanAgents() }
+        // An agent app that was just installed or moved shows up in the next scan; one that quit may have signed in.
+        if Self.agentBundleIdentifiers.contains(app.bundleIdentifier ?? "") { scanAgents(force: notification.name == NSWorkspace.didTerminateApplicationNotification) }
         readinessAttempts = 0
         refresh()
     }
@@ -319,7 +317,10 @@ final class DockModel: ObservableObject {
         // account must never make a recovery button open a different account.
         if let url = recovery?.url { NSWorkspace.shared.open(url); return }
         guard let recovery, let profile = preferences.profiles.first(where: { $0.id == recovery.profileID }) else { return }
-        if recovery.opensAnyway { openAnyway.insert(profile.id) }
+        // Remembered: the user's own shell finds this tool, so it is not reported missing again.
+        if recovery.opensAnyway, var changed = preferences.profiles.first(where: { $0.id == profile.id }) {
+            changed.opensByCommandName = true; update(changed)
+        }
         if let selectProfile { selectProfile(profile) }
         else { select(profile) }
     }

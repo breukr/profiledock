@@ -38,6 +38,9 @@ public struct AgentTool: Sendable, Equatable, Identifiable {
     public let addsWhenRunning: Bool
     /// A non-secret status file in a separate account's user-data folder that says whether it is signed in.
     public let signInStatus: AgentSignInStatus?
+    /// Paths relative to the home where the vendor's own installer puts a shared command name as a plain file.
+    /// They count only while the tool's own config folder exists, since nothing else proves the file is theirs.
+    public let vendorInstalls: [String]
 
     public var launchesInTerminal: Bool { interface != .desktop && !executables.isEmpty }
     public var supportsIsolatedProfiles: Bool {
@@ -261,8 +264,8 @@ public enum AgentRegistry {
              isolation: .unsupported("The sign-in is one keyring item for this Mac, and Factory documents no folder setting that moves it."),
              interface: .terminal, color: "E2632A",
              documentation: "https://docs.factory.com/droid-cli/cli-reference",
-             packageMarkers: ["/.local/bin/droid", "/caskroom/droid/", "node_modules/droid/"], ambiguousExecutables: ["droid"],
-             installHint: "curl -fsSL https://app.factory.ai/cli | sh"),
+             packageMarkers: ["/caskroom/droid/", "node_modules/droid/"], ambiguousExecutables: ["droid"],
+             installHint: "curl -fsSL https://app.factory.ai/cli | sh", vendorInstalls: [".local/bin/droid"]),
         tool(id: "auggie", name: "Augment Auggie", executables: ["auggie"], defaultConfigDirectory: ".augment",
              authNote: "session.json in ~/.augment, per third-party sources; the CLI is closed source. AUGMENT_SESSION_AUTH overrides per shell; ProfileDock does not set it.",
              isolation: .unsupported("Augment documents a cache-folder flag but not that it moves the sign-in."),
@@ -352,13 +355,14 @@ public enum AgentRegistry {
         configHomeEnvironment: String? = nil, defaultConfigDirectory: String = "", configMarkers: [String] = [],
         authNote: String, isolation: AgentIsolation, interface: AgentInterface, legacy: Bool = false, color: String,
         documentation: String, detail: String? = nil, packageMarkers: [String] = [], ambiguousExecutables: [String] = [],
-        installDirectories: [String] = [], installHint: String? = nil, addsWhenRunning: Bool = false, signInStatus: AgentSignInStatus? = nil
+        installDirectories: [String] = [], installHint: String? = nil, addsWhenRunning: Bool = false, signInStatus: AgentSignInStatus? = nil,
+        vendorInstalls: [String] = []
     ) -> AgentTool {
         AgentTool(id: id, name: name, executables: executables, bundleIdentifiers: bundleIdentifiers, applicationNames: applicationNames,
                   configHomeEnvironment: configHomeEnvironment, defaultConfigDirectory: defaultConfigDirectory, configMarkers: configMarkers,
                   authNote: authNote, isolation: isolation, interface: interface, legacy: legacy, color: color, documentation: documentation, detail: detail,
                   packageMarkers: packageMarkers, ambiguousExecutables: ambiguousExecutables, installDirectories: installDirectories,
-                  installHint: installHint, addsWhenRunning: addsWhenRunning, signInStatus: signInStatus)
+                  installHint: installHint, addsWhenRunning: addsWhenRunning, signInStatus: signInStatus, vendorInstalls: vendorInstalls)
     }
 }
 
@@ -405,6 +409,10 @@ public struct InstalledAgent: Sendable, Equatable, Identifiable {
     public var evidence: [AgentEvidence]
     /// Every copy of the app that was found, preferred copy first.
     public var applications: [AgentApplication] = []
+    /// Executable paths the scan confirmed, for identifying a running process by its install.
+    public static func installs(_ agents: [InstalledAgent]) -> [String: String] {
+        Dictionary(agents.compactMap { agent in agent.executablePath.map { ($0, agent.id) } }, uniquingKeysWith: { first, _ in first })
+    }
     /// A command or app that can run. A config folder alone only shows the tool was used before.
     public var isInstalled: Bool { executablePath != nil || applicationPath != nil }
     public init(tool: AgentTool, executablePath: String?, applicationPath: String?, configPath: String?, evidence: [AgentEvidence], applications: [AgentApplication] = []) {
@@ -468,8 +476,11 @@ public enum AgentDetector {
                 guard input.existingPaths.contains(path) else { return nil }
                 // A shared command name counts only when its install path proves the tool.
                 guard tool.ambiguousExecutables.contains(name) else { return path }
+                // Only the resolved install target counts, never the folder the command was found in.
                 let resolved = (input.resolvedPaths[path] ?? path).lowercased()
-                return tool.packageMarkers.contains { resolved.contains($0) || path.lowercased().contains($0) } ? path : nil
+                if tool.packageMarkers.contains(where: { resolved.contains($0) || resolved.contains($0.replacingOccurrences(of: "node_modules/", with: "/packages/")) }) { return path }
+                let configured = ([tool.defaultConfigDirectory].filter { !$0.isEmpty } + tool.configMarkers).contains { input.existingPaths.contains(AgentPaths.child(input.homePath, $0)) }
+                return configured && tool.vendorInstalls.contains(where: { AgentPaths.child(input.homePath, $0) == path }) ? path : nil
             }.first
         }.first
         let copies = AgentApplications.ordered(input.applications.filter { matches(tool, $0) }, home: input.homePath)
@@ -499,7 +510,7 @@ public enum AgentDetector {
 /// Picks one copy when an app was renamed, duplicated, or left in the Trash or a mounted installer.
 public enum AgentApplications {
     public static func excluded(_ path: String) -> Bool {
-        ["/.Trash/", "/AppTranslocation/", "/Account Dock/", "/ProfileDock Dock Apps/", "/ProfileDock Launchers/", "/DerivedData/", "/Volumes/", ".app/Contents/"]
+        ["/.Trash/", "/AppTranslocation/", "/Account Dock/", "/ProfileDock Dock Apps/", "/ProfileDock Launchers/", "/DerivedData/", ".app/Contents/"]
             .contains { path.contains($0) }
     }
 
@@ -537,7 +548,9 @@ public enum AgentProbe {
                     let candidate = AgentPaths.join(directory, name)
                     guard isExecutableFile(candidate, fileManager: fileManager) else { continue }
                     existing.insert(candidate)
-                    let target = URL(fileURLWithPath: candidate).resolvingSymlinksInPath().path
+                    var target = URL(fileURLWithPath: candidate).resolvingSymlinksInPath().path
+                    // Volta and pnpm put shims in their bin folder; the package folder beside them names the tool.
+                    if target == candidate || target.hasSuffix("/volta-shim"), let package = shimPackage(tool, directory: directory, home: home.path, fileManager: fileManager) { target = package }
                     if target != candidate { resolved[candidate] = target }
                 }
             }
@@ -560,12 +573,33 @@ public enum AgentProbe {
         return AgentDetector.installed(tool, in: input)?.executablePath
     }
 
-    /// Reads one boolean from the app's own status file, capped in size. Nil when it is missing or unclear.
+    /// The tool's package folder in a Volta or pnpm global install, when the command in `directory` is their shim.
+    static func shimPackage(_ tool: AgentTool, directory: String, home: String, fileManager: FileManager) -> String? {
+        let roots: [(bin: String, packages: String)] = [
+            (".volta/bin", ".volta/tools/image/packages"), ("Library/pnpm", "Library/pnpm/global/5/node_modules"),
+            (".local/share/pnpm", ".local/share/pnpm/global/5/node_modules")
+        ]
+        guard let root = roots.first(where: { AgentPaths.child(home, $0.bin) == directory }) else { return nil }
+        for marker in tool.packageMarkers where marker.hasPrefix("node_modules/") {
+            let package = String(marker.dropFirst("node_modules/".count))
+            let folder = AgentPaths.child(home, root.packages + "/" + package)
+            var isDirectory: ObjCBool = false
+            if fileManager.fileExists(atPath: folder, isDirectory: &isDirectory), isDirectory.boolValue { return folder + "/" }
+        }
+        return nil
+    }
+
+    /// Reads one boolean from the app's own status file: a regular file, not followed through a link,
+    /// opened without blocking and read up to 64 KB. Nil when it is missing or unclear.
     public static func signedIn(_ status: AgentSignInStatus, userData: URL, fileManager: FileManager = .default) -> Bool? {
-        let file = userData.appendingPathComponent(status.relativePath)
-        guard let size = (try? fileManager.attributesOfItem(atPath: file.path))?[.size] as? NSNumber, size.intValue < 65_536,
-              let data = fileManager.contents(atPath: file.path),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let path = userData.appendingPathComponent(status.relativePath).path
+        let descriptor = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard descriptor >= 0 else { return nil }
+        defer { close(descriptor) }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG, info.st_size < 65_536 else { return nil }
+        let data = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false).readData(ofLength: 65_536)
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         return object[status.key] as? Bool
     }
 
@@ -617,8 +651,8 @@ public enum AgentProfiles {
 }
 
 public enum AgentLaunch {
-    /// `searchPath` goes in front of PATH, for a script whose `env node` must find the runtime it was installed with.
-    public static func plan(profile: Profile, userHome: URL, project: String, executable: String, searchPath: String? = nil) -> AgentLaunchPlan? {
+    /// `runtime` runs the script with the Node it was installed with, so `env node` does not depend on the shell's PATH.
+    public static func plan(profile: Profile, userHome: URL, project: String, executable: String, runtime: String? = nil) -> AgentLaunchPlan? {
         guard profile.kind == .agent, let tool = profile.agentTool, !tool.legacy else { return nil }
         var environment: [String: String] = [:]
         if profile.usesIsolatedAgentHome {
@@ -630,7 +664,7 @@ public enum AgentLaunch {
                 return nil
             }
         }
-        guard let shell = shellCommand(project: project, environment: environment, executable: executable, searchPath: searchPath) else { return nil }
+        guard let shell = shellCommand(project: project, environment: environment, executable: executable, runtime: runtime) else { return nil }
         return AgentLaunchPlan(environment: environment, executable: executable, shellCommand: shell,
                                 bundleIdentifier: tool.bundleIdentifiers.first, notice: tool.accountNotice, opensDesktopApp: !tool.launchesInTerminal)
     }
@@ -650,14 +684,15 @@ public enum AgentLaunch {
         return shellCommand(project: project, environment: [:], executable: agent.launchExecutable)
     }
 
-    public static func shellCommand(project: String, environment: [String: String], executable: String, searchPath: String? = nil) -> String? {
+    /// Plain `cd`, `VAR=value command` and single quotes, which zsh, bash and fish all accept.
+    public static func shellCommand(project: String, environment: [String: String], executable: String, runtime: String? = nil) -> String? {
         guard project.hasPrefix("/"), !project.contains("\0"), !project.contains("\n") else { return nil }
-        guard let executable = quotedExecutable(executable) else { return nil }
-        var prefix = "cd -- " + ClaudeBridgeSettings.shellQuote(project)
-        if let searchPath {
-            guard searchPath.hasPrefix("/"), !searchPath.contains("\0"), !searchPath.contains("\n"), !searchPath.contains(":") else { return nil }
-            prefix += " && PATH=" + ClaudeBridgeSettings.shellQuote(searchPath) + ":\"$PATH\""
+        guard var executable = quotedExecutable(executable) else { return nil }
+        if let runtime {
+            guard runtime.hasPrefix("/"), executable.hasPrefix("'"), let quoted = quotedExecutable(runtime) else { return nil }
+            executable = quoted + " " + executable
         }
+        let prefix = "cd -- " + ClaudeBridgeSettings.shellQuote(project)
         guard !environment.isEmpty else { return executable.isEmpty ? nil : prefix + " && " + executable }
         let assignments = environment.keys.sorted().compactMap { key -> String? in
             guard key.range(of: "^[A-Z_][A-Z0-9_]*$", options: .regularExpression) != nil,
@@ -668,13 +703,23 @@ public enum AgentLaunch {
         return prefix + " && " + assignments.joined(separator: " ") + " " + executable
     }
 
-    /// The folder of an npm or Bun install made by nvm, fnm, mise, asdf or Volta, whose own runtime sits beside the command.
-    /// Nil for other installs, which keep the user's PATH as it is.
-    public static func runtimeDirectory(for executable: String, fileManager: FileManager = .default) -> String? {
+    /// The Node beside an npm command installed by nvm, fnm, mise or asdf, when the command links to a JavaScript file.
+    /// A Terminal shell may not have that version on its PATH. Nil for every other install, which runs as it is.
+    public static func runtime(for executable: String, fileManager: FileManager = .default) -> String? {
         guard executable.hasPrefix("/") else { return nil }
         let directory = URL(fileURLWithPath: executable).deletingLastPathComponent().path
-        guard ["/.nvm/", "/fnm/", "/mise/installs/", "/.asdf/installs/", "/.volta/"].contains(where: { directory.contains($0) }) else { return nil }
-        return ["node", "bun"].contains { fileManager.isExecutableFile(atPath: directory + "/" + $0) } ? directory : nil
+        guard ["/.nvm/", "/fnm/", "/mise/installs/", "/.asdf/installs/"].contains(where: { directory.contains($0) }) else { return nil }
+        let target = URL(fileURLWithPath: executable).resolvingSymlinksInPath().pathExtension.lowercased()
+        guard ["js", "mjs", "cjs"].contains(target) else { return nil }
+        let node = directory + "/node"
+        return fileManager.isExecutableFile(atPath: node) ? node : nil
+    }
+
+    /// A Terminal `.command` file for when automation is denied: it removes itself, then runs the same command in the
+    /// user's login shell and keeps that shell open afterwards, like a normal tab.
+    public static func commandFile(command: String) -> String {
+        let inner = command + "; exec \"${SHELL:-/bin/zsh}\" -l"
+        return "#!/bin/sh\nrm -f \"$0\"\nexec \"${SHELL:-/bin/zsh}\" -l -i -c " + ClaudeBridgeSettings.shellQuote(inner) + "\n"
     }
 
     public static func quotedExecutable(_ value: String) -> String? {

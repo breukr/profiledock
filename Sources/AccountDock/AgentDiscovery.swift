@@ -37,8 +37,12 @@ enum AgentAvailability: Equatable {
         }
     }
 
+    /// Copies on mounted disk images and other read-only volumes are installers, not installs. An app on a
+    /// writable external drive counts.
     nonisolated static func launchServicesApplications() -> [AgentApplication] {
-        agentBundleIdentifiers.sorted().flatMap { NSWorkspace.shared.urlsForApplications(withBundleIdentifier: $0) }.compactMap { AgentProbe.readApplication($0) }
+        agentBundleIdentifiers.sorted().flatMap { NSWorkspace.shared.urlsForApplications(withBundleIdentifier: $0) }
+            .filter { !$0.path.hasPrefix("/Volumes/") || (try? $0.resourceValues(forKeys: [.volumeIsReadOnlyKey]).volumeIsReadOnly) == false }
+            .compactMap { AgentProbe.readApplication($0) }
     }
 
     func installedAgent(_ toolID: String) -> InstalledAgent? { installedAgents?.first { $0.id == toolID } }
@@ -47,16 +51,22 @@ enum AgentAvailability: Equatable {
     func agentAvailability(_ profile: Profile) -> AgentAvailability {
         guard profile.kind == .agent, let tool = profile.agentTool else { return .installed }
         if running[profile.id]?.isEmpty == false { return .installed }
-        if !tool.launchesInTerminal { return applicationURL(for: profile) == nil ? .missing : .installed }
+        // A tab running it, or the user's word that their shell finds it, beats the scan.
+        if companions.window(for: profile)?.agent?.rawValue == tool.id || profile.opensByCommandName == true { return .installed }
+        // No verdict, and no file system or Launch Services work on the main thread, until the background scan lands.
         guard let installedAgents else { return .unknown }
-        return installedAgents.first { $0.id == tool.id }?.executablePath != nil ? .installed : .missing
+        let found = installedAgents.first { $0.id == tool.id }
+        return (tool.launchesInTerminal ? found?.executablePath : found?.applicationPath) != nil ? .installed : .missing
     }
 
     /// The command for a terminal tool: the scanned install, else a direct check of the usual folders.
     func resolvedExecutable(for tool: AgentTool) -> String? {
         if let path = installedAgent(tool.id)?.executablePath { return path }
-        return installedAgents == nil ? AgentProbe.executable(for: tool, home: home) : nil
+        return installedAgents == nil ? AgentProbe.executable(for: tool, home: home, path: probePath) : nil
     }
+
+    /// A preview or test home never looks at this Mac's own PATH.
+    nonisolated var probePath: String { tracksApplications ? ProcessInfo.processInfo.environment["PATH"] ?? "" : "" }
 
     /// What to do when a profile's tool is missing, in one sentence with the fix.
     func missingToolMessage(_ tool: AgentTool) -> String {
@@ -147,13 +157,17 @@ enum AgentAvailability: Equatable {
     /// When Terminal automation is denied, a one-time command file still opens the tool in a new window.
     /// It runs the same command in the user's login shell and deletes itself first.
     func openTerminalWithoutAutomation(command: String) throws {
+        let fm = FileManager.default
         let folder = home.appendingPathComponent("Library/Application Support/Account Dock/Launch")
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        // A file Terminal never ran is cleared on the next launch.
+        for old in (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [] where old.pathExtension == "command" {
+            if let date = try? old.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate, Date().timeIntervalSince(date) > 600 { try? fm.removeItem(at: old) }
+        }
         let file = folder.appendingPathComponent(UUID().uuidString + ".command")
-        let inner = command + "; exec \"${SHELL:-/bin/zsh}\" -l"
-        let script = "#!/bin/sh\nrm -f \"$0\"\nexec \"${SHELL:-/bin/zsh}\" -l -i -c " + ClaudeBridgeSettings.shellQuote(inner) + "\n"
-        try Data(script.utf8).write(to: file, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: file.path)
+        guard fm.createFile(atPath: file.path, contents: Data(AgentLaunch.commandFile(command: command).utf8), attributes: [.posixPermissions: 0o700]) else {
+            throw CompanionError.message("Could not prepare the Terminal window.")
+        }
         guard let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else { throw CompanionError.message("Terminal is not available.") }
         let configuration = NSWorkspace.OpenConfiguration(); configuration.activates = true
         NSWorkspace.shared.open([file], withApplicationAt: terminal, configuration: configuration) { _, error in

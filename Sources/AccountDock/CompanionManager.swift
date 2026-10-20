@@ -12,11 +12,10 @@ import DockCore
     init(model: DockModel) { self.model = model }
     func start() {
         guard timer == nil else { return }
-        if let model, model.claudeBridge.enabled,
-           !(model.preferences.removedProfiles ?? []).contains(where: { $0.kind == .claude && !$0.usesSeparateClaudeAccount }) {
+        if let model, model.claudeBridge.enabled, model.preferences.autoAddAgents != false, model.needsClaudeDesktopEntry {
             let application = NSRunningApplication.runningApplications(withBundleIdentifier: ProfileProvider.claude.bundleIdentifier).first?.bundleURL
                 ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: ProfileProvider.claude.bundleIdentifier)
-            _ = try? model.recognizeClaudeDesktop(application: application)
+            _ = try? model.recognizeClaudeDesktop(application: application, automatic: true)
         }
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
@@ -37,7 +36,7 @@ import DockCore
             self.sessions = records
             if terminals, NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Terminal").isEmpty == false {
                 do {
-                    self.windows = try await TerminalClient.shared.windows()
+                    self.windows = try await TerminalClient.shared.windows(installs: InstalledAgent.installs(model.installedAgents ?? []))
                     let pid = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Terminal").first?.processIdentifier
                     self.terminalStarted = pid.flatMap { ClaudeProcess.startTime($0) }
                     self.terminalError = nil
@@ -111,10 +110,10 @@ import DockCore
         }
         if profiles != preferences.profiles { preferences.profiles = profiles; save() }
     }
-    @discardableResult func recognizeClaudeDesktop(application: URL?) throws -> Bool {
+    @discardableResult func recognizeClaudeDesktop(application: URL?, automatic: Bool = false) throws -> Bool {
         guard let application, Bundle(url: application)?.bundleIdentifier == ProfileProvider.claude.bundleIdentifier else { return false }
         if !preferences.profiles.contains(where: { $0.kind == .claude && !$0.usesSeparateClaudeAccount }) {
-            try createCompanion(kind: .claude, name: "Claude", project: nil)
+            try createCompanion(kind: .claude, name: "Claude", project: nil, automatic: automatic)
         }
         return true
     }
@@ -266,22 +265,31 @@ import DockCore
         }
         return try await TerminalClient.shared.open(command: command)
     }
-    func openTerminalAgent(_ profile: Profile, tool: AgentTool) {
+    func openTerminalAgent(_ profile: Profile, tool: AgentTool, checked: String? = nil) {
         let project = profile.projectPath ?? home.path
-        let anyway = openAnyway.remove(profile.id) != nil
-        let found = resolvedExecutable(for: tool)
-        if found == nil, !anyway, installedAgents != nil {
-            // Not in any usual install folder. The user's own shell may still find it, but only if they say so.
-            showProfileMessage(missingToolMessage(tool), for: profile, actionTitle: "Open Anyway", opensAnyway: true)
-            scanAgents()
+        guard let executable = checked ?? resolvedExecutable(for: tool) ?? (profile.opensByCommandName == true ? tool.preferredExecutable : nil) else {
+            // Not in the last scan. Look again right now, off the main thread, in case it was just installed.
+            guard !opening.contains(profile.id) else { return }
+            opening.insert(profile.id)
+            let home = self.home, path = probePath
+            Task {
+                let found = await Task.detached(priority: .userInitiated) { AgentProbe.executable(for: tool, home: home, path: path) }.value
+                opening.remove(profile.id)
+                if let found {
+                    scanAgents(force: true)
+                    openTerminalAgent(profile, tool: tool, checked: found)
+                } else {
+                    // The user's own shell may still find it, but only if they say so.
+                    showProfileMessage(missingToolMessage(tool), for: profile, actionTitle: "Open Anyway", opensAnyway: true)
+                }
+            }
             return
         }
-        guard let executable = found ?? tool.preferredExecutable else { showProfileMessage("Could not prepare \(profile.name).", for: profile); return }
         var directory: ObjCBool = false
         guard project.hasPrefix("/"), !project.contains("\0"), FileManager.default.fileExists(atPath: project, isDirectory: &directory), directory.boolValue else {
             showProfileMessage("Choose an existing project folder.", for: profile); return
         }
-        guard let command = AgentLaunch.plan(profile: profile, userHome: home, project: project, executable: executable, searchPath: AgentLaunch.runtimeDirectory(for: executable))?.shellCommand else {
+        guard let command = AgentLaunch.plan(profile: profile, userHome: home, project: project, executable: executable, runtime: AgentLaunch.runtime(for: executable))?.shellCommand else {
             showProfileMessage("Could not prepare \(profile.name).", for: profile); return
         }
         if profile.usesIsolatedAgentHome {
@@ -314,7 +322,7 @@ import DockCore
             } catch { showProfileMessage(error.localizedDescription, for: profile) }
         }
     }
-    func openDesktopAgent(_ profile: Profile, tool: AgentTool) {
+    func openDesktopAgent(_ profile: Profile, tool: AgentTool, checked: URL? = nil) {
         refresh()
         if let app = running[profile.id]?.first {
             // Several instances can run at once; only this profile's exact process is brought forward.
@@ -324,9 +332,22 @@ import DockCore
             try? ApplicationReopen.send(processIdentifier: app.processIdentifier)
             return
         }
-        guard let url = applicationURL(for: profile) else {
-            showProfileMessage(missingToolMessage(tool), for: profile, actionTitle: "Get \(tool.name)", url: URL(string: tool.documentation))
-            scanAgents()
+        guard let url = checked ?? applicationURL(for: profile) else {
+            // Not in the last scan. Ask Launch Services again off the main thread, in case it was just installed or moved.
+            guard !opening.contains(profile.id) else { return }
+            opening.insert(profile.id)
+            Task {
+                let found = await Task.detached(priority: .userInitiated) {
+                    Self.launchServicesApplications().first { tool.bundleIdentifiers.contains($0.bundleIdentifier ?? "") }.map { URL(fileURLWithPath: $0.path) }
+                }.value
+                opening.remove(profile.id)
+                if let found {
+                    scanAgents(force: true)
+                    openDesktopAgent(profile, tool: tool, checked: found)
+                } else {
+                    showProfileMessage(missingToolMessage(tool), for: profile, actionTitle: "Get \(tool.name)", url: URL(string: tool.documentation))
+                }
+            }
             return
         }
         if let arguments = AgentLaunch.desktopArguments(profile: profile, userHome: home, application: url) {
@@ -364,7 +385,8 @@ import DockCore
                 : "\(tool.name) is already in ProfileDock.")
         }
         if tool.launchesInTerminal { profile.projectPath = project?.standardizedFileURL.path ?? home.path }
-        if automatic { profile.addedAutomatically = true } else { forgetDismissal(of: tool.id) }
+        // Adding the shared sign-in by hand undoes a removal; adding a separate account does not.
+        if automatic { profile.addedAutomatically = true } else if !profile.usesIsolatedAgentHome { forgetDismissal(of: tool.id) }
         if profile.usesIsolatedAgentHome {
             try FileManager.default.createDirectory(at: profile.home(in: home), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         }
