@@ -96,7 +96,8 @@ import DockCore
                 guard !(preferences.hiddenProfileIDs ?? []).contains(id) else { continue }
                 var profile = Profile(id: id, name: "\(window.agent!.label) · \(window.tty.replacingOccurrences(of: "/dev/ttys", with: ""))", color: window.agent?.tool?.color ?? "546E7A")
                 profile.provider = .terminal; profile.discoveredTerminal = true
-                profile.dockIconStyle = window.agent?.tool?.legacy == false ? .initials : .chatgpt
+                // The Terminal icon with the agent's badge, the same for every recognized tool.
+                profile.dockIconStyle = .chatgpt
                 profile.terminalTTY = window.tty; profile.terminalWindowID = window.windowID
                 profile.terminalProcessStarted = started; profile.terminalAgent = window.agent
                 profiles.append(profile)
@@ -175,9 +176,18 @@ import DockCore
                   let id = ProcessIdentity.claudeProfileID(arguments: arguments, profiles: preferences.profiles, home: home) else { continue }
             result[id, default: []].append(running)
         }
+        // Desktop agents: a separate account is its exact user-data folder, anything without one is the shared sign-in.
+        let desktopTools = Set(preferences.profiles.compactMap { $0.kind == .agent && $0.agentTool?.launchesInTerminal == false ? $0.agentID : nil }).compactMap(AgentRegistry.tool(id:))
+        for app in applications where !app.isTerminated {
+            guard let bundle = app.bundleIdentifier, let tool = desktopTools.first(where: { $0.bundleIdentifiers.contains(bundle) }),
+                  let running = RunningProfileApplication(app), let arguments = Self.arguments(pid: running.processIdentifier),
+                  let id = ProcessIdentity.agentProfileID(tool: tool, arguments: arguments, profiles: preferences.profiles, home: home) else { continue }
+            result[id, default: []].append(running)
+        }
         for profile in preferences.profiles where profile.kind.usesTerminal || (profile.kind == .agent && profile.agentTool?.launchesInTerminal == true) {
-            guard companions.window(for: profile)?.agent != nil,
-                  let app = applications.first(where: { $0.bundleIdentifier == "com.apple.Terminal" || $0.bundleIdentifier == profile.kind.bundleIdentifier }),
+            guard let agent = companions.window(for: profile)?.agent,
+                  profile.kind != .agent || agent.rawValue == profile.agentID,
+                  let app = applications.first(where: { $0.bundleIdentifier == "com.apple.Terminal" }),
                   let running = RunningProfileApplication(app) else { continue }
             result[profile.id] = [running]
         }
@@ -236,23 +246,24 @@ import DockCore
             } catch { showProfileMessage(error.localizedDescription, for: profile) }
         }
     }
-    /// Claude Code and Codex keep launching by executable name. Other tools use the binary that was actually found.
+    /// Claude Code and Codex keep launching by executable name. Other tools use the binary that was found,
+    /// or their command name so the Terminal login shell resolves it from the user's own PATH.
     func openTerminal(project: String, agent: TerminalAgent?) async throws -> TerminalWindow {
         guard let agent, agent.tool?.legacy == false, let tool = agent.tool else {
             return try await TerminalClient.shared.open(project: project, agent: agent)
         }
-        let executable = resolvedExecutable(for: tool) ?? tool.preferredExecutable
-        guard let executable, let command = AgentLaunch.shellCommand(project: project, environment: [:], executable: executable) else {
-            throw CompanionError.message("Install \(tool.name) and try again.")
+        guard let executable = resolvedExecutable(for: tool),
+              let command = AgentLaunch.shellCommand(project: project, environment: [:], executable: executable) else {
+            throw CompanionError.message("Could not prepare \(tool.name).")
         }
         return try await TerminalClient.shared.open(command: command)
     }
     func resolvedExecutable(for tool: AgentTool) -> String? {
-        AgentDetector.installed(AgentProbe.scan(home: home)).first { $0.id == tool.id }?.executablePath
+        AgentProbe.executable(for: tool, home: home) ?? tool.preferredExecutable
     }
     func openTerminalAgent(_ profile: Profile, tool: AgentTool) {
         let project = profile.projectPath ?? home.path
-        guard let executable = resolvedExecutable(for: tool) else { showProfileMessage("Install \(tool.name) and try again.", for: profile); return }
+        guard let executable = resolvedExecutable(for: tool) else { showProfileMessage("Could not prepare \(profile.name).", for: profile); return }
         var directory: ObjCBool = false
         guard project.hasPrefix("/"), !project.contains("\0"), FileManager.default.fileExists(atPath: project, isDirectory: &directory), directory.boolValue else {
             showProfileMessage("Choose an existing project folder.", for: profile); return
@@ -285,13 +296,25 @@ import DockCore
         }
     }
     func openDesktopAgent(_ profile: Profile, tool: AgentTool) {
-        let installed = AgentDetector.installed(AgentProbe.scan(home: home)).first { $0.id == tool.id }?.applicationPath
-        let url = installed.map { URL(fileURLWithPath: $0) } ?? tool.bundleIdentifiers.lazy.compactMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }.first
-        guard let url else { showProfileMessage("Install \(tool.name) and try again.", for: profile); return }
+        refresh()
+        if let app = running[profile.id]?.first {
+            // Several instances can run at once; only this profile's exact process is brought forward.
+            app.unhide()
+            NSApp.yieldActivation(to: app.application)
+            _ = app.activate(options: [.activateAllWindows])
+            try? ApplicationReopen.send(processIdentifier: app.processIdentifier)
+            return
+        }
+        guard let url = applicationURL(for: profile) else { showProfileMessage("Install \(tool.name) in Applications, then try again.", for: profile); return }
+        if let arguments = AgentLaunch.desktopArguments(profile: profile, userHome: home, application: url) {
+            openNewInstance(profile, arguments: arguments, directories: [profile.agentUserDataDirectory(in: home)].compactMap { $0 }, appName: tool.name)
+            return
+        }
         opening.insert(profile.id)
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
-        configuration.createsNewApplicationInstance = false
+        // When the app can also run separate accounts, reusing a running instance could focus another account.
+        configuration.createsNewApplicationInstance = tool.supportsIsolatedProfiles
         NSWorkspace.shared.openApplication(at: url, configuration: configuration) { [weak self] _, error in
             Task { @MainActor in
                 guard let self else { return }
@@ -301,9 +324,16 @@ import DockCore
             }
         }
     }
-    func createAgentProfile(toolID: String, name: String, project: URL?) throws {
+    func createAgentProfile(toolID: String, name: String, project: URL?, separate: Bool = true) throws {
         guard let tool = AgentRegistry.tool(id: toolID), !tool.legacy else { throw CompanionError.message("Choose a supported tool.") }
-        guard var profile = AgentProfiles.make(tool: tool, name: name) else { throw CompanionError.message("Use a name between 1 and 32 characters.") }
+        guard var profile = AgentProfiles.make(tool: tool, name: name, separate: separate) else { throw CompanionError.message("Use a name between 1 and 32 characters.") }
+        // Terminal profiles differ by project folder. A second desktop entry on the same sign-in would open the same window.
+        if !tool.launchesInTerminal, !profile.usesIsolatedAgentHome,
+           preferences.profiles.contains(where: { $0.kind == .agent && $0.agentID == tool.id && !$0.usesIsolatedAgentHome }) {
+            throw CompanionError.message(tool.supportsIsolatedProfiles
+                ? "\(tool.name) with your existing sign-in is already in ProfileDock. Choose Separate account to add another account."
+                : "\(tool.name) is already in ProfileDock.")
+        }
         if tool.launchesInTerminal { profile.projectPath = project?.standardizedFileURL.path ?? home.path }
         if profile.usesIsolatedAgentHome {
             try FileManager.default.createDirectory(at: profile.home(in: home), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -324,8 +354,12 @@ import DockCore
     }
     func openSeparateClaude(_ profile: Profile, application: URL) {
         guard let arguments = ProfileLaunch.claudeArguments(profile: profile, home: home, application: application) else { return }
+        openNewInstance(profile, arguments: arguments, directories: [profile.claudeConfigDirectory(in: home), profile.claudeUserDataDirectory(in: home)].compactMap { $0 }, appName: "Claude")
+    }
+    /// Runs `open` with the given arguments for a separate account, after creating that account's private folders.
+    func openNewInstance(_ profile: Profile, arguments: [String], directories: [URL], appName: String) {
         do {
-            for directory in [profile.claudeConfigDirectory(in: home), profile.claudeUserDataDirectory(in: home)].compactMap({ $0 }) {
+            for directory in directories {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             }
         } catch { showProfileMessage("Could not prepare \(profile.name): \(error.localizedDescription)", for: profile); return }
@@ -352,7 +386,7 @@ import DockCore
         DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
             guard let self, self.opening.contains(profile.id) else { return }
             self.refresh()
-            if self.opening.remove(profile.id) != nil { self.showProfileMessage("\(profile.name) has not appeared yet. Check its Claude window before trying again.", for: profile) }
+            if self.opening.remove(profile.id) != nil { self.showProfileMessage("\(profile.name) has not appeared yet. Check its \(appName) window before trying again.", for: profile) }
         }
     }
     func closeCompanion(_ profile: Profile) {
@@ -362,7 +396,8 @@ import DockCore
             return
         }
         if profile.kind == .agent, profile.agentTool?.launchesInTerminal != true {
-            showProfileMessage("\(profile.agentTool?.name ?? "This app") stays open. Separate accounts aren't supported, so ProfileDock does not quit it.", for: profile)
+            // Only the process matched to this profile is asked to quit; the app keeps control of its own confirmations.
+            if running[profile.id]?.first?.terminate() == false { showProfileMessage("\(profile.agentTool?.name ?? "The app") could not close. Check its window for a confirmation.", for: profile, actionTitle: "Show Window") }
             return
         }
         guard let window = companions.window(for: profile) else { return }

@@ -7,10 +7,10 @@ final class AgentRegistryTests: XCTestCase {
     func testRegistryDescribesEachToolOnceAndIsolatesOnlyTheCleanHomes() {
         let ids = AgentRegistry.tools.map(\.id)
         XCTAssertEqual(Set(ids).count, ids.count)
-        for id in ["claude", "claude-desktop", "codex", "grok", "hermes", "gemini", "opencode", "copilot", "aider", "amp", "cursor-cli", "cursor", "windsurf", "goose"] {
+        for id in ["claude", "claude-desktop", "codex", "grok-bot", "grok", "hermes", "gemini", "opencode", "copilot", "aider", "amp", "cursor-cli", "cursor", "windsurf", "goose"] {
             XCTAssertNotNil(AgentRegistry.tool(id: id), id)
         }
-        XCTAssertEqual(AgentRegistry.tools.filter(\.supportsIsolatedProfiles).map(\.id), ["grok", "hermes", "gemini", "opencode"])
+        XCTAssertEqual(AgentRegistry.tools.filter(\.supportsIsolatedProfiles).map(\.id), ["grok-bot", "grok", "hermes", "gemini", "opencode"])
         var seen: [String] = []
         for tool in AgentRegistry.tools {
             XCTAssertFalse(tool.name.isEmpty)
@@ -27,7 +27,9 @@ final class AgentRegistryTests: XCTestCase {
         XCTAssertEqual(AgentRegistry.tool(id: "grok")?.configHomeEnvironment, "GROK_HOME")
         XCTAssertEqual(AgentRegistry.tool(id: "hermes")?.configHomeEnvironment, "HERMES_HOME")
         XCTAssertEqual(AgentRegistry.tool(id: "gemini")?.configHomeEnvironment, "GEMINI_CLI_HOME")
-        XCTAssertEqual(AgentRegistry.tool(id: "opencode")?.configHomeEnvironment, "OPENCODE_DB")
+        XCTAssertEqual(AgentRegistry.tool(id: "opencode")?.configHomeEnvironment, "XDG_DATA_HOME")
+        XCTAssertEqual(AgentRegistry.tool(id: "grok-bot")?.isolation, .userDataDirectory)
+        XCTAssertEqual(AgentRegistry.tool(id: "grok-bot")?.launchesInTerminal, false)
         XCTAssertEqual(AgentRegistry.tool(id: "grok")?.defaultConfigDirectory, ".grok")
         XCTAssertEqual(AgentRegistry.tool(id: "opencode")?.defaultConfigDirectory, ".local/share/opencode")
     }
@@ -96,6 +98,10 @@ final class AgentRegistryTests: XCTestCase {
         try FileManager.default.createDirectory(at: root.appendingPathComponent(".hermes"), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
         try Data().write(to: bin.appendingPathComponent("grok"))
+        let grokBot = root.appendingPathComponent("Applications/Grok Bot.app/Contents")
+        try FileManager.default.createDirectory(at: grokBot, withIntermediateDirectories: true)
+        try #"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.anysphere.sand</string><key>CFBundleName</key><string>Grok Bot</string></dict></plist>"#
+            .write(to: grokBot.appendingPathComponent("Info.plist"), atomically: true, encoding: .utf8)
         let plist = """
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -109,6 +115,7 @@ final class AgentRegistryTests: XCTestCase {
         XCTAssertEqual(grok.executablePath, bin.appendingPathComponent("grok").standardizedFileURL.path)
         XCTAssertEqual(installed.first { $0.id == "hermes" }?.evidence, [.config])
         XCTAssertEqual(installed.first { $0.id == "cursor" }?.evidence, [.application])
+        XCTAssertEqual(installed.first { $0.id == "grok-bot" }?.evidence, [.application])
         XCTAssertNil(installed.first { $0.id == "amp" })
         XCTAssertFalse(scan.existingPaths.contains { $0.hasSuffix("auth.json") || $0.hasSuffix("secrets.json") })
 
@@ -140,12 +147,12 @@ final class AgentRegistryTests: XCTestCase {
         let geminiPlan = try XCTUnwrap(AgentLaunch.plan(profile: gemini, userHome: home, project: "/Work", executable: "gemini"))
         XCTAssertEqual(geminiPlan.environment.keys.sorted(), ["GEMINI_CLI_HOME"])
         XCTAssertFalse(geminiPlan.shellCommand.contains("GEMINI_FORCE_ENCRYPTED_FILE_STORAGE"))
-        XCTAssertTrue(gemini.accountCaption.contains("Keychain storage stays off"))
+        XCTAssertTrue(gemini.accountCaption.contains("optional Keychain storage off"))
 
         let opencode = try XCTUnwrap(AgentProfiles.make(tool: XCTUnwrap(AgentRegistry.tool(id: "opencode")), name: "Work"))
-        let database = try XCTUnwrap(AgentLaunch.plan(profile: opencode, userHome: home, project: "/Work", executable: "opencode")?.environment["OPENCODE_DB"])
-        XCTAssertEqual(database, opencode.home(in: home).appendingPathComponent("opencode.db").path)
-        XCTAssertFalse(database.contains(".local/share/opencode"))
+        let data = try XCTUnwrap(AgentLaunch.plan(profile: opencode, userHome: home, project: "/Work", executable: "opencode")?.environment)
+        XCTAssertEqual(data, ["XDG_DATA_HOME": opencode.home(in: home).path])
+        XCTAssertFalse(data.values.contains { $0.contains(".local/share") })
 
         for id in ["copilot", "aider", "amp", "cursor-cli", "cursor", "windsurf", "goose"] {
             let tool = try XCTUnwrap(AgentRegistry.tool(id: id))
@@ -182,8 +189,64 @@ final class AgentRegistryTests: XCTestCase {
         XCTAssertEqual(decoded, made)
         XCTAssertEqual(decoded.kind, .agent)
         XCTAssertTrue(decoded.usesIsolatedAgentHome)
-        XCTAssertEqual(decoded.listDetail, "Grok · separate account")
-        XCTAssertEqual(decoded.shortcutTitle, "Grok")
+        XCTAssertEqual(decoded.listDetail, "Grok Build · separate account")
+        let shared = try XCTUnwrap(AgentProfiles.make(tool: XCTUnwrap(AgentRegistry.tool(id: "hermes")), name: "Home", separate: false))
+        XCTAssertFalse(shared.usesIsolatedAgentHome)
+        XCTAssertEqual(shared.listDetail, "Hermes · shared sign-in")
+        XCTAssertEqual(shared.accountCaption, "Uses the Hermes sign-in already on this Mac, with its usual settings and history.")
+        XCTAssertEqual(decoded.shortcutTitle, "Grok Build")
         XCTAssertEqual(profile.shortcutTitle, "ChatGPT")
+    }
+
+    func testSharedProfilesKeepTheExistingSignInAndFindTheCommandOutsideTheGuiPath() throws {
+        let hermes = try XCTUnwrap(AgentRegistry.tool(id: "hermes"))
+        let shared = try XCTUnwrap(AgentProfiles.make(tool: hermes, name: "Home", separate: false))
+        let plan = try XCTUnwrap(AgentLaunch.plan(profile: shared, userHome: home, project: "/Work", executable: "hermes"))
+        XCTAssertEqual(plan.environment, [:])
+        XCTAssertEqual(plan.shellCommand, "cd -- '/Work' && hermes")
+        let separate = try XCTUnwrap(AgentProfiles.make(tool: hermes, name: "Work"))
+        let directory = try XCTUnwrap(AgentLaunch.plan(profile: separate, userHome: home, project: "/Work", executable: "hermes")?.environment["HERMES_HOME"])
+        // Hermes falls back to the root auth.json for homes inside ~/.hermes or a `profiles` folder.
+        XCTAssertFalse(directory.hasPrefix(home.appendingPathComponent(".hermes").path))
+        XCTAssertNotEqual(URL(fileURLWithPath: directory).deletingLastPathComponent().lastPathComponent, "profiles")
+        XCTAssertNil(AgentProfiles.make(tool: try XCTUnwrap(AgentRegistry.tool(id: "copilot")), name: "Work", separate: true)?.isolatedAgentHome)
+
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let grokBin = root.appendingPathComponent(".grok/bin")
+        try FileManager.default.createDirectory(at: grokBin, withIntermediateDirectories: true)
+        try Data().write(to: grokBin.appendingPathComponent("grok"))
+        let grok = try XCTUnwrap(AgentRegistry.tool(id: "grok"))
+        XCTAssertEqual(AgentProbe.executable(for: grok, home: root, path: "/usr/bin:/bin"), grokBin.appendingPathComponent("grok").standardizedFileURL.path)
+        XCTAssertNil(AgentProbe.executable(for: hermes, home: root, path: "/usr/bin:/bin"))
+    }
+
+    func testGrokBotSeparateAccountsOpenTheirOwnUserDataFolder() throws {
+        let tool = try XCTUnwrap(AgentRegistry.tool(id: "grok-bot"))
+        let app = URL(fileURLWithPath: "/Applications/Grok Bot.app")
+        let shared = try XCTUnwrap(AgentProfiles.make(tool: tool, name: "Personal", separate: false))
+        let work = try XCTUnwrap(AgentProfiles.make(tool: tool, name: "Work"))
+        XCTAssertNil(shared.terminalAgent)
+        XCTAssertNil(shared.agentUserDataDirectory(in: home))
+        XCTAssertNil(AgentLaunch.desktopArguments(profile: shared, userHome: home, application: app))
+        let data = try XCTUnwrap(work.agentUserDataDirectory(in: home))
+        XCTAssertEqual(data.path, "/Users/example/Library/Application Support/Account Dock/Companions/\(work.id)/electron-user-data")
+        XCTAssertEqual(AgentLaunch.desktopArguments(profile: work, userHome: home, application: app),
+                       ["-n", "-a", "/Applications/Grok Bot.app", "--args", "--user-data-dir=\(data.path)"])
+        XCTAssertTrue(work.accountCaption.contains("separate sign-in"))
+        XCTAssertEqual(work.tileCaption, "Separate account")
+        XCTAssertEqual(shared.tileCaption, "Shared sign-in")
+
+        let profiles = [shared, work, Profile(id: "default", name: "Codex", color: "377CF6")]
+        let executable = "/Applications/Grok Bot.app/Contents/MacOS/Grok Bot"
+        XCTAssertEqual(ProcessIdentity.agentProfileID(tool: tool, arguments: [executable], profiles: profiles, home: home), shared.id)
+        XCTAssertEqual(ProcessIdentity.agentProfileID(tool: tool, arguments: [executable, "--user-data-dir=\(data.path)"], profiles: profiles, home: home), work.id)
+        XCTAssertEqual(ProcessIdentity.agentProfileID(tool: tool, arguments: [executable, "--user-data-dir", data.path + "/"], profiles: profiles, home: home), work.id)
+        XCTAssertNil(ProcessIdentity.agentProfileID(tool: tool, arguments: [executable, "--user-data-dir=/tmp/someone-else"], profiles: profiles, home: home))
+        XCTAssertNil(ProcessIdentity.agentProfileID(tool: tool, arguments: [executable, "--user-data-dir=relative"], profiles: profiles, home: home))
+        XCTAssertNil(ProcessIdentity.agentProfileID(tool: tool, arguments: [executable], profiles: [work], home: home))
+
+        let cursor = try XCTUnwrap(AgentProfiles.make(tool: XCTUnwrap(AgentRegistry.tool(id: "cursor")), name: "Cursor"))
+        XCTAssertNil(AgentLaunch.desktopArguments(profile: cursor, userHome: home, application: URL(fileURLWithPath: "/Applications/Cursor.app")))
     }
 }

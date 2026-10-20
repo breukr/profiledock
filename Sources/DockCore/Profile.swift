@@ -40,7 +40,7 @@ public struct Profile: Identifiable, Codable, Equatable, Sendable {
         return kind.label
     }
     public var listDetail: String {
-        if kind == .agent, let tool = agentTool { return tool.supportsIsolatedProfiles ? "\(tool.name) · separate account" : "\(tool.name) · shared sign-in" }
+        if kind == .agent, let tool = agentTool { return usesIsolatedAgentHome ? "\(tool.name) · separate account" : "\(tool.name) · shared sign-in" }
         if kind == .terminal, let tool = terminalAgent?.tool, !tool.legacy { return tool.name }
         return kind.label
     }
@@ -52,7 +52,7 @@ public struct Profile: Identifiable, Codable, Equatable, Sendable {
     }
     public var accountCaption: String {
         if kind == .codex { return "Your sign-in and conversation history belong to this profile." }
-        if kind == .agent, let tool = agentTool { return tool.accountNotice }
+        if kind == .agent, let tool = agentTool { return usesIsolatedAgentHome ? tool.accountNotice : tool.sharedNotice }
         if kind == .terminal, let tool = terminalAgent?.tool, !tool.legacy { return tool.runningHelp }
         return "This entry uses your existing app and sign-in."
     }
@@ -99,6 +99,12 @@ public struct Profile: Identifiable, Codable, Equatable, Sendable {
 
     public func claudeUserDataDirectory(in userHome: URL) -> URL? {
         usesSeparateClaudeAccount ? home(in: userHome).appendingPathComponent("electron-user-data") : nil
+    }
+
+    /// A separate desktop-agent account opened with `--user-data-dir`. Nil means the app's own shared folder.
+    public func agentUserDataDirectory(in userHome: URL) -> URL? {
+        guard usesIsolatedAgentHome, agentTool?.isolation == .userDataDirectory else { return nil }
+        return home(in: userHome).appendingPathComponent("electron-user-data")
     }
 
     public static func validID(_ id: String) -> Bool {
@@ -204,5 +210,15 @@ public enum ProcessIdentity {
         guard let normalized = path else { return nil }
         if let profile = profiles.first(where: { $0.claudeUserDataDirectory(in: home)?.standardizedFileURL.path == normalized }) { return profile.id }
         return normalized == home.appendingPathComponent("Library/Application Support/Claude").standardizedFileURL.path ? shared : nil
+    }
+
+    /// A desktop agent instance belongs to the separate profile whose exact user-data folder it was given.
+    /// Without that argument it is the shared sign-in; any other folder is not ours.
+    public static func agentProfileID(tool: AgentTool, arguments: [String], profiles: [Profile], home: URL) -> String? {
+        let candidates = profiles.filter { $0.kind == .agent && $0.agentID == tool.id }
+        let shared = candidates.first { !$0.usesIsolatedAgentHome }?.id
+        guard let path = userDataPath(arguments) else { return shared }
+        guard let normalized = path else { return nil }
+        return candidates.first { $0.agentUserDataDirectory(in: home)?.standardizedFileURL.path == normalized }?.id
     }
 }

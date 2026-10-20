@@ -107,7 +107,7 @@ struct CompanionDetails: View {
         GroupBox(profile.kind == .agent ? (profile.agentTool?.name ?? profile.kind.label) : profile.kind.label) {
             VStack(alignment: .leading, spacing: 12) {
                 if profile.kind == .agent, let tool = profile.agentTool {
-                    Text(tool.accountNotice)
+                    Text(profile.accountCaption)
                     if tool.launchesInTerminal {
                         Text(profile.projectPath ?? model.home.path).font(.caption).textSelection(.enabled)
                         Button("Choose project folder…") {

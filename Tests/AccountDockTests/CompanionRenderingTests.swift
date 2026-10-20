@@ -89,3 +89,50 @@ final class CompanionRenderingTests: XCTestCase {
         window.close()
     }
 }
+
+final class AgentRenderingTests: XCTestCase {
+    @MainActor func testAgentProfilesDesktopLayouts() async throws {
+        guard let path = ProcessInfo.processInfo.environment["PROFILEDOCK_RENDER_AGENTS"] else { throw XCTSkip("Opt-in agent previews") }
+        let directory = URL(fileURLWithPath: path)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let model = DockModel(home: home), activity = ActivityMonitor(home: home), usage = UsageStore(), insights = InsightsStore()
+        defer { activity.shutdown(); usage.shutdown(); insights.shutdown() }
+        var codex = Profile(id: "default", name: "Personal", color: "377CF6"); codex.dockIconStyle = .chatgpt
+        try FileManager.default.createDirectory(at: codex.home(in: home), withIntermediateDirectories: true)
+        model.preferences.profiles = [codex]
+        try model.createAgentProfile(toolID: "grok-bot", name: "Grok Bot", project: nil, separate: false)
+        try model.createAgentProfile(toolID: "grok-bot", name: "Work", project: nil, separate: true)
+        try model.createAgentProfile(toolID: "hermes", name: "Hermes", project: home, separate: false)
+        try model.createAgentProfile(toolID: "gemini", name: "Client", project: home, separate: true)
+        try model.createAgentProfile(toolID: "cursor", name: "Cursor", project: nil, separate: false)
+        model.companions.terminalStarted = 42
+        model.companions.windows = [TerminalWindow(windowID: 7, tty: "/dev/ttys007", title: "Fixture", selected: false, front: false, agent: TerminalAgent(rawValue: "opencode"))]
+        model.reconcileDiscoveredTerminals()
+        for (width, columns) in [(680.0, 4), (1040.0, 6)] {
+            let presentation = IslandPresentation(expanded: true)
+            presentation.profileColumns = columns; presentation.profileRows = 2
+            let view = IslandView(model: model, usage: usage, activity: activity, insights: insights, presentation: presentation, notchHeight: 0, settings: {}, drag: { _, _ in }).background(.black)
+            try await render(view, size: CGSize(width: width, height: 640), to: directory.appendingPathComponent("agents-strip-\(Int(width)).png"))
+        }
+        let settings = SettingsView(model: model, loginItem: LoginItemModel(), activity: activity, updates: AppUpdates(), selfUpdates: ProfileDockUpdates(), insights: insights, cues: ActivityCues(), chooseImage: { _ in })
+        try await render(settings, size: CGSize(width: 920, height: 700), to: directory.appendingPathComponent("agents-settings.png"))
+        for (tool, separate) in [("grok-bot", true), ("hermes", false), ("copilot", false)] {
+            try await render(AddProfileSheet(model: model, toolID: tool, separate: separate).background(Color(nsColor: .windowBackgroundColor)), size: CGSize(width: 560, height: 520), to: directory.appendingPathComponent("add-\(tool).png"))
+        }
+        for profile in model.preferences.profiles where profile.kind == .agent {
+            try await render(CompanionDetails(model: model, profile: profile).padding(20).background(Color(nsColor: .windowBackgroundColor)), size: CGSize(width: 560, height: 260), to: directory.appendingPathComponent("details-\(profile.name).png"))
+        }
+    }
+    @MainActor private func render<V: View>(_ view: V, size: CGSize, to url: URL) async throws {
+        let host = NSHostingView(rootView: view.environment(\.colorScheme, .dark).frame(width: size.width, height: size.height, alignment: .topLeading))
+        let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; host.frame = CGRect(origin: .zero, size: size)
+        host.layoutSubtreeIfNeeded(); try await Task.sleep(for: .milliseconds(150)); host.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: url)
+        window.close()
+    }
+}

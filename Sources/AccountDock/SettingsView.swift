@@ -661,12 +661,19 @@ private struct AddChoice: Hashable {
     static let codex = AddChoice(provider: .codex, toolID: nil)
 }
 
-private struct AddProfileSheet: View {
+struct AddProfileSheet: View {
     @ObservedObject var model: DockModel
     @Environment(\.dismiss) var dismiss
     @State private var name = ""
     @FocusState private var nameFocused: Bool
     @State private var choice = AddChoice.codex
+    init(model: DockModel) { self.model = model }
+    /// Starts on one registry tool, for visual checks of its account choice.
+    init(model: DockModel, toolID: String, separate: Bool) {
+        self.model = model
+        _choice = State(initialValue: AddChoice(provider: .agent, toolID: toolID))
+        _separateAgent = State(initialValue: separate)
+    }
     private var kind: ProfileProvider { choice.provider }
     private var selectedTool: AgentTool? { choice.toolID.flatMap { AgentRegistry.tool(id: $0) } }
     @State private var project: URL?
@@ -675,6 +682,7 @@ private struct AddProfileSheet: View {
     @State private var loadingWindows = false
     @State private var separate = false
     @State private var separateClaude = false
+    @State private var separateAgent = false
     @State private var source: URL?
     @State private var creating = false
     @State private var error: String?
@@ -685,8 +693,15 @@ private struct AddProfileSheet: View {
                 ForEach(ProfileProvider.allCases.filter { $0 != .agent }, id: \.self) { provider in
                     Text(provider.label).tag(AddChoice(provider: provider, toolID: nil))
                 }
-                ForEach(AgentRegistry.addable) { tool in
-                    Text(tool.name).tag(AddChoice(provider: .agent, toolID: tool.id))
+                Section("Desktop apps") {
+                    ForEach(AgentRegistry.addable.filter { !$0.launchesInTerminal }) { tool in
+                        Text(tool.name).tag(AddChoice(provider: .agent, toolID: tool.id))
+                    }
+                }
+                Section("Terminal agents") {
+                    ForEach(AgentRegistry.addable.filter(\.launchesInTerminal)) { tool in
+                        Text(tool.name).tag(AddChoice(provider: .agent, toolID: tool.id))
+                    }
                 }
             }
             Text(choiceDescription).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -729,13 +744,23 @@ private struct AddProfileSheet: View {
                 }.pickerStyle(.radioGroup)
                 Text(separateClaude ? "Opens its own Claude window with a separate sign-in, chats and Claude Code settings. Both accounts can stay open at the same time. Sign in with the other account the first time it opens." : "Uses the Claude Desktop sign-in you already have.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            } else if kind == .agent, selectedTool?.launchesInTerminal == true {
-                HStack {
-                    Text(project?.path ?? model.home.path).font(.caption).lineLimit(2)
-                    Spacer()
-                    Button("Choose folder…") {
-                        let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true
-                        panel.begin { if $0 == .OK { project = panel.url } }
+            } else if kind == .agent, let tool = selectedTool {
+                if tool.supportsIsolatedProfiles {
+                    Picker("Account", selection: $separateAgent) {
+                        Text("Existing \(tool.name) sign-in").tag(false).disabled(!tool.launchesInTerminal && hasSharedAgent(tool))
+                        Text("Separate \(tool.name) account").tag(true)
+                    }.pickerStyle(.radioGroup)
+                }
+                Text(separateAgent && tool.supportsIsolatedProfiles ? tool.accountNotice : tool.sharedNotice)
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if tool.launchesInTerminal {
+                    HStack {
+                        Text(project?.path ?? model.home.path).font(.caption).lineLimit(2)
+                        Spacer()
+                        Button("Choose folder…") {
+                            let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true
+                            panel.begin { if $0 == .OK { project = panel.url } }
+                        }
                     }
                 }
             } else if kind.usesTerminal {
@@ -767,7 +792,7 @@ private struct AddProfileSheet: View {
                     Task {
                         do {
                             if kind == .codex { try await model.createProfile(name: name, separateApp: separate, source: source) }
-                            else if kind == .agent, let toolID = choice.toolID { try model.createAgentProfile(toolID: toolID, name: name, project: project) }
+                            else if kind == .agent, let toolID = choice.toolID { try model.createAgentProfile(toolID: toolID, name: name, project: project, separate: separateAgent) }
                             else {
                                 var window: TerminalWindow?
                                 if kind.usesTerminal, !terminalSelection.isEmpty {
@@ -785,7 +810,12 @@ private struct AddProfileSheet: View {
                 }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(ProfileLaunch.newProfile(name: name) == nil || (kind == .terminal && terminalSelection.isEmpty))
             }
         }.padding(28).frame(width: 560).disabled(creating).interactiveDismissDisabled(creating).onAppear { nameFocused = true }
-            .onChange(of: choice) { _, value in terminalSelection = ""; terminalWindows = []; error = nil; if value.provider == .claude { separateClaude = hasSharedClaude } }
+            .onChange(of: choice) { _, value in
+                terminalSelection = ""; terminalWindows = []; error = nil
+                if value.provider == .claude { separateClaude = hasSharedClaude }
+                // Start from the sign-in already on this Mac; a desktop app that already has that entry offers a separate account.
+                if let tool = value.toolID.flatMap(AgentRegistry.tool(id:)) { separateAgent = !tool.launchesInTerminal && hasSharedAgent(tool) }
+            }
             .task(id: choice) {
                 guard kind.usesTerminal else { return }
                 while !Task.isCancelled {
@@ -795,8 +825,15 @@ private struct AddProfileSheet: View {
             }
     }
     private var hasSharedClaude: Bool { model.preferences.profiles.contains { $0.kind == .claude && !$0.usesSeparateClaudeAccount } }
+    private func hasSharedAgent(_ tool: AgentTool) -> Bool {
+        model.preferences.profiles.contains { $0.kind == .agent && $0.agentID == tool.id && !$0.usesIsolatedAgentHome }
+    }
     private var choiceDescription: String {
-        if let selectedTool { return selectedTool.accountNotice }
+        if let selectedTool {
+            return selectedTool.launchesInTerminal
+                ? "Opens \(selectedTool.name) in a new Terminal tab, in the project folder you choose."
+                : "Adds \(selectedTool.name) to the strip. ProfileDock opens the app you already installed."
+        }
         switch kind {
         case .codex: return "Create a separate Codex sign-in, history and settings."
         case .claude: return "Add Claude Desktop to the strip, with your existing sign-in or a separate account."

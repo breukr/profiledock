@@ -330,7 +330,7 @@ struct IslandView: View {
     }
 
     private func activityHelp(_ state: ActivitySummary?, profile: Profile) -> String {
-        if profile.kind == .agent, let tool = profile.agentTool { return tool.accountNotice }
+        if profile.kind == .agent, profile.agentTool != nil { return profile.accountCaption }
         if profile.kind != .codex {
             if model.terminalAgent(for: profile) == .codex { return "Codex is running in this Terminal tab. Per-tab Codex CLI task activity and usage are not reported by this integration." }
             if let tool = model.terminalAgent(for: profile)?.tool, !tool.legacy { return tool.runningHelp }

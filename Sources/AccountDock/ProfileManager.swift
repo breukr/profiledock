@@ -78,11 +78,15 @@ extension DockModel {
     var managedAppsDirectory: URL { home.appendingPathComponent("Applications/ProfileDock Apps", isDirectory: true) }
 
     func applicationURL(for profile: Profile) -> URL? {
-        if profile.kind == .agent {
-            if let bundle = profile.agentTool?.bundleIdentifiers.first, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) { return url }
-            if profile.agentTool?.launchesInTerminal == true { return NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") }
-            return nil
+        if profile.kind == .agent, let tool = profile.agentTool {
+            if tool.launchesInTerminal { return NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") }
+            if let url = tool.bundleIdentifiers.lazy.compactMap({ NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }).first { return url }
+            // Renamed builds (Windsurf / Devin) can be found by their app name.
+            return [URL(fileURLWithPath: "/Applications"), home.appendingPathComponent("Applications")].lazy
+                .flatMap { root in tool.applicationNames.map { root.appendingPathComponent($0) } }
+                .first { FileManager.default.fileExists(atPath: $0.appendingPathComponent("Contents/Info.plist").path) }
         }
+        if profile.kind == .agent { return nil }
         if profile.kind != .codex { return NSWorkspace.shared.urlForApplication(withBundleIdentifier: profile.kind.bundleIdentifier) }
         if let path = profile.applicationPath {
             let url = URL(fileURLWithPath: path)
