@@ -7,21 +7,21 @@ struct AgentIcon: View {
     @ObservedObject var model: DockModel
     let tool: AgentTool
     var size: CGFloat = 28
+    /// Desktop tools show their app icon. Terminal tools show the Terminal mark in the tool's color with the tool's
+    /// badge, exactly as their tiles do; the badge is left out where it would be too small to read.
     var body: some View {
         Group {
-            if let path = model.installedAgent(tool.id)?.applicationPath ?? (tool.launchesInTerminal ? nil : Self.installedApp(tool)) {
-                Image(nsImage: NSWorkspace.shared.icon(forFile: path)).resizable().interpolation(.high)
+            if let path = model.installedAgent(tool.id)?.applicationPath ?? (tool.launchesInTerminal ? nil : model.cachedApplicationPath(tool.bundleIdentifiers)) {
+                Image(nsImage: model.cachedIcon(path)).resizable().interpolation(.high)
             } else {
-                RoundedRectangle(cornerRadius: size * 0.24, style: .continuous).fill(Color(nsColor: NSColor(hex: tool.color)))
-                    .overlay {
-                        Text(Self.monogram(tool)).font(.system(size: size * 0.4, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.white).minimumScaleFactor(0.6).lineLimit(1).padding(size * 0.08)
+                Image(nsImage: model.toolArtwork(tool)).resizable().interpolation(.high)
+                    .overlay(alignment: .topTrailing) {
+                        if size >= 24, tool.launchesInTerminal {
+                            Image(nsImage: model.terminalAgentArtwork(TerminalAgent(rawValue: tool.id))).resizable()
+                                .frame(width: size * 0.46, height: size * 0.46).clipShape(Circle())
+                                .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 1.5)).offset(x: size * 0.12, y: -size * 0.12)
+                        }
                     }
-                    .overlay(alignment: .bottomTrailing) {
-                        Image(systemName: "terminal.fill").font(.system(size: size * 0.24)).foregroundStyle(.white.opacity(0.85)).padding(size * 0.08)
-                            .opacity(size >= 24 ? 1 : 0)
-                    }
-                    .overlay(RoundedRectangle(cornerRadius: size * 0.24, style: .continuous).stroke(Color.primary.opacity(0.12), lineWidth: 0.5))
             }
         }
         .frame(width: size, height: size).accessibilityHidden(true)
@@ -31,9 +31,7 @@ struct AgentIcon: View {
         if words.count > 1, tool.name.count > 8 { return String(words[0].prefix(1) + words[1].prefix(1)).uppercased() }
         return String(tool.name.prefix(2))
     }
-    private static func installedApp(_ tool: AgentTool) -> String? {
-        tool.bundleIdentifiers.lazy.compactMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }.first { !AgentApplications.excluded($0.path) }?.path
-    }
+
 }
 
 enum AgentFilter: String, CaseIterable, Identifiable {
@@ -56,10 +54,8 @@ extension AgentTool {
         guard !query.isEmpty else { return true }
         return ([name, id] + executables + applicationNames).contains { $0.lowercased().contains(query) }
     }
-    var accountSummary: String {
-        if legacy { return "Separate accounts" }
-        return supportsIsolatedProfiles ? "Separate accounts" : "Existing sign-in only"
-    }
+    /// Only the exception is spelled out in lists; the notes say why either way.
+    var accountSummary: String { legacy || supportsIsolatedProfiles ? "" : "Existing sign-in only" }
 }
 
 @MainActor extension DockModel {
@@ -73,8 +69,9 @@ extension AgentTool {
             }
         }
     }
+    /// From the last refresh, so list rows never query running apps themselves.
     func isRunning(_ tool: AgentTool) -> Bool {
-        if tool.bundleIdentifiers.contains(where: { !NSRunningApplication.runningApplications(withBundleIdentifier: $0).filter { !$0.isTerminated }.isEmpty }) { return true }
+        if tool.bundleIdentifiers.contains(where: runningBundles.contains) { return true }
         return companions.windows.contains { $0.agent?.rawValue == tool.id }
     }
     /// Home folder paths read as `~/…` in the interface.
@@ -101,21 +98,20 @@ struct AgentsSettingsView: View {
             GroupBox("Automatic") {
                 VStack(spacing: 0) {
                     SettingsRow(title: "Add running agent apps", detail: "Apps such as Grok Bot or T3 Code get a tile with the sign-in already on this Mac while they run. A tile you remove stays removed.") {
-                        Toggle("Add running agent apps automatically", isOn: Binding(get: { model.preferences.autoAddAgents != false }, set: model.setAutoAddAgents)).labelsHidden()
+                        Toggle("Add running agent apps automatically", isOn: Binding(get: { model.preferences.autoAddAgents != false }, set: model.setAutoAddAgents))
+                            .labelsHidden().toggleStyle(.switch).controlSize(.small)
                     }
                     Divider().padding(.leading, 16)
                     SettingsRow(title: "Find coding terminals", detail: "Terminal tabs running a coding agent appear in the strip while the agent runs.") {
                         Toggle("Automatically find coding terminals", isOn: Binding(get: { model.preferences.discoverTerminals != false }, set: {
                             model.preferences.discoverTerminals = $0; model.save(); model.companions.refresh()
-                        })).labelsHidden()
-                    }
-                    if let error = model.companions.terminalError {
-                        Divider().padding(.leading, 16)
-                        SettingsNotice(text: error, symbol: "lock.trianglebadge.exclamationmark", isWarning: true,
-                                       actionTitle: "Open Privacy Settings", action: { NSWorkspace.shared.open(DockModel.automationSettings) })
-                            .padding(12)
+                        })).labelsHidden().toggleStyle(.switch).controlSize(.small)
                     }
                 }
+            }
+            if let error = model.companions.terminalError {
+                SettingsNotice(text: error, symbol: "lock.trianglebadge.exclamationmark", isWarning: true,
+                               actionTitle: "Open Privacy Settings", action: { NSWorkspace.shared.open(DockModel.automationSettings) })
             }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 10) { searchField.frame(minWidth: 150, maxWidth: 240); filterPicker.fixedSize(); Spacer(minLength: 0); scanButton }
@@ -161,7 +157,7 @@ struct AgentsSettingsView: View {
     }
     private var scanButton: some View {
         HStack(spacing: 8) {
-            if model.agentScanTask != nil { ProgressView().controlSize(.small).accessibilityLabel("Looking for coding tools") }
+            if model.agentScanTask != nil, model.installedAgents != nil { ProgressView().controlSize(.small).accessibilityLabel("Looking for coding tools") }
             Button { model.scanAgents(force: true) } label: { Image(systemName: "arrow.clockwise") }
                 .disabled(model.agentScanTask != nil).help("Look for coding tools again. ProfileDock checks only file and app locations.")
                 .accessibilityLabel("Scan for coding tools again")
@@ -204,13 +200,15 @@ struct AgentToolRow: View {
                 HStack(spacing: 6) {
                     Text(tool.name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
                     if running { StatusCapsule(text: "Running", color: .green) }
+                    else if found?.isInstalled != true, !entries.isEmpty { StatusCapsule(text: "Not installed", color: .orange) }
                     if (found?.applications.count ?? 0) > 1 { StatusCapsule(text: "\(found!.applications.count) copies", color: .secondary) }
                 }
                 Text(detail(found)).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                     .help(detail(found))
             }.frame(maxWidth: .infinity, alignment: .leading)
-            Text(tool.accountSummary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                .help(tool.legacy ? "ProfileDock keeps separate accounts for this tool." : tool.accountNotice)
+            if !tool.accountSummary.isEmpty {
+                Text(tool.accountSummary).font(.caption).foregroundStyle(.secondary).lineLimit(1).help(tool.accountNotice)
+            }
             Button { showingNotes = true } label: { Image(systemName: "info.circle") }
                 .buttonStyle(.borderless).help("Notes about \(tool.name)").accessibilityLabel("Notes about \(tool.name)")
                 .popover(isPresented: $showingNotes, arrowEdge: .trailing) { notes(found) }
@@ -221,11 +219,14 @@ struct AgentToolRow: View {
     }
 
     @ViewBuilder private func action(found: InstalledAgent?, entries: [Profile]) -> some View {
-        if !entries.isEmpty {
+        if !entries.isEmpty, found?.isInstalled != true, !model.isRunning(tool), let url = URL(string: tool.documentation) {
+            // In ProfileDock, but its command or app is gone: the fix comes first.
+            Link("Get…", destination: url).font(.callout).help(model.missingToolMessage(tool)).accessibilityLabel("Get \(tool.name)")
+        } else if !entries.isEmpty {
             Label(entries.count == 1 ? "Added" : "\(entries.count) added", systemImage: "checkmark.circle.fill")
                 .font(.caption.weight(.medium)).foregroundStyle(.secondary).labelStyle(.titleAndIcon)
                 .accessibilityLabel("\(tool.name) is in ProfileDock")
-        } else if found?.isInstalled == true {
+        } else if found?.isInstalled == true || model.isRunning(tool) {
             if tool.legacy {
                 Button("Add…") { addProfile(tool.id) }.accessibilityLabel("Add \(tool.name)")
             } else {
@@ -260,16 +261,23 @@ struct AgentToolRow: View {
                 Text("Copies found, the first one opens:\n" + copies.map { "• " + model.displayPath($0.path) + ($0.version.map { " (\($0))" } ?? "") }.joined(separator: "\n"))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            if found?.isInstalled != true, let hint = tool.installHint {
-                HStack {
-                    Text(hint).font(.system(.caption, design: .monospaced)).textSelection(.enabled).lineLimit(2)
-                    Spacer(minLength: 4)
-                    Button { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(hint, forType: .string) } label: { Image(systemName: "doc.on.doc") }
-                        .buttonStyle(.borderless).help("Copy the install command").accessibilityLabel("Copy the install command for \(tool.name)")
-                }.padding(8).background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
-            }
+            if found?.isInstalled != true, let hint = tool.installHint { InstallCommand(tool: tool, command: hint) }
             if let url = URL(string: tool.documentation) { Link("\(tool.name) documentation", destination: url).font(.callout) }
         }.padding(16).frame(width: 340, alignment: .leading)
+    }
+}
+
+/// A copyable install command in a monospaced box.
+struct InstallCommand: View {
+    let tool: AgentTool
+    let command: String
+    var body: some View {
+        HStack {
+            Text(command).font(.system(.caption, design: .monospaced)).textSelection(.enabled).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            Button { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(command, forType: .string) } label: { Label("Copy", systemImage: "doc.on.doc") }
+                .labelStyle(.iconOnly).buttonStyle(.borderless).help("Copy the install command").accessibilityLabel("Copy the install command for \(tool.name)")
+        }.padding(8).background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
     }
 }
 

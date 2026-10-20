@@ -59,7 +59,7 @@ public struct AgentTool: Sendable, Equatable, Identifiable {
         case .environmentDirectory(let variable):
             return Self.isolatedNotice(name: name, mechanism: "folder (\(variable))") + Self.detailSentence(detail)
         case .userDataDirectory:
-            return "Opens its own \(name) window with a separate sign-in and app data in Account Dock. Both accounts can stay open at the same time. Sign in from \(name) the first time it opens. ProfileDock does not store the API key or token." + Self.detailSentence(detail)
+            return "Opens its own \(name) window with a separate sign-in and app data, kept by ProfileDock. Both accounts can stay open at the same time. Sign in from \(name) the first time it opens. ProfileDock does not store the API key or token." + Self.detailSentence(detail)
         case .unsupported(let reason):
             return "Separate accounts aren't supported for \(name). ProfileDock can open it, and it keeps using the sign-in already on this Mac. \(reason)"
         }
@@ -79,7 +79,7 @@ public struct AgentTool: Sendable, Equatable, Identifiable {
     }
 
     private static func isolatedNotice(name: String, mechanism: String) -> String {
-        "This profile has its own \(name) \(mechanism) in Account Dock. Sign in from \(name) the first time it opens. ProfileDock does not store the API key or token."
+        "This profile has its own \(name) \(mechanism), kept in ProfileDock's app data. Sign in from \(name) the first time it opens. ProfileDock does not store the API key or token."
     }
     private static func detailSentence(_ detail: String?) -> String {
         guard let detail, !detail.isEmpty else { return "" }

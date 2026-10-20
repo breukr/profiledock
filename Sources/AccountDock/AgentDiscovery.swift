@@ -76,7 +76,7 @@ enum AgentAvailability: Equatable {
             return "\(tool.name) isn’t installed. Install it in Applications, then try again."
         }
         let command = tool.preferredExecutable.map { "“\($0)”" } ?? tool.name
-        let install = tool.installHint.map { " Install it with \($0), then try again." } ?? " Install it, then try again."
+        let install = tool.installHint.map { " Install it with this command, then open it again:\n\($0)" } ?? " Install it, then open it again."
         return "ProfileDock can’t find \(command) in the usual install folders." + install
     }
 
@@ -189,6 +189,34 @@ enum AgentAvailability: Equatable {
     func savedTerminalTool(_ profile: Profile) -> TerminalAgent? {
         guard profile.kind == .agent, let tool = profile.agentTool, tool.launchesInTerminal else { return nil }
         return TerminalAgent(rawValue: tool.id)
+    }
+
+    /// The first installed copy for these bundle ids, looked up once. A miss is retried after apps launch or quit.
+    func cachedApplicationPath(_ bundles: [String]) -> String? {
+        let key = bundles.joined(separator: ",")
+        if let path = applicationPathCache[key] { return path }
+        guard !missingApplicationCache.contains(key) else { return nil }
+        let path = bundles.lazy.compactMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }.first { !AgentApplications.excluded($0.path) }?.path
+        if let path { applicationPathCache[key] = path } else { missingApplicationCache.insert(key) }
+        return path
+    }
+
+    func cachedIcon(_ path: String) -> NSImage {
+        if let icon = iconCache[path] { return icon }
+        let icon = NSWorkspace.shared.icon(forFile: path)
+        iconCache[path] = icon
+        return icon
+    }
+
+    /// The Terminal mark in a terminal tool's color, the same artwork its tiles use.
+    func toolArtwork(_ tool: AgentTool) -> NSImage {
+        if let image = toolArtworkCache[tool.id] { return image }
+        var profile = Profile(id: tool.id, name: tool.name, color: tool.color)
+        profile.dockIconStyle = .chatgpt
+        let vendor = cachedApplicationPath(["com.apple.Terminal"]).map(cachedIcon)
+        let image = NativeProfileArtwork.preview(profile: profile, image: nil, vendor: vendor, margin: 0)
+        toolArtworkCache[tool.id] = image
+        return image
     }
 
     static let automationSettings = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")!

@@ -8,7 +8,8 @@ struct FoundAgentsCard: View {
     var compact = false
     let review: () -> Void
     private var offers: [InstalledAgent] {
-        AgentAutoAdd.offers(installed: model.installedAgents ?? [], profiles: model.preferences.profiles, dismissed: Set(model.preferences.dismissedAgentTools ?? []))
+        AgentAutoAdd.offers(installed: model.installedAgents ?? [], profiles: model.preferences.profiles,
+                            dismissed: Set((model.preferences.dismissedAgentTools ?? []) + (model.preferences.hiddenAgentOffers ?? [])))
     }
     var body: some View {
         let offers = self.offers
@@ -20,7 +21,7 @@ struct FoundAgentsCard: View {
                         Spacer()
                         if !compact {
                             Button("Not Now") { dismiss(offers) }.buttonStyle(.borderless)
-                                .help("Stop suggesting these tools. You can still add them from Coding Agents.")
+                                .help("Stop suggesting these tools here. You can still add them from Coding Agents.")
                         }
                     }
                     Text(offers.count == 1 ? "\(offers[0].tool.name) is installed but not in ProfileDock yet." : "\(offers.count) coding tools are installed but not in ProfileDock yet.")
@@ -47,10 +48,11 @@ struct FoundAgentsCard: View {
         }
     }
     @ViewBuilder private func review(_ more: Bool) -> some View {
-        Button(more ? "See All…" : "Review…", action: review).buttonStyle(.borderless)
+        Button(more ? "See All in Coding Agents…" : "Coding Agents…", action: review).buttonStyle(.borderless)
     }
     private func dismiss(_ offers: [InstalledAgent]) {
-        model.preferences.dismissedAgentTools = Array(Set((model.preferences.dismissedAgentTools ?? []) + offers.map(\.id))).sorted()
+        // Only suggestions: automatic adding of running apps keeps its own setting and removals.
+        model.preferences.hiddenAgentOffers = Array(Set((model.preferences.hiddenAgentOffers ?? []) + offers.map(\.id))).sorted()
         model.save()
     }
 }
@@ -67,7 +69,9 @@ struct WrappingStack: Layout {
         for row in arrange(width: bounds.width, subviews: subviews) {
             var x = bounds.minX
             for index in row.items {
-                let size = subviews[index].sizeThatFits(.unspecified)
+                var size = subviews[index].sizeThatFits(.unspecified)
+                // An item wider than the row is offered the row's width, so it truncates instead of overflowing.
+                if size.width > bounds.width { size = subviews[index].sizeThatFits(ProposedViewSize(width: bounds.width, height: nil)); size.width = min(size.width, bounds.width) }
                 subviews[index].place(at: CGPoint(x: x, y: y + (row.height - size.height) / 2), proposal: ProposedViewSize(size))
                 x += size.width + spacing
             }
@@ -77,7 +81,8 @@ struct WrappingStack: Layout {
     private func arrange(width: CGFloat, subviews: Subviews) -> [(items: [Int], width: CGFloat, height: CGFloat)] {
         var rows: [(items: [Int], width: CGFloat, height: CGFloat)] = []
         for index in subviews.indices {
-            let size = subviews[index].sizeThatFits(.unspecified)
+            var size = subviews[index].sizeThatFits(.unspecified)
+            size.width = min(size.width, width)
             if let last = rows.last, last.width + spacing + size.width <= width {
                 rows[rows.count - 1] = (last.items + [index], last.width + spacing + size.width, max(last.height, size.height))
             } else { rows.append(([index], size.width, size.height)) }
@@ -114,7 +119,11 @@ struct RemoveProfileSheet: View {
     let done: () -> Void
     /// A shared desktop agent entry owns no data, so it can go while its app stays open.
     private var ownsNothing: Bool { profile.kind == .agent && !profile.usesIsolatedAgentHome && profile.agentTool?.launchesInTerminal == false }
-    private var isOpen: Bool { !ownsNothing && (model.running[profile.id]?.isEmpty == false || model.opening.contains(profile.id)) }
+    private var isOpen: Bool {
+        model.opening.contains(profile.id) || model.nativeDockOperations.contains(profile.id) || (!ownsNothing && model.running[profile.id]?.isEmpty == false)
+    }
+    /// When Terminal or a process cannot be read, an account folder may still be in use, so it is not offered for the Trash.
+    private var uncertain: Bool { model.companions.terminalError != nil || model.unreadableProcesses }
     /// Only folders ProfileDock created for this profile can go to the Trash.
     private var ownsData: Bool {
         guard profile.id.hasPrefix("profile-") else { return false }
@@ -125,7 +134,12 @@ struct RemoveProfileSheet: View {
             Text("Remove \(profile.name)?").font(.title2.weight(.semibold))
             Text(summary).fixedSize(horizontal: false, vertical: true)
             if ownsData {
-                Toggle(profile.kind == .codex ? "Also move this profile's data and managed app copy to the Trash" : "Also move this account's folder to the Trash", isOn: $trashData)
+                Toggle(profile.kind == .codex ? "Also move this profile’s data and managed app copy to the Trash" : "Also move this account’s folder to the Trash", isOn: $trashData)
+                    .disabled(uncertain)
+                if uncertain {
+                    Text("ProfileDock can’t check right now whether this account is still in use, so its folder stays where it is.")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
                 if trashData, profile.kind != .codex {
                     Text("Its sign-in, settings and history for this profile go to the Trash. You can restore them from there.")
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -139,7 +153,7 @@ struct RemoveProfileSheet: View {
                 Spacer()
                 Button("Cancel", action: done).keyboardShortcut(.cancelAction)
                 Button("Remove", role: .destructive) {
-                    do { try model.removeProfile(profile, trashData: trashData && ownsData); done() }
+                    do { try model.removeProfile(profile, trashData: trashData && ownsData && !uncertain); done() }
                     catch { model.message = error.localizedDescription; done() }
                 }.disabled(isOpen)
             }

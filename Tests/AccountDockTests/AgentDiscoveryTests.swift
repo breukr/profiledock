@@ -116,6 +116,14 @@ final class AgentDiscoveryTests: XCTestCase {
         XCTAssertEqual(model.preferences.profiles.filter { $0.agentID == "grok-bot" }.map(\.name), ["Work"])
     }
 
+    @MainActor func testNotNowHidesSuggestionsButKeepsAutomaticAdding() async throws {
+        let model = DockModel(home: try home())
+        model.preferences.hiddenAgentOffers = ["grok-bot"]
+        model.autoAdd(running: [grokBot])
+        await settle()
+        XCTAssertEqual(model.preferences.profiles.map(\.agentID), ["grok-bot"])
+    }
+
     @MainActor func testTheSettingAlsoStopsTheStartupClaudeDesktopEntry() async throws {
         let model = DockModel(home: try home())
         model.setAutoAddAgents(false)
