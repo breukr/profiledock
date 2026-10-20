@@ -31,6 +31,7 @@ public struct ContextConnection: Sendable {
     }
     private func entry(_ profile: ContextProfile) throws -> [String: Any]? {
         if profile.kind != .codex {
+            guard profile.kind != .agent else { throw ContextError.message("This tool does not connect to ProfileDock context.") }
             guard profile.kind == .claude else { throw ContextError.message("Connect through your Claude Desktop entry. Claude Code shares one user configuration across Terminal and Desktop.") }
             let config = profile.claudeConfiguration(in: registry.home)
             guard FileManager.default.fileExists(atPath: config.path) else { return nil }

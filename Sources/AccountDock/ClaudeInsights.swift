@@ -66,7 +66,7 @@ final class ClaudeInsightsScanner {
 
     func scan(profiles: [Profile], home: URL, cutoff: Date) throws -> InsightsScan {
         // Separate Claude accounts keep their transcripts outside ~/.claude and are not attributed here.
-        let entries = profiles.filter { $0.kind != .codex && !$0.usesSeparateClaudeAccount }.sorted { $0.id < $1.id }
+        let entries = profiles.filter { $0.kind != .codex && $0.kind != .agent && !$0.usesSeparateClaudeAccount }.sorted { $0.id < $1.id }
         guard !entries.isEmpty else { records.removeAll(); return InsightsScan() }
         let configuration = entries.map { [$0.id, $0.kind.rawValue, $0.projectPath ?? "", $0.claudeSessionID ?? ""].joined(separator: "\n") }.joined(separator: "\0")
         let signature = digest(Data(configuration.utf8))

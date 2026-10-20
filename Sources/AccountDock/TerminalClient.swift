@@ -11,7 +11,7 @@ struct TerminalWindow: Codable, Identifiable, Equatable, Sendable {
     var suggestionLabel: String { [agent?.label ?? "", title, tty].joined(separator: " · ") }
     var id: String { "\(windowID):\(tty)" }
     func matches(_ profile: Profile, processStarted: Double?) -> Bool {
-        profile.kind.usesTerminal && profile.terminalTTY == tty && profile.terminalWindowID == windowID
+        profile.tracksTerminalWindow && profile.terminalTTY == tty && profile.terminalWindowID == windowID
             && processStarted != nil && profile.terminalProcessStarted == processStarted
     }
 }
@@ -96,7 +96,11 @@ actor TerminalClient {
     func open(project: String, agent: TerminalAgent? = nil) async throws -> TerminalWindow {
         var directory: ObjCBool = false
         guard project.hasPrefix("/"), !project.contains("\0"), FileManager.default.fileExists(atPath: project, isDirectory: &directory), directory.boolValue else { throw CompanionError.message("Choose an existing project folder.") }
-        let command = "cd -- " + ClaudeBridgeSettings.shellQuote(project) + (agent.map { " && " + $0.rawValue } ?? "")
+        guard let command = AgentLaunch.terminalCommand(project: project, agent: agent) else { throw CompanionError.message("Choose an existing project folder.") }
+        return try await open(command: command)
+    }
+    func open(command: String) async throws -> TerminalWindow {
+        guard command.hasPrefix("cd -- "), !command.contains("\n"), !command.contains("\0"), command.utf8.count < 16_384 else { throw CompanionError.message("The launch command was rejected.") }
         return try JSONDecoder().decode(TerminalWindow.self, from: await run(["open", command]))
     }
     func select(_ window: TerminalWindow) async throws { _ = try await run(["select", String(window.windowID), window.tty]) }
