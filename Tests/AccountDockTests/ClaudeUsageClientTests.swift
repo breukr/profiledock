@@ -186,4 +186,29 @@ final class ClaudeUsageClientTests: XCTestCase {
         XCTAssertNil(second.bankedResets)
         XCTAssertEqual(second.windows, first.windows)
     }
+
+
+    func testClaudeAppTileRejectsUsageFromAnotherAccount() async throws {
+        let account = account, usage = usage, credential = credential()
+        ClaudeResponseProtocol.handler = { request in (200, request.url!.path.hasSuffix("profile") ? account : usage, [:]) }
+        // The Claude app is signed in to another account than the Claude Code sign-in that the endpoint reports.
+        let client = ClaudeUsageClient(session: session(), credentials: { credential }, resetFetcher: { _ in nil },
+                                       expectedAccount: { $0.kind == .claude ? "33333333-3333-3333-3333-333333333333" : nil })
+        do { _ = try await client.identity(for: profile); XCTFail("Another account's usage must not reach the Claude app tile") }
+        catch { XCTAssertEqual(error as? UsageLoadError, .claudeOtherAccount) }
+        // A Claude Code project tile runs on that sign-in itself, so it still shows its usage.
+        var code = profile; code.provider = .claudeCode
+        let identity = try await client.identity(for: code)
+        let reading = try await client.fetch(code, expectedIdentity: identity)
+        XCTAssertEqual(reading.windows.first?.usedPercent, 35)
+        do { _ = try await client.fetch(profile, expectedIdentity: identity); XCTFail("Cached readings are checked per tile too") }
+        catch { XCTAssertEqual(error as? UsageLoadError, .claudeOtherAccount) }
+        let error = UsageLoadError.claudeOtherAccount
+        XCTAssertTrue(error.clearsSnapshot); XCTAssertTrue(error.offersReconnect); XCTAssertFalse(error.needsSignIn)
+        XCTAssertEqual(error.statusLabel, "Claude Code uses another account")
+        // The same account, in any letter case, passes.
+        let matching = ClaudeUsageClient(session: session(), credentials: { credential }, resetFetcher: { _ in nil },
+                                         expectedAccount: { _ in "11111111-1111-1111-1111-111111111111" })
+        _ = try await matching.identity(for: profile)
+    }
 }

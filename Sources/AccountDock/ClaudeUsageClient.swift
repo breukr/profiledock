@@ -67,8 +67,12 @@ struct ClaudeUsageAccount: Sendable {
 actor ClaudeUsageClient: UsageFetching {
     typealias Credentials = @Sendable () throws -> ClaudeUsageCredential
     typealias ResetFetcher = @Sendable (ClaudeUsageAccount) async throws -> ClaudeUsageParser.ResetInventory?
+    /// The account a tile's own Claude app is signed in to, or nil when the tile has no app of its own to compare with.
+    typealias ExpectedAccount = @Sendable (Profile) -> String?
+    static let desktopAccount: ExpectedAccount = { ClaudeDesktopAccount.accountID(for: $0, home: FileManager.default.homeDirectoryForCurrentUser) }
     private let resetFetcher: ResetFetcher
     private let credentials: Credentials
+    private let expectedAccount: ExpectedAccount?
     private let session: URLSession
     private let clock: @Sendable () -> Date
     private var accountCache: (fingerprint: String, account: ClaudeUsageAccount)?
@@ -78,9 +82,10 @@ actor ClaudeUsageClient: UsageFetching {
     private var retryAfter: Date?
 
     /// One client per Claude Code configuration: nil is the shared ~/.claude sign-in, otherwise a separate account's CLAUDE_CONFIG_DIR.
-    init(configDirectory: String? = nil, session: URLSession? = nil, credentials: Credentials? = nil, clock: @escaping @Sendable () -> Date = { Date() }, resetFetcher: ResetFetcher? = nil) {
+    init(configDirectory: String? = nil, session: URLSession? = nil, credentials: Credentials? = nil, clock: @escaping @Sendable () -> Date = { Date() }, resetFetcher: ResetFetcher? = nil, expectedAccount: ExpectedAccount? = nil) {
         self.credentials = credentials ?? { try ClaudeUsageCredential.read(configDirectory: configDirectory) }
         self.resetFetcher = resetFetcher ?? { try await ClaudeResetConnection.connection(configDirectory: configDirectory).inventory(for: $0) }
+        self.expectedAccount = expectedAccount
         self.clock = clock
         if let session { self.session = session }
         else {
@@ -98,14 +103,16 @@ actor ClaudeUsageClient: UsageFetching {
 
     func identity(for profile: Profile) async throws -> String {
         let credential = try credentials()
-        let identity = try await account(for: credential).identity
+        let account = try await account(for: credential)
         guard try credentials().fingerprint == credential.fingerprint else { throw UsageLoadError.accountChanged }
-        return identity
+        try verify(account, for: profile)
+        return account.identity
     }
 
     func fetch(_ profile: Profile, expectedIdentity: String) async throws -> UsageSnapshot {
         let credential = try credentials(), account = try await account(for: credential)
         guard try credentials().fingerprint == credential.fingerprint else { throw UsageLoadError.accountChanged }
+        try verify(account, for: profile)
         guard account.identity == expectedIdentity else { throw UsageLoadError.accountChanged }
         if let retryAfter, retryAfter > clock() { throw UsageLoadError.rateLimited(retryAfter) }
         // Shared Desktop/project tiles coalesce onto one account request, including manual refresh.
@@ -118,6 +125,13 @@ actor ClaudeUsageClient: UsageFetching {
         let value = try await task.value
         try Task.checkCancellation()
         snapshot = value; return value
+    }
+
+    /// A Claude app tile shows only its own account's usage. Claude Code's sign-in can belong to another account,
+    /// for example after `claude auth login` in a browser that was signed in to claude.ai as someone else.
+    private func verify(_ account: ClaudeUsageAccount, for profile: Profile) throws {
+        guard let expected = expectedAccount?(profile), expected != account.accountID.lowercased() else { return }
+        throw UsageLoadError.claudeOtherAccount
     }
 
     private func account(for credential: ClaudeUsageCredential) async throws -> ClaudeUsageAccount {

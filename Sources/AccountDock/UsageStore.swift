@@ -42,7 +42,7 @@ final class UsageStore: ObservableObject {
     private var visibleScreens: Set<String> = []
     private var timer: Timer?
 
-    init(client: any UsageFetching = UsageClient(), claudeClient: any UsageFetching = ClaudeUsageClient(), claudeAccountClient: @escaping (String) -> any UsageFetching = { ClaudeUsageClient(configDirectory: $0) }, backgroundInterval: TimeInterval = 300, signInRunner: any AccountSigningIn = AccountSignInRunner(), signInCommand: @escaping (Profile, URL) throws -> AccountSignInCommand = { try AccountSignInCommand.make(profile: $0, home: $1) }, home: URL = FileManager.default.homeDirectoryForCurrentUser) {
+    init(client: any UsageFetching = UsageClient(), claudeClient: any UsageFetching = ClaudeUsageClient(expectedAccount: ClaudeUsageClient.desktopAccount), claudeAccountClient: @escaping (String) -> any UsageFetching = { ClaudeUsageClient(configDirectory: $0, expectedAccount: ClaudeUsageClient.desktopAccount) }, backgroundInterval: TimeInterval = 300, signInRunner: any AccountSigningIn = AccountSignInRunner(), signInCommand: @escaping (Profile, URL) throws -> AccountSignInCommand = { try AccountSignInCommand.make(profile: $0, home: $1) }, home: URL = FileManager.default.homeDirectoryForCurrentUser) {
         self.client = client; self.claudeClient = claudeClient; self.makeClaudeAccountClient = claudeAccountClient; self.backgroundInterval = backgroundInterval
         self.home = home
         self.signInRunner = signInRunner

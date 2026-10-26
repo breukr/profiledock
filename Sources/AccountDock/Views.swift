@@ -320,8 +320,8 @@ struct IslandView: View {
                             .font(.system(size: 9, weight: .medium)).buttonStyle(.plain).foregroundStyle(.orange)
                             .disabled(usage.isReconnecting(profile)).accessibilityLabel("Reconnect \(profile.name)")
                             .help(usage.reconnectionMessages[usage.connectionKey(profile)] ?? "Open sign-in for this account. Usage refreshes automatically when you finish.")
-                    } else if error == .claudeConnectionNeeded {
-                        Button(usage.isReconnecting(profile) ? "Finish in browser…" : "Connect…") { usage.reconnect(profile, home: model.home) }
+                    } else if error == .claudeConnectionNeeded || error == .claudeOtherAccount {
+                        Button(usage.isReconnecting(profile) ? "Finish in browser…" : error == .claudeOtherAccount ? "Reconnect" : "Connect…") { usage.reconnect(profile, home: model.home) }
                             .font(.system(size: 9, weight: .medium)).buttonStyle(.plain).foregroundStyle(.white.opacity(0.75))
                             .disabled(usage.isReconnecting(profile)).accessibilityLabel("Connect usage for \(profile.name)")
                             .help(usage.reconnectionMessages[usage.connectionKey(profile)] ?? error.message)
@@ -346,12 +346,12 @@ struct IslandView: View {
             }
             .frame(maxWidth: .infinity, minHeight: IslandLayout.usageHeight(rows: snapshot?.windows.count ?? 1), maxHeight: IslandLayout.usageHeight(rows: snapshot?.windows.count ?? 1), alignment: .topLeading)
             .help(usageSource(profile, statusLine: statusLine != nil) + (snapshot.map { "Updated at \(Self.absoluteDate($0.fetchedAt))." } ?? "Usage for this account."))
-            if profile.usesClaudeAccountUsage && entry?.error == .claudeConnectionNeeded {
+            if profile.usesClaudeAccountUsage && (entry?.error == .claudeConnectionNeeded || entry?.error == .claudeOtherAccount) {
                 if statusLine != nil {
                     Button("Connect usage…") { usage.reconnect(profile, home: model.home) }
                         .font(.system(size: 10)).buttonStyle(.plain).foregroundStyle(.white.opacity(0.65)).frame(height: 20)
                         .disabled(usage.isReconnecting(profile)).help(entry?.error?.message ?? "")
-                } else { Text("Separate account").font(.system(size: 10)).foregroundStyle(.white.opacity(0.55)).frame(height: 20) }
+                } else { Text(profile.usesSeparateClaudeAccount ? "Separate account" : " ").font(.system(size: 10)).foregroundStyle(.white.opacity(0.55)).frame(height: 20) }
             } else if profile.usesClaudeAccountUsage && snapshot?.bankedResets == nil {
                 Button("Connect saved resets…") { ClaudeResetConnection.connection(configDirectory: usage.claudeConfigPath(profile)).connect() }
                     .font(.system(size: 10)).buttonStyle(.plain).foregroundStyle(.white.opacity(0.65)).frame(height: 20)

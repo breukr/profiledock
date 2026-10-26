@@ -370,4 +370,21 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertNil(store.entries[a.id]?.error)
     }
 
+
+    func testAnotherAccountsSignInClearsTheClaudeAppReadingWithoutANudge() async throws {
+        var profile = a; profile.provider = .claude
+        let client = FixtureUsageClient()
+        let store = UsageStore(claudeClient: client)
+        defer { store.shutdown() }
+        var nudges = 0
+        store.onConnectionLost = { _ in nudges += 1 }
+        store.configure([profile]); store.refreshAll()
+        try await eventually { store.entries[profile.id]?.snapshot != nil }
+        await client.setIdentityFailure(.claudeOtherAccount)
+        store.refresh(profile, force: true)
+        try await eventually { store.entries[profile.id]?.error == .claudeOtherAccount }
+        XCTAssertNil(store.entries[profile.id]?.snapshot, "Another account's limits never stay on the tile")
+        XCTAssertEqual(nudges, 0)
+        XCTAssertTrue(store.disconnectedProfiles.isEmpty)
+    }
 }
