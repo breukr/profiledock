@@ -4,11 +4,25 @@ Coding terminals are discovered automatically, even before any terminal profile 
 
 Add Claude Desktop, a Claude Code project, or an Apple Terminal tab from **Profiles → Add Profile → App**. These entries share the strip, colors, custom artwork, keyboard shortcuts, Finder shortcuts and ordering with Codex profiles.
 
-Only open Terminal tabs with a foreground Claude Code or Codex process appear in the strip or terminal suggestions. Idle shells, stopped/background agents and closed tabs are excluded. A small circular agent logo on the upper-right corner of the Terminal icon identifies the active tool, including when it changes in the same tab. Detection reads process executable names, TTYs and foreground state, never command arguments or terminal contents. The picker refreshes while open and revalidates a selection before saving it.
+Only open Terminal tabs with a foreground coding-agent process appear in the strip or terminal suggestions. Claude Code and Codex are recognized, and so is every terminal tool in [AGENT-COVERAGE.md](AGENT-COVERAGE.md). Idle shells, stopped/background processes and closed tabs are excluded. A small circular agent logo on the upper-right corner of the Terminal icon identifies the active tool, including when it changes in the same tab. Detection reads process executable names, TTYs and foreground state. Tools that run under `node` or `python` are identified from that process's argv, which names the installed script; a shared command name such as `pi` or `agent` counts only when its install path names the tool. Detection never reads a process environment or terminal contents. The picker refreshes while open and revalidates a selection before saving it.
+
+Saved profiles for Grok Bot, Grok Build, Hermes, Gemini CLI, and OpenCode use either the sign-in already on this Mac or a separate account in their own Account Dock folder. A terminal tool opens in a new Terminal tab in the profile's project folder; if its command is not in a usual install location, the Terminal login shell finds it on your own `PATH`. Other recognized tools open with the existing sign-in and say that separate accounts aren't supported. ProfileDock does not store API keys or tokens for any of them. Claude and Codex keep the launch and storage behavior described below.
 
 Saved projects remain in Profiles settings so they can be reopened. Hidden terminals do not consume strip space or keyboard shortcuts. Order is stored independently of visibility. Codex terminal support covers detection, branding and window control; per-tab Codex CLI activity/usage is unavailable rather than borrowed from an unrelated desktop account.
 
 Drag the dotted handle on a tile or profile row to reorder it. A floating card follows the pointer, the original fades, and an insertion line indicates before/after the highlighted destination. Escape cancels. Reduced Motion disables movement animations. The new order is saved when you drop; cancelling or dropping outside keeps the old order. Hover over the page arrows while dragging to reach another page. Move earlier/later actions remain available through the tile menu and accessibility actions.
+
+## Other terminal apps
+
+Coding sessions in other terminals appear in the **Terminals** section too, found by their TTY: iTerm2, Ghostty, Warp, Alacritty, kitty, WezTerm, the terminals inside VS Code, Cursor, Zed and Claude, and panes inside tmux or screen. ProfileDock reads the same process facts as for Terminal.app plus each process's parent, and walks up from the session to the app that owns it. Each tile shows that app's icon with the agent's badge and **Running in** the app's name.
+
+- **iTerm2:** clicking the tile selects that exact session through iTerm2's scripting. macOS asks once for permission to control iTerm2; without it the app comes forward and a notice links to Privacy settings.
+- **Other apps:** Ghostty, Warp and editor terminals have no scripting for tabs, so ProfileDock brings the app forward as it was.
+- **tmux and screen:** a pane cannot be selected from outside, so the tile says which TTY it is on.
+- **Opening and closing:** new sessions always open in Terminal.app, and ProfileDock closes only Terminal.app windows. Other apps keep control of their own sessions.
+- **Terminal.app without Automation:** its coding sessions are still found this way and can be brought forward, though not selected or closed by tab.
+
+SSH sessions to other machines and agents running without a terminal (for example inside Claude Desktop's own Code view) are not included.
 
 ## Grid layout
 

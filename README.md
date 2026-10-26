@@ -10,7 +10,7 @@
 
 ProfileDock puts your ChatGPT and Codex profiles within reach on every screen. Switch accounts, search local conversations, check usage, and see which tasks need your attention.
 
-ProfileDock also supports **Claude Desktop, Claude Code projects and Apple Terminal tabs**, including separate Claude accounts that stay signed in side by side. Drag the handles in the strip or profile list to save a new order. See [Claude and Terminal setup, scope and provider differences](docs/CLAUDE-TERMINAL.md).
+ProfileDock also supports **Claude Desktop, Claude Code projects and Apple Terminal tabs**, including separate Claude accounts that stay signed in side by side. It recognizes other coding agents that are installed or running in Terminal. Drag the handles in the strip or profile list to save a new order. See [Claude and Terminal setup, scope and provider differences](docs/CLAUDE-TERMINAL.md).
 
 **Free. Open source. Mac-native. Made by [Breukr](https://github.com/breukr).**
 
@@ -24,6 +24,19 @@ ProfileDock also supports **Claude Desktop, Claude Code projects and Apple Termi
 - **Fits your Mac.** Use the notch/menu bar, or drag a floating launcher anywhere on each display. Keep the notch free for other apps. Tiles adapt into rows, with pages for more accounts.
 - **Saved resets, explained.** Expand the resets row for an oldest-first expiry countdown.
 - **See your activity over time.** Expand Usage insights for tokens, API-equivalent estimates, and session activity. Compare Today, 7 days, or 30 days for one account or all local profiles.
+
+## Supported tools
+
+ProfileDock recognizes 35 coding agents: the commands and apps people use in October 2026, including Claude Code, Codex, Grok, Hermes, Gemini CLI, OpenCode, pi, Qwen Code, Crush, Kilo Code, Cline, Continue, OpenHands, Mistral Vibe, Kimi Code, Copilot CLI, Aider, Amp, Cursor, Factory Droid, Auggie, T3 Code, Conductor, Antigravity, Kiro, Zed and Warp. The full list, with how each is detected and why separate accounts are or aren't offered, is in [docs/AGENT-COVERAGE.md](docs/AGENT-COVERAGE.md).
+
+It finds installed commands in Homebrew, `~/.local/bin` and the global bins of npm, nvm, fnm, mise, asdf, Volta, Bun and pnpm, and desktop apps through Launch Services, including renamed copies. Running agent apps get a tile on their own with the sign-in already on your Mac; installed tools are offered with one click in **Profiles** and **Settings → Coding Agents**, which also lists what was found, where, and each tool's account notes. Coding sessions in Terminal appear while they run. Removing an automatic tile keeps it removed, and one switch turns automatic adding off.
+
+Add a tool from **Profiles → Add Profile**. Where the tool supports it, choose **Existing sign-in** to use the account already on this Mac, or **Separate account** for a second sign-in side by side. A separate account gets its own folder under `~/Library/Application Support/Account Dock/Companions`; ProfileDock points the tool at that folder and does not store the API key or token. You sign in from the tool. Tools without a clean per-account folder open with the existing sign-in and say so.
+
+| Separate accounts | Tools |
+| --- | --- |
+| Yes | ChatGPT / Codex, Claude Desktop, Grok Bot, Grok Build, Hermes, Gemini CLI, OpenCode, pi, Qwen Code, Crush, Kilo Code CLI, Cline CLI, Continue CLI, OpenHands CLI, Mistral Vibe, Kimi Code |
+| Existing sign-in only | GitHub Copilot CLI, Aider, Amp, Cursor CLI, Cursor, Windsurf / Devin, Goose, Factory Droid, Augment Auggie, Codebuff, Junie CLI, Antigravity CLI, Kiro CLI, T3 Code, Conductor, Antigravity, Kiro, Trae, Zed, Warp |
 
 **New in [1.5.0](docs/RELEASE-NOTES-1.5.0.md):** Claude Desktop and automatic coding-terminal discovery, clearer drag-to-reorder feedback, configurable grid columns and rows, and independent switches for the Terminals and Usage Insights sections. Choose any combination of 1–12 columns and rows from the notch grid menu or Appearance settings.
 

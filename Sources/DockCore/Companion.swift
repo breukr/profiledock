@@ -1,34 +1,48 @@
 import Foundation
 import CryptoKit
 
-public enum TerminalAgent: String, Codable, Sendable {
-    case claude, codex
-    public var label: String { self == .claude ? "Claude Code" : "Codex" }
-    public var bundleIdentifier: String { self == .claude ? "com.anthropic.claudefordesktop" : "com.openai.codex" }
-    /// Only foreground CLI executables count, never window titles, arguments or idle shells.
-    public static func processes(_ table: String) -> [String: TerminalAgent] {
-        var result: [String: TerminalAgent] = [:]
-        for line in table.split(separator: "\n") {
-            let fields = line.split(maxSplits: 2, whereSeparator: { $0.isWhitespace })
-            guard fields.count == 3, fields[1].contains("+"), !fields[1].contains("T"), !fields[1].contains("Z") else { continue }
-            let tty = "/dev/" + fields[0]
-            guard ClaudeSession.validTTY(tty) else { continue }
-            let executable = URL(fileURLWithPath: String(fields[2]).trimmingCharacters(in: .whitespaces)).lastPathComponent.lowercased()
-            guard let agent = TerminalAgent(rawValue: executable) else { continue }
-            result[tty] = agent
-        }
-        return result
+/// Stored as the registry id. `claude` and `codex` stay those spellings so existing profiles decode.
+public struct TerminalAgent: Hashable, Codable, Sendable {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let claude = TerminalAgent(rawValue: "claude")
+    public static let codex = TerminalAgent(rawValue: "codex")
+    public var tool: AgentTool? { AgentRegistry.tool(id: rawValue) }
+    public var label: String { tool?.name ?? rawValue }
+    /// Claude Code and Codex keep the bundle ids the tile artwork already looks up.
+    public var bundleIdentifier: String {
+        if self == .claude { return "com.anthropic.claudefordesktop" }
+        if self == .codex { return "com.openai.codex" }
+        return tool?.bundleIdentifiers.first ?? ""
+    }
+    public var launchExecutable: String { tool?.preferredExecutable ?? rawValue }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        rawValue = try container.decode(String.self)
+    }
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
+    /// Only foreground agents count, never window titles, idle shells, stopped jobs or prompts.
+    /// Without an inspector, process names alone decide, so script-based CLIs that run under `node` or `python` are missed.
+    public static func processes(_ table: String, installs: [String: String] = [:], inspect: (Int32) -> AgentProcessLaunch? = { _ in nil },
+                                 executablePath: (Int32) -> String? = { _ in nil }, resolve: (String) -> String = { $0 }) -> [String: TerminalAgent] {
+        AgentProcessTable.agents(table, installs: installs, inspect: inspect, executablePath: executablePath, resolve: resolve).mapValues { TerminalAgent(rawValue: $0.tool.id) }
     }
 }
 
 public enum ProfileProvider: String, Codable, CaseIterable, Sendable {
-    case codex, claude, terminal, claudeCode
+    case codex, claude, terminal, claudeCode, agent
     public var label: String {
         switch self {
         case .codex: return "ChatGPT / Codex"
         case .claude: return "Claude Desktop"
         case .terminal: return "Terminal"
         case .claudeCode: return "Claude Code in Terminal"
+        case .agent: return "Agent"
         }
     }
     public var bundleIdentifier: String {
@@ -36,6 +50,7 @@ public enum ProfileProvider: String, Codable, CaseIterable, Sendable {
         case .codex: return "com.openai.codex"
         case .claude: return "com.anthropic.claudefordesktop"
         case .terminal, .claudeCode: return "com.apple.Terminal"
+        case .agent: return ""
         }
     }
     public var usesTerminal: Bool { self == .terminal || self == .claudeCode }

@@ -2,23 +2,25 @@ import AppKit
 import SwiftUI
 
 enum SettingsDestination: String, CaseIterable, Identifiable {
-    case profiles = "Profiles", search = "Search Chats", insights = "Usage Insights"
+    case profiles = "Profiles", agents = "Coding Agents", search = "Search Chats", insights = "Usage Insights"
     case general = "General", appearance = "Appearance", icons = "Profile Icons", access = "Context Access", updates = "Updates"
     case support = "Support", about = "About"
 
     var id: String { rawValue }
-    static let workspace: [Self] = [.profiles, .search, .insights]
+    static let workspace: [Self] = [.profiles, .agents, .search, .insights]
     static let settings: [Self] = [.general, .appearance, .icons, .access, .updates]
 
     static func initial(arguments: [String]) -> Self {
         if arguments.contains("--search-chats") { return .search }
         if arguments.contains("--context-settings") { return .access }
+        if arguments.contains("--agent-settings") { return .agents }
         return arguments.contains("--settings") ? .general : .profiles
     }
 
     var symbol: String {
         switch self {
         case .profiles: return "person.crop.rectangle.stack"
+        case .agents: return "terminal"
         case .search: return "magnifyingglass"
         case .insights: return "chart.bar.xaxis"
         case .general: return "gearshape"
@@ -34,6 +36,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
     var subtitle: String {
         switch self {
         case .profiles: return "Your accounts, ready when you are."
+        case .agents: return "The coding tools on this Mac, and how ProfileDock adds them."
         case .search: return "Find earlier conversations across your profiles."
         case .insights: return "Understand your local AI activity."
         case .general: return "Choose how ProfileDock starts and where it appears."
@@ -49,6 +52,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
     private var keywords: String {
         switch self {
         case .profiles: return "accounts open switch organize import restore"
+        case .agents: return "agents tools cli detected installed automatic add terminal coding grok hermes gemini opencode pi qwen cursor"
         case .search: return "history conversations tasks find"
         case .insights: return "analytics tokens cost activity"
         case .general: return "startup login launch menu bar dock visibility"
@@ -116,7 +120,7 @@ struct SettingsNotice: View {
             Image(systemName: symbol).font(.system(size: compact ? 14 : 16))
                 .foregroundStyle(tint).accessibilityHidden(true).padding(.top, 1)
             VStack(alignment: .leading, spacing: 8) {
-                Text(text).font(compact ? .system(size: 11) : .callout)
+                Text(text).font(compact ? .system(size: 11) : .callout).textSelection(.enabled)
                     .foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
                 if let actionTitle, let action {

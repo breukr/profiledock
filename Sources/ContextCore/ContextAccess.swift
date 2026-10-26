@@ -38,6 +38,7 @@ public struct ContextProfile: Codable, Identifiable, Equatable, Sendable {
         var profile = Profile(id: id, name: name, color: "")
         profile.provider = provider; profile.separateClaudeAccount = separateClaudeAccount
         if let config = profile.claudeConfigDirectory(in: home) { return config }
+        if kind == .agent { return home.appendingPathComponent(".agent-not-searchable") }
         return home.appendingPathComponent(kind != .codex ? ".claude" : id == "default" ? ".codex" : ".codex-" + id)
     }
     /// Claude Code keeps its user configuration inside CLAUDE_CONFIG_DIR when one is set.
@@ -65,7 +66,7 @@ public struct ContextRegistry: Sendable {
         // Saved profiles can have generated IDs and no launcher registry entry.
         let candidates = saved.profiles + discovered.filter { p in !saved.profiles.contains(where: { $0.id == p.id }) }
         var seen = Set<String>()
-        return candidates.filter { $0.kind != .terminal && Profile.validID($0.id) && !hidden.contains($0.id) && seen.insert($0.id).inserted && FileManager.default.fileExists(atPath: $0.home(in: home).path) }.map(ContextProfile.init)
+        return candidates.filter { $0.kind != .terminal && $0.kind != .agent && Profile.validID($0.id) && !hidden.contains($0.id) && seen.insert($0.id).inserted && FileManager.default.fileExists(atPath: $0.home(in: home).path) }.map(ContextProfile.init)
     }
 
     public func access() throws -> ContextAccess {

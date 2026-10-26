@@ -38,7 +38,7 @@ struct ProfileSettingsSheet: View {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("Profile name").font(.caption).foregroundStyle(.secondary)
                                 TextField("Name", text: Binding(get: { profile.name }, set: { value in edit { $0.name = value } })).textFieldStyle(.roundedBorder)
-                                Text(profile.kind == .codex ? "Your sign-in and conversation history belong to this profile." : "This entry uses your existing app and sign-in.").font(.caption).foregroundStyle(.secondary)
+                                Text(profile.accountCaption).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                             }
                         }
                         GroupBox("Icon Style") {

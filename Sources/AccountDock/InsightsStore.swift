@@ -278,7 +278,7 @@ actor InsightsScanner {
             result.warnings.merge(claude.warnings) { _, new in new }
         } catch is CancellationError { throw CancellationError() }
         catch {
-            let ids = Set(profiles.filter { $0.kind != .codex }.map(\.id))
+            let ids = Set(profiles.filter { $0.kind != .codex && $0.kind != .agent }.map(\.id))
             result.samples += claudeSamples.filter { ids.contains($0.profileID) && $0.date >= cutoff }
             for id in ids { result.warnings[id] = "Claude history could not be read. Previous token totals are retained. " + error.localizedDescription }
         }

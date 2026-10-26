@@ -33,11 +33,13 @@ struct ActivityConnectionsView: View {
             Toggle("Automatically find coding terminals", isOn: Binding(get: { model.preferences.discoverTerminals != false }, set: {
                 model.preferences.discoverTerminals = $0; model.save(); model.companions.refresh()
             }))
+            Toggle("Add running agent apps automatically", isOn: Binding(get: { model.preferences.autoAddAgents != false }, set: model.setAutoAddAgents))
+                .help("Running agent apps such as Grok Bot or T3 Code get a tile with the sign-in already on this Mac. A removed tile stays removed.")
             Toggle("Show terminals section", isOn: Binding(get: { model.preferences.showTerminalsSection != false }, set: { model.preferences.showTerminalsSection = $0; model.save() }))
             Toggle("Expand terminals in the strip", isOn: Binding(get: { model.preferences.terminalsExpanded != false }, set: model.setTerminalsExpanded)).disabled(model.preferences.showTerminalsSection == false)
-            Text("\(model.liveTerminalProfiles.count) coding terminals found. Open Terminal.app tabs appear automatically while Claude Code or Codex is running. Closed sessions disappear.")
+            Text("\(model.liveTerminalProfiles.count) coding terminals found. Open Terminal.app tabs appear automatically while a coding agent is running. Closed sessions disappear.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Text("Allow Terminal access if macOS asks. Other terminal apps, SSH and background sessions are not included.")
+            Text("Allow Terminal access if macOS asks. Sessions in iTerm2, Ghostty, Warp, editor terminals and tmux appear too; SSH and background sessions are not included.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let error = model.companions.terminalError { Text(error).font(.caption).foregroundStyle(.orange) }
         }
@@ -104,9 +106,22 @@ struct CompanionDetails: View {
     @ObservedObject var model: DockModel
     let profile: Profile
     var body: some View {
-        GroupBox(profile.kind.label) {
+        GroupBox(profile.kind == .agent ? (profile.agentTool?.name ?? profile.kind.label) : profile.kind.label) {
             VStack(alignment: .leading, spacing: 12) {
-                if profile.usesSeparateClaudeAccount {
+                if profile.kind == .agent, let tool = profile.agentTool {
+                    Text(profile.accountCaption)
+                    if tool.launchesInTerminal {
+                        Text(profile.projectPath ?? model.home.path).font(.caption).textSelection(.enabled)
+                        Button("Choose project folder…") {
+                            let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true
+                            panel.begin { response in
+                                if response == .OK, let url = panel.url {
+                                    var changed = profile; changed.projectPath = url.path; model.update(changed)
+                                }
+                            }
+                        }
+                    }
+                } else if profile.usesSeparateClaudeAccount {
                     Text("Opens its own Claude Desktop window with a separate sign-in, chats and Claude Code settings. Sign in with the account for this profile the first time it opens. Claude manages its own updates.")
                     Text("Subscription limits come from this account's Claude Code status line when available. Account-endpoint usage and saved resets remain available for your shared Claude sign-in only.").font(.caption)
                 } else if profile.kind == .claude {
@@ -124,7 +139,7 @@ struct CompanionDetails: View {
                         }
                     }
                 }
-                if profile.kind != .terminal {
+                if profile.kind != .terminal && profile.kind != .agent {
                     Text("Local Claude Code history is available in Search chats. Context access controls which other profiles can retrieve it.").font(.caption)
                 }
                 if let latest = model.companions.sessions(for: profile).max(by: { $0.updatedAt < $1.updatedAt }) {

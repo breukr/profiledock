@@ -50,6 +50,8 @@ struct ProfileBadge: View {
     var activity: ActivitySummary?
     var activityVisible = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Badges are outlined in the color behind them: black in the strip, the window color in Settings.
+    private var ring: Color { showStatus ? .black : Color(nsColor: .windowBackgroundColor) }
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -69,11 +71,20 @@ struct ProfileBadge: View {
                 }
             }
         }
+        .opacity(showStatus && model.agentAvailability(profile) == .missing ? 0.55 : 1)
+        .overlay(alignment: .bottomLeading) {
+            if showStatus, let warning = model.tileWarning(profile) {
+                Image(systemName: warning.symbol).font(.system(size: max(9, size * 0.17), weight: .bold)).foregroundStyle(.black)
+                    .frame(width: max(16, size * 0.34), height: max(16, size * 0.34)).background(.orange, in: Circle())
+                    .overlay(Circle().stroke(ring, lineWidth: 2)).offset(x: -4, y: 4)
+                    .accessibilityLabel(warning.text)
+            }
+        }
         .overlay(alignment: .topTrailing) {
-            if let agent = model.terminalAgent(for: profile) {
+            if let agent = model.terminalAgent(for: profile) ?? model.savedTerminalTool(profile) {
                 Image(nsImage: model.terminalAgentArtwork(agent)).resizable()
                     .frame(width: max(16, size * 0.36), height: max(16, size * 0.36))
-                    .clipShape(Circle()).overlay(Circle().stroke(.black, lineWidth: 2))
+                    .clipShape(Circle()).overlay(Circle().stroke(ring, lineWidth: 2))
                     .offset(x: 4, y: -4)
                     .accessibilityLabel("\(agent.label) terminal")
                     .help("\(agent.label) is running in this Terminal tab")
@@ -84,7 +95,7 @@ struct ProfileBadge: View {
                 Text(badge).font(.system(size: 10, weight: .bold, design: .rounded)).monospacedDigit()
                     .foregroundStyle(.white).padding(.horizontal, 5).frame(minWidth: 19, minHeight: 19)
                     .background(Color(red: 0.93, green: 0.24, blue: 0.24), in: Capsule())
-                    .overlay(Capsule().stroke(.black, lineWidth: 2)).offset(x: -7, y: -5)
+                    .overlay(Capsule().stroke(ring, lineWidth: 2)).offset(x: -7, y: -5)
                     .accessibilityLabel("\(activity.unread ?? 0) completed tasks with unread results")
             }
         }
@@ -92,7 +103,7 @@ struct ProfileBadge: View {
             if let activity, activity.waiting > 0 {
                 Image(systemName: "pause.fill").font(.system(size: 8, weight: .bold)).foregroundStyle(.black)
                     .frame(width: 20, height: 20).background(.orange, in: Circle())
-                    .overlay(Circle().stroke(.black, lineWidth: 2)).offset(x: -6, y: 4)
+                    .overlay(Circle().stroke(ring, lineWidth: 2)).offset(x: -6, y: 4)
                     .accessibilityLabel("\(activity.waiting) tasks waiting for you")
             }
         }
@@ -196,7 +207,7 @@ struct IslandView: View {
                     if let error = model.companions.terminalError {
                         Text(error).font(.system(size: 10)).foregroundStyle(.orange).frame(maxWidth: .infinity, alignment: .leading)
                     } else if model.liveTerminalProfiles.isEmpty {
-                        Text(model.preferences.discoverTerminals == false ? "Automatic discovery is off in Settings." : "Open Claude Code or Codex in Terminal to see it here.")
+                        Text(model.preferences.discoverTerminals == false ? "Automatic discovery is off in Settings." : "Start a coding agent in Terminal to see it here.")
                             .font(.system(size: 10)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
@@ -205,7 +216,14 @@ struct IslandView: View {
             if model.displayedProfiles.isEmpty {
                 if model.preferences.profiles.contains(where: { !$0.kind.usesTerminal }) {
                     Button("All profiles are hidden · Show some", action: settings).buttonStyle(.bordered)
-                } else { Button("Add your first profile", action: settings).buttonStyle(.borderedProminent) }
+                } else {
+                    let found = AgentAutoAdd.offers(installed: model.installedAgents ?? [], profiles: model.preferences.profiles, dismissed: Set(model.preferences.dismissedAgentTools ?? [])).count
+                    if found > 0 {
+                        Text(found == 1 ? "1 coding tool found on this Mac" : "\(found) coding tools found on this Mac")
+                            .font(.system(size: 11)).foregroundStyle(.white.opacity(0.7))
+                    }
+                    Button(found > 0 ? "Add your tools" : "Add your first profile", action: settings).buttonStyle(.borderedProminent)
+                }
             }
             if model.preferences.showInsightsSection != false { InsightsDrawer(model: model, store: insights, presentation: presentation) }
             ProfileMessageNotice(model: model, compact: true)
@@ -261,20 +279,29 @@ struct IslandView: View {
                     ProfileBadge(model: model, profile: profile, size: min(52 * model.preferences.scale, tileWidth * 0.42), activity: taskState, activityVisible: presentation.expanded)
                     Text(profile.name).font(.system(size: 11, weight: active ? .semibold : .medium))
                         .foregroundStyle(.white.opacity(active ? 1 : 0.8)).lineLimit(1)
+                    if let warning = model.tileWarning(profile) {
+                        Text(warning.text).font(.system(size: 10, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.8).foregroundStyle(.orange)
+                    } else if model.opening.contains(profile.id) {
+                        Text("Opening…").font(.system(size: 10)).lineLimit(1).foregroundStyle(.white.opacity(0.75))
+                    } else if profile.terminalHost != nil, let host = model.companions.window(for: profile)?.title, activityText(taskState) == nil {
+                        Text("In \(host)").font(.system(size: 10)).lineLimit(1).foregroundStyle(.white.opacity(0.75))
+                    } else {
                     Text(activityText(taskState) ?? (active ? "Active" : (isOpen ? "Open" : (index < 9 ? "⌥⌘\(index + 1)" : "Open"))))
                         .font(.system(size: 10, weight: (taskState?.working ?? 0) > 0 ? .semibold : .regular))
                         .lineLimit(1).minimumScaleFactor(0.8)
                         .foregroundStyle((taskState?.working ?? 0) > 0 ? Color(red: 0.4, green: 0.72, blue: 1) : .white.opacity(active ? 1 : 0.65))
+                    }
                 }
                 .padding(.vertical, 8)
                 .frame(maxWidth: .infinity)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("\(profile.name) · \(model.state(profile)) · ⌥⌘\(index + 1)\n" + activityHelp(taskState, profile: profile))
+            .help("\(profile.name) · \(model.state(profile)) · ⌥⌘\(index + 1)\n" + (model.tileWarning(profile).map { $0.fix + "\n" } ?? "") + activityHelp(taskState, profile: profile))
             .accessibilityLabel("\(profile.name), \(model.state(profile)). " + activityHelp(taskState, profile: profile))
             .overlay(alignment: .topTrailing) {
-                if isOpen {
+                // ProfileDock closes only Terminal.app windows; other terminal apps keep control of their sessions.
+                if isOpen && profile.terminalHost == nil {
                     Button { model.requestQuit(profile) } label: {
                         Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).foregroundStyle(.white.opacity(0.9))
                             .frame(width: 20, height: 20).background(Color(white: 0.22), in: Circle())
@@ -313,7 +340,7 @@ struct IslandView: View {
                             .font(.system(size: 9)).buttonStyle(.plain).foregroundStyle(.white.opacity(0.75)).help(error.message)
                     }
                 } else {
-                    Text((profile.kind == .codex || profile.usesClaudeAccountUsage) ? (snapshot == nil ? "Loading usage…" : "No usage data") : (profile.kind == .terminal ? "Terminal window" : "Usage not reported yet"))
+                    Text(profile.kind == .agent ? profile.tileCaption : (profile.kind == .codex || profile.usesClaudeAccountUsage) ? (snapshot == nil ? "Loading usage…" : "No usage data") : (profile.kind == .terminal ? "Terminal window" : "Usage not reported yet"))
                         .font(.system(size: 10)).foregroundStyle(.white.opacity(0.45))
                 }
             }
@@ -334,7 +361,11 @@ struct IslandView: View {
                 presentation.toggleResetDetails(profile.id)
             }
             .help(resetHelp(snapshot))
-            } else { Text(profile.kind == .claudeCode ? "Claude Code" : profile.kind.label).font(.system(size: 10)).foregroundStyle(.white.opacity(0.55)).frame(height: 20) }
+            } else {
+                // The tool's name only where the profile's own name does not already say it.
+                let footer = profile.kind == .agent ? (profile.agentTool?.name ?? profile.tileCaption) : profile.tileCaption
+                Text(footer == profile.name ? " " : footer).font(.system(size: 10)).foregroundStyle(.white.opacity(0.55)).frame(height: 20)
+            }
             if let snapshot, (entry?.error != nil && statusLine == nil) || usage.now.timeIntervalSince(snapshot.fetchedAt) > (profile.usesClaudeAccountUsage && statusLine == nil ? 360 : 90) {
                 Text("Updated \(Self.age(snapshot.fetchedAt, now: usage.now)) ago")
                     .font(.system(size: 8)).foregroundStyle(.orange.opacity(0.9))
@@ -360,8 +391,10 @@ struct IslandView: View {
     }
 
     private func activityHelp(_ state: ActivitySummary?, profile: Profile) -> String {
+        if profile.kind == .agent, profile.agentTool != nil { return profile.accountCaption }
         if profile.kind != .codex {
             if model.terminalAgent(for: profile) == .codex { return "Codex is running in this Terminal tab. Per-tab Codex CLI task activity and usage are not reported by this integration." }
+            if let tool = model.terminalAgent(for: profile)?.tool, !tool.legacy { return tool.runningHelp }
             if profile.kind == .terminal, state?.working == 0, state?.waiting == 0 { return "This Terminal tab. Claude Code activity appears when connected." }
             return "Tracks connected local Claude Code sessions. Claude Chat and Cowork activity are not available. " + (state?.liveAvailable == true ? "" : "Connect Claude Code in Profiles to enable activity.")
         }

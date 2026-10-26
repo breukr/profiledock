@@ -20,7 +20,7 @@ enum AppFiles {
                 _ = try run("/usr/bin/ditto", ["--norsrc", "--noextattr", frameworks.path, contents.appendingPathComponent("Frameworks").path])
             }
             if let icon, FileManager.default.fileExists(atPath: icon.path) { try FileManager.default.copyItem(at: icon, to: contents.appendingPathComponent("Resources/AppIcon.icns")) }
-            let plist: [String: Any] = ["CFBundleIdentifier": "nl.breukr.profiledock.launcher.\(profile.id)", "CFBundleName": "\(profile.kind == .codex ? "ChatGPT" : profile.kind.label) \(profile.name)", "CFBundleExecutable": "ProfileLauncher", "CFBundlePackageType": "APPL", "CFBundleVersion": "1", "CFBundleIconFile": "AppIcon", "LSUIElement": true, "LSMinimumSystemVersion": "14.0", "ProfileDockProfileID": profile.id, "NSAppleEventsUsageDescription": "This shortcut opens and selects its Terminal tab."]
+            let plist: [String: Any] = ["CFBundleIdentifier": "nl.breukr.profiledock.launcher.\(profile.id)", "CFBundleName": "\(profile.shortcutTitle) \(profile.name)", "CFBundleExecutable": "ProfileLauncher", "CFBundlePackageType": "APPL", "CFBundleVersion": "1", "CFBundleIconFile": "AppIcon", "LSUIElement": true, "LSMinimumSystemVersion": "14.0", "ProfileDockProfileID": profile.id, "NSAppleEventsUsageDescription": "This shortcut opens and selects its Terminal tab."]
             try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0).write(to: contents.appendingPathComponent("Info.plist"))
             _ = try run("/usr/bin/codesign", ["--force", "--sign", "-", destination.path])
             _ = try run("/usr/bin/codesign", ["--verify", "--strict", destination.path])
@@ -78,6 +78,21 @@ extension DockModel {
     var managedAppsDirectory: URL { home.appendingPathComponent("Applications/ProfileDock Apps", isDirectory: true) }
 
     func applicationURL(for profile: Profile) -> URL? {
+        if profile.kind == .agent, let tool = profile.agentTool {
+            if tool.launchesInTerminal { return NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") }
+            // The scan already chose one copy among renamed, duplicate and trashed ones.
+            if let installedAgents {
+                return installedAgents.first { $0.id == tool.id }?.applicationPath.map { URL(fileURLWithPath: $0) }
+            }
+            if let url = tool.bundleIdentifiers.lazy.compactMap({ NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }).first(where: { !AgentApplications.excluded($0.path) }) { return url }
+            // Renamed builds (Windsurf / Devin) can be found by their app name.
+            return [URL(fileURLWithPath: "/Applications"), home.appendingPathComponent("Applications")].lazy
+                .flatMap { root in tool.applicationNames.map { root.appendingPathComponent($0) } }
+                .first { FileManager.default.fileExists(atPath: $0.appendingPathComponent("Contents/Info.plist").path) }
+        }
+        if profile.kind == .agent { return nil }
+        // A session in another terminal app shows that app's icon; tmux and screen show Terminal's.
+        if let host = profile.terminalHost, host.contains(".") { return cachedApplicationPath([host]).map { URL(fileURLWithPath: $0) } }
         if profile.kind != .codex { return NSWorkspace.shared.urlForApplication(withBundleIdentifier: profile.kind.bundleIdentifier) }
         if let path = profile.applicationPath {
             let url = URL(fileURLWithPath: path)
@@ -129,7 +144,7 @@ extension DockModel {
 
     func createFinderLauncher(for profile: Profile) async throws {
         guard let executable = Bundle.main.executableURL else { throw CocoaError(.fileNoSuchFile) }
-        let destination = home.appendingPathComponent("Applications/ProfileDock Launchers").appendingPathComponent("\(profile.kind == .codex ? "ChatGPT" : profile.kind.label) \(profile.name.replacingOccurrences(of: "/", with: "-")) \(profile.id.suffix(6)).app")
+        let destination = home.appendingPathComponent("Applications/ProfileDock Launchers").appendingPathComponent("\(profile.shortcutTitle) \(profile.name.replacingOccurrences(of: "/", with: "-")) \(profile.id.suffix(6)).app")
         let icon = Bundle.main.resourceURL?.appendingPathComponent("AppIcon.icns")
         try await Task.detached { try AppFiles.createLauncher(profile: profile, executable: executable, icon: icon, destination: destination) }.value
         var updated = profile; updated.launcherPath = destination.path; update(updated)
@@ -152,7 +167,9 @@ extension DockModel {
 
     func removeProfile(_ profile: Profile, trashData: Bool) throws {
         refresh()
-        guard running[profile.id]?.isEmpty != false, !opening.contains(profile.id), !nativeDockOperations.contains(profile.id) else { throw AppOperationError.message("Close this profile before removing it.") }
+        // A shared desktop agent entry owns no data, so an app that is always open (an editor) can lose its tile while it runs.
+        let ownsNothing = profile.kind == .agent && !profile.usesIsolatedAgentHome && profile.agentTool?.launchesInTerminal == false
+        guard ownsNothing || running[profile.id]?.isEmpty != false, !opening.contains(profile.id), !nativeDockOperations.contains(profile.id) else { throw AppOperationError.message("Close this profile before removing it.") }
         if trashData && (!profile.id.hasPrefix("profile-") || !Profile.validID(profile.id)) {
             throw AppOperationError.message("Imported profiles can be removed from ProfileDock, but their original data is kept.")
         }
@@ -187,6 +204,7 @@ extension DockModel {
             }
         }
         preferences.profiles.removeAll { $0.id == profile.id }
+        rememberDismissal(of: profile)
         var retained = profile; retained.launcherPath = nil; retained.dockApplicationPath = nil
         preferences.removedProfiles = (preferences.removedProfiles ?? []).filter { $0.id != profile.id } + [retained]
         preferences.hiddenProfileIDs = Array(Set((preferences.hiddenProfileIDs ?? []) + [profile.id]))

@@ -234,7 +234,7 @@ final class UsageStore: ObservableObject {
 
     func updateCompanions(model: DockModel) {
         now = Date()
-        for profile in profiles where profile.kind != .codex && (!profile.usesClaudeAccountUsage || profile.usesSeparateClaudeAccount) {
+        for profile in profiles where profile.kind != .codex && profile.kind != .agent && (!profile.usesClaudeAccountUsage || profile.usesSeparateClaudeAccount) {
             let session = model.companions.sessions(for: profile).filter { $0.usageAt != nil }.max { ($0.usageAt ?? .distantPast) < ($1.usageAt ?? .distantPast) }
             let identity = "claude-session:" + (session?.id ?? profile.id)
             let snapshot = session?.snapshot(identity: identity, now: now)
