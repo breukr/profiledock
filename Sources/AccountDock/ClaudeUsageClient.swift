@@ -26,13 +26,23 @@ struct ClaudeUsageCredential: Sendable {
 
     /// Reads the credential Claude Code keeps for `configDirectory` (nil: the shared ~/.claude sign-in).
     /// A separate account falls back to Claude Code's documented `<config>/.credentials.json` file.
+    /// Claude Code keeps MCP server logins in the same item, so for a separate account an item without
+    /// a Claude login means usage was never connected, not that a sign-in failed.
     static func read(configDirectory: String? = nil, keychain: (String) throws -> Data? = keychainItem) throws -> Self {
-        if let data = try keychain(ClaudeCredentialService.name(configDirectory: configDirectory)) { return try parse(data) }
-        guard let configDirectory else { throw UsageLoadError.claudeSignInRequired }
+        let item = try keychain(ClaudeCredentialService.name(configDirectory: configDirectory))
+        guard let configDirectory else {
+            guard let item else { throw UsageLoadError.claudeSignInRequired }
+            return try parse(item)
+        }
+        if let item, hasClaudeLogin(item) { return try parse(item) }
         let file = URL(fileURLWithPath: configDirectory).appendingPathComponent(".credentials.json")
         guard let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 65536,
-              let data = try? Data(contentsOf: file) else { throw UsageLoadError.claudeConnectionNeeded }
+              let data = try? Data(contentsOf: file), hasClaudeLogin(data) else { throw UsageLoadError.claudeConnectionNeeded }
         return try parse(data)
+    }
+
+    private static func hasClaudeLogin(_ data: Data) -> Bool {
+        ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["claudeAiOauth"] is [String: Any]
     }
 
     /// Use the same narrowly scoped Keychain reader as Claude Code; never log or persist its output. Nil when absent or unreadable.
