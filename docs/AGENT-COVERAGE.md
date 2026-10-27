@@ -22,6 +22,10 @@ Checked 2026-10-20 unless noted. "Reused" rows were verified for PR #18 and re-r
 - Coding terminals keep appearing on their own while **Automatically find coding terminals** is on.
 - Removing an automatic entry adds the tool to a dismissed list, so it is not added again until you add it by hand. Hiding keeps the entry. **Settings → Coding Agents → Add running agent apps** turns automatic adding off.
 
+## Usage
+
+A Grok Bot tile shows the weekly usage Grok Bot last read for its signed-in account. ProfileDock reads the small cache Grok Bot keeps for its own usage menu (`sand-client-persistence` in the app's data folder, or in a separate account's own folder), never its sign-in, and makes no network request. `percentUsed` is on Grok Bot's 0 to 100 scale. The tile marks a reading older than an hour and drops it once Grok Bot's own expiry or the weekly reset has passed. An unrecognized cache format shows no usage rather than zero. Other agent tiles show no usage.
+
 ## Coverage table
 
 | Tool | Recognized by | Separate accounts | Why | Source |

@@ -387,4 +387,25 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertEqual(nudges, 0)
         XCTAssertTrue(store.disconnectedProfiles.isEmpty)
     }
+
+    func testGrokBotTileReadsTheAppsOwnWeeklyReadingWithoutAClient() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        var profile = a; profile.provider = .agent; profile.agentID = GrokBotUsage.toolID
+        let store = home.appendingPathComponent("Library/Application Support/Grok Bot/sand-client-persistence")
+        try FileManager.default.createDirectory(at: store, withIntermediateDirectories: true)
+        let ms = { (offset: TimeInterval) in Int((Date().timeIntervalSince1970 + offset) * 1000) }
+        try Data(#"{"schemaVersion":1,"value":"grok|user_01FIXTURE"}"#.utf8)
+            .write(to: store.appendingPathComponent(GrokBotUsage.fileName(key: "sand.client.slice.client-meta.account-slot")))
+        try Data(#"{"schemaVersion":2,"value":{"kind":"present","reading":{"usage":{"percentUsed":30,"nextResetMs":\#(ms(259200))},"readAtMs":\#(ms(-60))},"expiresAtMs":\#(ms(86400))}}"#.utf8)
+            .write(to: store.appendingPathComponent(GrokBotUsage.fileName(key: "sand.client.slice.account.grok%7Cuser_01FIXTURE.weekly-usage.cache")))
+        let client = FixtureUsageClient()
+        let usage = UsageStore(client: client, claudeClient: client, home: home)
+        defer { usage.shutdown() }
+        usage.configure([profile]); usage.refreshAll()
+        XCTAssertEqual(usage.entries[profile.id]?.snapshot?.windows.first?.remainingPercent, 70)
+        XCTAssertFalse(usage.isRefreshing)
+        let calls = await client.fetchCalls
+        XCTAssertEqual(calls, 0, "No network client is involved")
+    }
 }
