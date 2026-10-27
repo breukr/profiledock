@@ -211,4 +211,26 @@ final class ClaudeUsageClientTests: XCTestCase {
                                          expectedAccount: { _ in "11111111-1111-1111-1111-111111111111" })
         _ = try await matching.identity(for: profile)
     }
+
+    func testSeparateAccountItemWithOnlyMCPLoginsNeedsConnectionNotSignIn() throws {
+        // Claude Code also keeps MCP server logins in the account's Keychain item, before any Claude login exists.
+        let mcpOnly = Data(#"{"mcpOAuth":{"polar|307aba93776d7813":{"serverUrl":"https://example.com/mcp"}}}"#.utf8)
+        let valid = Data(#"{"claudeAiOauth":{"accessToken":"fixture","expiresAt":4102444800000,"scopes":["user:profile"],"subscriptionType":"max"}}"#.utf8)
+        let config = FileManager.default.temporaryDirectory.appendingPathComponent("claude-config-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: config) }
+        func failure(_ directory: String?, _ item: Data?) -> UsageLoadError? {
+            do { _ = try ClaudeUsageCredential.read(configDirectory: directory, keychain: { _ in item }); return nil } catch { return error as? UsageLoadError }
+        }
+        XCTAssertEqual(failure(config.path, mcpOnly), .claudeConnectionNeeded)
+        // The shared sign-in has no file fallback: the same item there is still a sign-in failure.
+        XCTAssertEqual(failure(nil, mcpOnly), .claudeSignInRequired)
+        // A Claude login in the documented file is used when the item has none.
+        try valid.write(to: config.appendingPathComponent(".credentials.json"))
+        XCTAssertEqual(try ClaudeUsageCredential.read(configDirectory: config.path, keychain: { _ in mcpOnly }).plan, "max")
+        try mcpOnly.write(to: config.appendingPathComponent(".credentials.json"))
+        XCTAssertEqual(failure(config.path, mcpOnly), .claudeConnectionNeeded)
+        // A Claude login that is present but unusable still needs sign-in.
+        XCTAssertEqual(failure(config.path, Data(#"{"claudeAiOauth":{"accessToken":"fixture","expiresAt":4102444800000,"scopes":["user:inference"]}}"#.utf8)), .claudeSignInRequired)
+    }
 }
