@@ -252,6 +252,12 @@ struct IslandView: View {
                         Button("Move later") { model.moveDisplayed(profile.id, by: 1) }.disabled(index == model.displayedProfiles.count - 1)
                         Divider()
                         Button("Hide from strip") { model.setShownInStrip(profile.id, false) }
+                        if usage.entries[profile.id]?.error?.offersReconnect == true {
+                            Button("Reconnect usage…") { usage.reconnect(profile, home: model.home) }.disabled(usage.isReconnecting(profile))
+                        }
+                        if profile.usesSeparateClaudeAccount, ClaudeResetConnection.connection(configDirectory: usage.claudeConfigPath(profile)).enabled {
+                            Button("Disconnect saved resets") { ClaudeResetConnection.connection(configDirectory: usage.claudeConfigPath(profile)).disconnect() }
+                        }
                     }
             }
         }
@@ -263,7 +269,10 @@ struct IslandView: View {
         let isOpen = model.running[profile.id]?.isEmpty == false
         let entry = usage.entries[profile.id]
         let taskState = activity.entries[profile.id]
-        let snapshot = entry?.validatingIdentity == false ? entry?.snapshot : nil
+        let reading = entry?.validatingIdentity == false ? entry?.snapshot : nil
+        // A separate account's status-line report fills in only while its account endpoint has no reading.
+        let statusLine = reading == nil && entry?.error != nil ? usage.statusLineReadings[profile.id] : nil
+        let snapshot = reading ?? statusLine
         return VStack(spacing: 10) {
             Button { model.select(profile) } label: {
                 VStack(spacing: 7) {
@@ -305,25 +314,46 @@ struct IslandView: View {
                 if let snapshot, !snapshot.windows.isEmpty {
                     ForEach(snapshot.windows) { window in UsageWindowView(window: window, now: usage.now) }
                 } else if let error = entry?.error {
-                    Text(error.needsSignIn ? "Sign-in needed" : "Unavailable").font(.system(size: 10)).foregroundStyle(error.needsSignIn ? .orange : .white.opacity(0.5))
+                    Text(error.statusLabel).font(.system(size: 10)).lineLimit(2).minimumScaleFactor(0.8).foregroundStyle(error.needsSignIn ? .orange : .white.opacity(0.5))
                     if error.needsSignIn {
                         Button(usage.isReconnecting(profile) ? "Finish in browser…" : "Reconnect") { usage.reconnect(profile, home: model.home) }
                             .font(.system(size: 9, weight: .medium)).buttonStyle(.plain).foregroundStyle(.orange)
                             .disabled(usage.isReconnecting(profile)).accessibilityLabel("Reconnect \(profile.name)")
                             .help(usage.reconnectionMessages[usage.connectionKey(profile)] ?? "Open sign-in for this account. Usage refreshes automatically when you finish.")
+                    } else if error == .claudeConnectionNeeded || error == .claudeOtherAccount {
+                        Button(usage.isReconnecting(profile) ? "Finish in browser…" : error == .claudeOtherAccount ? "Reconnect" : "Connect…") { usage.reconnect(profile, home: model.home) }
+                            .font(.system(size: 9, weight: .medium)).buttonStyle(.plain).foregroundStyle(.white.opacity(0.75))
+                            .disabled(usage.isReconnecting(profile)).accessibilityLabel("Connect usage for \(profile.name)")
+                            .help(usage.reconnectionMessages[usage.connectionKey(profile)] ?? error.message)
+                    } else if error.offersReconnect {
+                        // A stale token is not a sign-in failure: refresh first, Reconnect only as the secondary action.
+                        HStack(spacing: 8) {
+                            Button("Refresh") { usage.refresh(profile, force: true) }
+                                .font(.system(size: 9)).buttonStyle(.plain).foregroundStyle(.white.opacity(0.75)).help(error.message)
+                            Button(usage.isReconnecting(profile) ? "Finish in browser…" : "Reconnect") { usage.reconnect(profile, home: model.home) }
+                                .font(.system(size: 9)).buttonStyle(.plain).foregroundStyle(.white.opacity(0.5))
+                                .disabled(usage.isReconnecting(profile)).accessibilityLabel("Reconnect \(profile.name)")
+                                .help(usage.reconnectionMessages[usage.connectionKey(profile)] ?? "Sign in again now instead of waiting for Claude Code.")
+                        }
                     } else {
                         Button("Try again") { usage.refresh(profile, force: true) }
                             .font(.system(size: 9)).buttonStyle(.plain).foregroundStyle(.white.opacity(0.75)).help(error.message)
                     }
                 } else {
-                    Text(profile.kind == .agent ? profile.tileCaption : (profile.kind == .codex || profile.usesClaudeAccountUsage) ? (snapshot == nil ? "Loading usage…" : "No usage data") : (profile.kind == .terminal ? "Terminal window" : profile.usesSeparateClaudeAccount ? "Separate account · usage not reported yet" : "Usage not reported yet"))
+                    Text(profile.kind == .agent ? profile.tileCaption : (profile.kind == .codex || profile.usesClaudeAccountUsage) ? (snapshot == nil ? "Loading usage…" : "No usage data") : (profile.kind == .terminal ? "Terminal window" : "Usage not reported yet"))
                         .font(.system(size: 10)).foregroundStyle(.white.opacity(0.45))
                 }
             }
             .frame(maxWidth: .infinity, minHeight: IslandLayout.usageHeight(rows: snapshot?.windows.count ?? 1), maxHeight: IslandLayout.usageHeight(rows: snapshot?.windows.count ?? 1), alignment: .topLeading)
-            .help((profile.usesClaudeAccountUsage ? "Claude Code account usage, shared by Claude tiles. " : "") + (snapshot.map { "Updated at \(Self.absoluteDate($0.fetchedAt))." } ?? "Usage for this account."))
-            if profile.usesClaudeAccountUsage && snapshot?.bankedResets == nil {
-                Button("Connect saved resets…") { ClaudeResetConnection.shared.connect() }
+            .help(usageSource(profile, statusLine: statusLine != nil) + (snapshot.map { "Updated at \(Self.absoluteDate($0.fetchedAt))." } ?? "Usage for this account."))
+            if profile.usesClaudeAccountUsage && (entry?.error == .claudeConnectionNeeded || entry?.error == .claudeOtherAccount) {
+                if statusLine != nil {
+                    Button("Connect usage…") { usage.reconnect(profile, home: model.home) }
+                        .font(.system(size: 10)).buttonStyle(.plain).foregroundStyle(.white.opacity(0.65)).frame(height: 20)
+                        .disabled(usage.isReconnecting(profile)).help(entry?.error?.message ?? "")
+                } else { Text(profile.usesSeparateClaudeAccount ? "Separate account" : " ").font(.system(size: 10)).foregroundStyle(.white.opacity(0.55)).frame(height: 20) }
+            } else if profile.usesClaudeAccountUsage && snapshot?.bankedResets == nil {
+                Button("Connect saved resets…") { ClaudeResetConnection.connection(configDirectory: usage.claudeConfigPath(profile)).connect() }
                     .font(.system(size: 10)).buttonStyle(.plain).foregroundStyle(.white.opacity(0.65)).frame(height: 20)
                     .help("Sign in to Claude once to refresh saved resets automatically. No reset is consumed.")
             } else if profile.kind == .codex || profile.usesClaudeAccountUsage {
@@ -336,10 +366,10 @@ struct IslandView: View {
                 let footer = profile.kind == .agent ? (profile.agentTool?.name ?? profile.tileCaption) : profile.tileCaption
                 Text(footer == profile.name ? " " : footer).font(.system(size: 10)).foregroundStyle(.white.opacity(0.55)).frame(height: 20)
             }
-            if let snapshot, entry?.error != nil || usage.now.timeIntervalSince(snapshot.fetchedAt) > (profile.usesClaudeAccountUsage ? 360 : 90) {
+            if let snapshot, (entry?.error != nil && statusLine == nil) || usage.now.timeIntervalSince(snapshot.fetchedAt) > (profile.usesClaudeAccountUsage && statusLine == nil ? 360 : 90) {
                 Text("Updated \(Self.age(snapshot.fetchedAt, now: usage.now)) ago")
                     .font(.system(size: 8)).foregroundStyle(.orange.opacity(0.9))
-                    .help(entry?.error?.message ?? "Refreshing usage data.")
+                    .help(statusLine != nil ? "Last status-line report from this account's Claude Code." : entry?.error?.message ?? "Refreshing usage data.")
             } else { Text(" ").font(.system(size: 8)).accessibilityHidden(true) }
         }
         .padding(.horizontal, 8)
@@ -372,6 +402,12 @@ struct IslandView: View {
         let unread = state.unread.map { "\($0) completed tasks with unread results." } ?? "Unread results unknown."
         let live = state.liveAvailable ? "\(state.working) working, \(state.waiting) waiting for you." : (state.appOpen ? state.connectionIssue?.explanation ?? "Live task status unavailable." : "Desktop profile closed.")
         return "\(unread) \(live)\nTracks local Work/Codex tasks. Ordinary ChatGPT chats are not counted."
+    }
+
+    private func usageSource(_ profile: Profile, statusLine: Bool) -> String {
+        guard profile.usesClaudeAccountUsage else { return "" }
+        if statusLine { return "Reported by this account's Claude Code status line until account usage is connected. " }
+        return profile.usesSeparateClaudeAccount ? "Claude Code account usage for this separate account. " : "Claude Code account usage, shared by Claude tiles. "
     }
 
     private func resetHelp(_ snapshot: UsageSnapshot?) -> String {

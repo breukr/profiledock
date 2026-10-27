@@ -17,9 +17,13 @@ extension CompanionIntegrationTests {
             XCTAssertEqual(permissions, 0o700)
         }
         XCTAssertNotEqual(work.claudeUserDataDirectory(in: model.home), client.claudeUserDataDirectory(in: model.home))
-        // Account usage reads the shared Claude Code sign-in only, so separate accounts never borrow it.
+        // Separate accounts read account usage from their own Claude Code sign-in, never the shared one.
         XCTAssertTrue(shared.usesClaudeAccountUsage)
-        XCTAssertFalse(work.usesClaudeAccountUsage)
+        XCTAssertTrue(work.usesClaudeAccountUsage)
+        let usage = UsageStore(home: model.home)
+        XCTAssertEqual(usage.connectionKey(shared), "claude-account")
+        XCTAssertEqual(Set([shared, work, client].map(usage.connectionKey)).count, 3)
+        XCTAssertEqual(usage.claudeConfigPath(work), work.claudeConfigDirectory(in: model.home)?.path)
         XCTAssertEqual(model.claudeBridges.map(\.settings), [model.home.appendingPathComponent(".claude/settings.json"),
             work.claudeConfigDirectory(in: model.home)!.appendingPathComponent("settings.json"), client.claudeConfigDirectory(in: model.home)!.appendingPathComponent("settings.json")])
         XCTAssertTrue(try model.recognizeClaudeDesktop(application: nil) == false)

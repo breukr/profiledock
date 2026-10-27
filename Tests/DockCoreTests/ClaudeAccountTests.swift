@@ -64,4 +64,35 @@ final class ClaudeAccountTests: XCTestCase {
         XCTAssertEqual(sessions["work-session"], .some("/fixture/work"))
         XCTAssertEqual(sessions["shared-session"], .some(nil))
     }
+
+
+    func testDesktopAccountAndEmailComeFromEachInstancesOwnFiles() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("desktop-account-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        func write(_ json: String, to file: URL) throws {
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(json.utf8).write(to: file)
+        }
+        let shared = claude("shared", separate: false), separate = claude("profile-work", separate: true)
+        var code = Profile(id: "project", name: "Project", color: "C97B5D"); code.provider = .claudeCode
+        XCTAssertNil(ClaudeDesktopAccount.accountID(for: shared, home: home), "No Desktop sign-in yet")
+        try write(#"{"lastKnownAccountUuid":"AAAAAAAA-0000-4000-8000-000000000001"}"#, to: home.appendingPathComponent("Library/Application Support/Claude/config.json"))
+        try write(#"{"lastKnownAccountUuid":"bbbbbbbb-0000-4000-8000-000000000002"}"#, to: separate.claudeUserDataDirectory(in: home)!.appendingPathComponent("config.json"))
+        XCTAssertEqual(ClaudeDesktopAccount.accountID(for: shared, home: home), "aaaaaaaa-0000-4000-8000-000000000001")
+        XCTAssertEqual(ClaudeDesktopAccount.accountID(for: separate, home: home), "bbbbbbbb-0000-4000-8000-000000000002")
+        // Claude Code project tiles have no Desktop app of their own: they run on the CLI sign-in itself.
+        XCTAssertNil(ClaudeDesktopAccount.dataDirectory(for: code, home: home))
+        XCTAssertNil(ClaudeDesktopAccount.accountID(for: code, home: home))
+        try write(#"{"lastKnownAccountUuid":"not-a-uuid"}"#, to: home.appendingPathComponent("Library/Application Support/Claude/config.json"))
+        XCTAssertNil(ClaudeDesktopAccount.accountID(for: shared, home: home))
+
+        // The email is used only when the configuration last saw the same account.
+        try write(#"{"oauthAccount":{"accountUuid":"aaaaaaaa-0000-4000-8000-000000000001","emailAddress":"one@example.com"}}"#, to: home.appendingPathComponent(".claude.json"))
+        try write(#"{"oauthAccount":{"accountUuid":"bbbbbbbb-0000-4000-8000-000000000002","emailAddress":"two@example.com"}}"#, to: separate.claudeConfigDirectory(in: home)!.appendingPathComponent(".claude.json"))
+        XCTAssertEqual(ClaudeDesktopAccount.email(for: shared, accountID: "AAAAAAAA-0000-4000-8000-000000000001", home: home), "one@example.com")
+        XCTAssertEqual(ClaudeDesktopAccount.email(for: separate, accountID: "bbbbbbbb-0000-4000-8000-000000000002", home: home), "two@example.com")
+        XCTAssertNil(ClaudeDesktopAccount.email(for: shared, accountID: "bbbbbbbb-0000-4000-8000-000000000002", home: home))
+        try write(#"{"oauthAccount":{"accountUuid":"aaaaaaaa-0000-4000-8000-000000000001","emailAddress":"--sso@example.com"}}"#, to: home.appendingPathComponent(".claude.json"))
+        XCTAssertNil(ClaudeDesktopAccount.email(for: shared, accountID: "aaaaaaaa-0000-4000-8000-000000000001", home: home), "Never passes an option-like value")
+    }
 }

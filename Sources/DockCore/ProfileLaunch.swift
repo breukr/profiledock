@@ -10,8 +10,8 @@ public enum ProfileLaunch {
 
     /// `open -n` starts another Claude instance; its own user-data folder keeps the Desktop sign-in apart.
     public static func claudeArguments(profile: Profile, home: URL, application: URL) -> [String]? {
-        guard let config = profile.claudeConfigDirectory(in: home), let data = profile.claudeUserDataDirectory(in: home) else { return nil }
-        return ["-n", "--env", "CLAUDE_CONFIG_DIR=\(config.path)", "-a", application.path, "--args", "--user-data-dir=\(data.path)"]
+        guard let config = profile.claudeConfigPath(in: home), let data = profile.claudeUserDataDirectory(in: home) else { return nil }
+        return ["-n", "--env", "CLAUDE_CONFIG_DIR=\(config)", "-a", application.path, "--args", "--user-data-dir=\(data.path)"]
     }
 
     public static func newProfile(name: String) -> Profile? {

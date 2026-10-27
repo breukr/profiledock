@@ -17,9 +17,13 @@ struct AccountSignInCommand: Sendable {
         // Use a clean environment so another running profile cannot supply authentication overrides.
         var environment = ["HOME": home.path, "USER": NSUserName(), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin", "LANG": "en_US.UTF-8", "TMPDIR": NSTemporaryDirectory()]
         if !profile.usesClaudeAccountUsage { environment["CODEX_HOME"] = profile.home(in: home).path }
-        return Self(executable: URL(fileURLWithPath: path),
-                    arguments: profile.usesClaudeAccountUsage ? ["auth", "login", "--claudeai"] : ["-c", "cli_auth_credentials_store=\"file\"", "login"],
-                    environment: environment)
+        // A separate Claude account signs in to its own configuration, the same CLAUDE_CONFIG_DIR its app launches with.
+        if let config = profile.claudeConfigPath(in: home) { environment["CLAUDE_CONFIG_DIR"] = config }
+        var arguments = profile.usesClaudeAccountUsage ? ["auth", "login", "--claudeai"] : ["-c", "cli_auth_credentials_store=\"file\"", "login"]
+        // Pre-fill the Claude app's own account, so a browser signed in to claude.ai as someone else is not used silently.
+        if let account = ClaudeDesktopAccount.accountID(for: profile, home: home),
+           let email = ClaudeDesktopAccount.email(for: profile, accountID: account, home: home) { arguments.append("--email=" + email) }
+        return Self(executable: URL(fileURLWithPath: path), arguments: arguments, environment: environment)
     }
 }
 

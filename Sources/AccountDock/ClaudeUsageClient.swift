@@ -12,17 +12,34 @@ struct ClaudeUsageCredential: Sendable {
               let oauth = root["claudeAiOauth"] as? [String: Any],
               let token = oauth["accessToken"] as? String, !token.isEmpty,
               token.rangeOfCharacter(from: .controlCharacters) == nil,
-              let expires = oauth["expiresAt"] as? Double, expires.isFinite, expires / 1000 > now.timeIntervalSince1970,
-              let scopes = oauth["scopes"] as? [String], scopes.contains("user:profile") else { throw UsageLoadError.claudeSignInRequired }
+              let scopes = oauth["scopes"] as? [String], scopes.contains("user:profile"),
+              let expires = oauth["expiresAt"] as? Double, expires.isFinite else { throw UsageLoadError.claudeSignInRequired }
+        // Claude Code renews an expired access token itself the next time it runs (the Desktop Code tab does not).
+        // Only the refresh token's presence is checked; ProfileDock never uses or rotates it.
+        guard expires / 1000 > now.timeIntervalSince1970 else {
+            let renewable = (oauth["refreshToken"] as? String).map { !$0.isEmpty } ?? false
+            throw renewable ? UsageLoadError.claudeTokenStale : UsageLoadError.claudeSignInRequired
+        }
         return Self(token: token, fingerprint: digest(token), plan: oauth["subscriptionType"] as? String)
     }
     static func digest(_ value: String) -> String { SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined() }
 
-    static func read() throws -> Self {
-        // Use the same narrowly scoped Keychain reader as Claude Code; never log or persist its output.
+    /// Reads the credential Claude Code keeps for `configDirectory` (nil: the shared ~/.claude sign-in).
+    /// A separate account falls back to Claude Code's documented `<config>/.credentials.json` file.
+    static func read(configDirectory: String? = nil, keychain: (String) throws -> Data? = keychainItem) throws -> Self {
+        if let data = try keychain(ClaudeCredentialService.name(configDirectory: configDirectory)) { return try parse(data) }
+        guard let configDirectory else { throw UsageLoadError.claudeSignInRequired }
+        let file = URL(fileURLWithPath: configDirectory).appendingPathComponent(".credentials.json")
+        guard let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 65536,
+              let data = try? Data(contentsOf: file) else { throw UsageLoadError.claudeConnectionNeeded }
+        return try parse(data)
+    }
+
+    /// Use the same narrowly scoped Keychain reader as Claude Code; never log or persist its output. Nil when absent or unreadable.
+    static func keychainItem(service: String) throws -> Data? {
         let process = Process(), output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        process.arguments = ["find-generic-password", "-a", NSUserName(), "-s", "Claude Code-credentials", "-w"]
+        process.arguments = ["find-generic-password", "-a", NSUserName(), "-s", service, "-w"]
         process.standardOutput = output; process.standardError = FileHandle.nullDevice
         try process.run()
         let timeout = DispatchWorkItem { if process.isRunning { process.terminate() } }
@@ -31,8 +48,7 @@ struct ClaudeUsageCredential: Sendable {
         let data = output.fileHandleForReading.readData(ofLength: 65537)
         if data.count > 65536, process.isRunning { process.terminate() }
         process.waitUntilExit()
-        guard process.terminationStatus == 0, data.count <= 65536 else { throw UsageLoadError.claudeSignInRequired }
-        return try parse(data)
+        return process.terminationStatus == 0 && data.count <= 65536 ? data : nil
     }
 }
 
@@ -51,8 +67,12 @@ struct ClaudeUsageAccount: Sendable {
 actor ClaudeUsageClient: UsageFetching {
     typealias Credentials = @Sendable () throws -> ClaudeUsageCredential
     typealias ResetFetcher = @Sendable (ClaudeUsageAccount) async throws -> ClaudeUsageParser.ResetInventory?
+    /// The account a tile's own Claude app is signed in to, or nil when the tile has no app of its own to compare with.
+    typealias ExpectedAccount = @Sendable (Profile) -> String?
+    static let desktopAccount: ExpectedAccount = { ClaudeDesktopAccount.accountID(for: $0, home: FileManager.default.homeDirectoryForCurrentUser) }
     private let resetFetcher: ResetFetcher
     private let credentials: Credentials
+    private let expectedAccount: ExpectedAccount?
     private let session: URLSession
     private let clock: @Sendable () -> Date
     private var accountCache: (fingerprint: String, account: ClaudeUsageAccount)?
@@ -61,8 +81,12 @@ actor ClaudeUsageClient: UsageFetching {
     private var pending: (identity: String, id: UUID, task: Task<UsageSnapshot, Error>)?
     private var retryAfter: Date?
 
-    init(session: URLSession? = nil, credentials: @escaping Credentials = { try ClaudeUsageCredential.read() }, clock: @escaping @Sendable () -> Date = { Date() }, resetFetcher: @escaping ResetFetcher = { try await ClaudeResetConnection.shared.inventory(for: $0) }) {
-        self.credentials = credentials; self.clock = clock; self.resetFetcher = resetFetcher
+    /// One client per Claude Code configuration: nil is the shared ~/.claude sign-in, otherwise a separate account's CLAUDE_CONFIG_DIR.
+    init(configDirectory: String? = nil, session: URLSession? = nil, credentials: Credentials? = nil, clock: @escaping @Sendable () -> Date = { Date() }, resetFetcher: ResetFetcher? = nil, expectedAccount: ExpectedAccount? = nil) {
+        self.credentials = credentials ?? { try ClaudeUsageCredential.read(configDirectory: configDirectory) }
+        self.resetFetcher = resetFetcher ?? { try await ClaudeResetConnection.connection(configDirectory: configDirectory).inventory(for: $0) }
+        self.expectedAccount = expectedAccount
+        self.clock = clock
         if let session { self.session = session }
         else {
             let config = URLSessionConfiguration.ephemeral
@@ -79,14 +103,16 @@ actor ClaudeUsageClient: UsageFetching {
 
     func identity(for profile: Profile) async throws -> String {
         let credential = try credentials()
-        let identity = try await account(for: credential).identity
+        let account = try await account(for: credential)
         guard try credentials().fingerprint == credential.fingerprint else { throw UsageLoadError.accountChanged }
-        return identity
+        try verify(account, for: profile)
+        return account.identity
     }
 
     func fetch(_ profile: Profile, expectedIdentity: String) async throws -> UsageSnapshot {
         let credential = try credentials(), account = try await account(for: credential)
         guard try credentials().fingerprint == credential.fingerprint else { throw UsageLoadError.accountChanged }
+        try verify(account, for: profile)
         guard account.identity == expectedIdentity else { throw UsageLoadError.accountChanged }
         if let retryAfter, retryAfter > clock() { throw UsageLoadError.rateLimited(retryAfter) }
         // Shared Desktop/project tiles coalesce onto one account request, including manual refresh.
@@ -99,6 +125,13 @@ actor ClaudeUsageClient: UsageFetching {
         let value = try await task.value
         try Task.checkCancellation()
         snapshot = value; return value
+    }
+
+    /// A Claude app tile shows only its own account's usage. Claude Code's sign-in can belong to another account,
+    /// for example after `claude auth login` in a browser that was signed in to claude.ai as someone else.
+    private func verify(_ account: ClaudeUsageAccount, for profile: Profile) throws {
+        guard let expected = expectedAccount?(profile), expected != account.accountID.lowercased() else { return }
+        throw UsageLoadError.claudeOtherAccount
     }
 
     private func account(for credential: ClaudeUsageCredential) async throws -> ClaudeUsageAccount {
@@ -154,6 +187,6 @@ actor ClaudeUsageClient: UsageFetching {
 }
 
 extension Profile {
-    /// Separate Claude accounts are excluded: the account reader only knows the shared Claude Code sign-in.
-    var usesClaudeAccountUsage: Bool { (kind == .claude && !usesSeparateClaudeAccount) || kind == .claudeCode || (kind == .terminal && terminalAgent == .claude) }
+    /// Separate Claude accounts read their own CLAUDE_CONFIG_DIR sign-in; all other Claude tiles share ~/.claude.
+    var usesClaudeAccountUsage: Bool { kind == .claude || kind == .claudeCode || (kind == .terminal && terminalAgent == .claude) }
 }
