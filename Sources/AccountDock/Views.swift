@@ -366,10 +366,11 @@ struct IslandView: View {
                 let footer = profile.kind == .agent ? (profile.agentTool?.name ?? profile.tileCaption) : profile.tileCaption
                 Text(footer == profile.name ? " " : footer).font(.system(size: 10)).foregroundStyle(.white.opacity(0.55)).frame(height: 20)
             }
-            if let snapshot, (entry?.error != nil && statusLine == nil) || usage.now.timeIntervalSince(snapshot.fetchedAt) > (profile.usesClaudeAccountUsage && statusLine == nil ? 360 : 90) {
+            // Grok Bot rewrites its own reading only now and then, so an hour-old reading is normal there.
+            if let snapshot, (entry?.error != nil && statusLine == nil) || usage.now.timeIntervalSince(snapshot.fetchedAt) > (profile.kind == .agent ? 3600 : profile.usesClaudeAccountUsage && statusLine == nil ? 360 : 90) {
                 Text("Updated \(Self.age(snapshot.fetchedAt, now: usage.now)) ago")
                     .font(.system(size: 8)).foregroundStyle(.orange.opacity(0.9))
-                    .help(statusLine != nil ? "Last status-line report from this account's Claude Code." : entry?.error?.message ?? "Refreshing usage data.")
+                    .help(profile.kind == .agent ? "Last reading saved by \(profile.agentTool?.name ?? profile.name). It updates while the app is open." : statusLine != nil ? "Last status-line report from this account's Claude Code." : entry?.error?.message ?? "Refreshing usage data.")
             } else { Text(" ").font(.system(size: 8)).accessibilityHidden(true) }
         }
         .padding(.horizontal, 8)
@@ -405,6 +406,7 @@ struct IslandView: View {
     }
 
     private func usageSource(_ profile: Profile, statusLine: Bool) -> String {
+        if profile.kind == .agent { return GrokBotUsage.dataDirectory(for: profile, home: model.home) != nil ? "Weekly usage as last read by Grok Bot. " : "" }
         guard profile.usesClaudeAccountUsage else { return "" }
         if statusLine { return "Reported by this account's Claude Code status line until account usage is connected. " }
         return profile.usesSeparateClaudeAccount ? "Claude Code account usage for this separate account. " : "Claude Code account usage, shared by Claude tiles. "

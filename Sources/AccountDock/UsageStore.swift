@@ -96,6 +96,7 @@ final class UsageStore: ObservableObject {
     }
 
     func refresh(_ profile: Profile, force: Bool = false) {
+        if let folder = GrokBotUsage.dataDirectory(for: profile, home: home) { refreshGrokBot(profile, folder: folder); return }
         guard profile.kind == .codex || profile.usesClaudeAccountUsage, tasks[profile.id] == nil else { return }
         let client = usageClient(for: profile)
         let id = profile.id
@@ -143,6 +144,13 @@ final class UsageStore: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Grok Bot keeps its own weekly reading on disk. Two small local reads, so this runs inline; no network, no sign-in.
+    private func refreshGrokBot(_ profile: Profile, folder: URL) {
+        let snapshot = GrokBotUsage.snapshot(in: folder)
+        let value = UsageEntry(snapshot: snapshot, identity: snapshot?.identity, validatingIdentity: false)
+        if entries[profile.id] != value { entries[profile.id] = value }
     }
 
     /// The exact CLAUDE_CONFIG_DIR ProfileDock launches a separate account with; nil for the shared sign-in.
