@@ -17,11 +17,21 @@ backup=""
 if [[ -e "$destination" ]]; then
     existing_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$destination/Contents/Info.plist")"
     [[ "$existing_id" == "nl.breukr.account-dock" ]] || { echo "An unrelated app already uses this name." >&2; exit 1; }
-    backup="${destination%.app}.backup-$(date +%Y%m%d%H%M%S).app"
+    # One previous version is kept for rollback, outside /Applications so Spotlight and Open With
+    # do not list it as another ProfileDock. Older copies from earlier installs go to the Trash.
+    backup_dir="${PROFILEDOCK_BACKUP_DIR:-$HOME/Library/Application Support/ProfileDock Backups/previous-install}"
+    mkdir -p "$backup_dir"
+    backup="$backup_dir/ProfileDock.backup-$(date +%Y%m%d%H%M%S).app"
     mv "$destination" "$backup"
 fi
 if ! ditto --norsrc --noextattr "$source_app" "$destination" || ! codesign --verify --strict "$destination"; then
     [[ -n "$backup" ]] && { rm -rf "$destination"; mv "$backup" "$destination"; }
     exit 1
 fi
-echo "Installed: $destination"
+if [[ -n "$backup" ]]; then
+    for old in "$backup_dir"/ProfileDock.backup-*.app; do
+        [[ "$old" == "$backup" || ! -e "$old" ]] && continue
+        mv "$old" "$HOME/.Trash/$(basename "$old" .app)-$$.app"
+    done
+fi
+echo "Installed: $destination${backup:+ (previous version kept in $backup_dir)}"
