@@ -157,6 +157,13 @@ final class AttentionPanelTests: XCTestCase {
         XCTAssertEqual(AttentionPanelController.age(of: now.addingTimeInterval(30), now: now), "now")
     }
 
+    func testCountdownUsesPlainDigitsAndMinutesForLongHolds() {
+        XCTAssertEqual(AttentionPanelController.countdown(49.2), "50s")
+        XCTAssertEqual(AttentionPanelController.countdown(99), "99s")
+        XCTAssertEqual(AttentionPanelController.countdown(3586), "60 min", "Never a locale-grouped \"3.586s\"")
+        XCTAssertEqual(AttentionPanelController.countdown(-3), "0s")
+    }
+
     // MARK: Terminal reply
 
     func testReplyIsRefusedWhileWorkingWithoutTerminalOrForRequests() {

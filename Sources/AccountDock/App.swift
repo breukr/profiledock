@@ -114,6 +114,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if !previewMode {
             attentionPanel.start()
             cues.suppresses = { [weak self] id in self?.attentionPanel.isShowing(profileID: id) == true }
+        } else if CommandLine.arguments.contains("--preview-attention") {
+            // Visual check of the live pop-up glass with fictional items; nothing is answered or sent anywhere.
+            attentionPanel.start()
+            attention.post(AgentAttention(source: "claude", sessionID: "preview-1", kind: .permission, title: "Run a command?",
+                                          message: "Claude wants to run a shell command in meridian-api.", toolName: "Bash",
+                                          preview: "npm run migrate -- --env staging && git push origin feature/noordhaven-sync",
+                                          cwd: "/tmp/meridian-api", entrypoint: "cli", deadline: Date().addingTimeInterval(3600)))
+            attention.post(AgentAttention(source: "claude", sessionID: "preview-2", kind: .finished, title: "Done",
+                                          message: "Finished the Noordhaven importer. Parsed 1,204 rows and wrote a summary to reports/import.md.",
+                                          cwd: "/tmp/atlas-web", tty: "/dev/ttys999"))
         }
         if model.preferences.profiles.isEmpty || previewMode || CommandLine.arguments.contains("--settings") || CommandLine.arguments.contains("--context-settings") || CommandLine.arguments.contains("--search-chats") { showSettings() }
         model.onPreferencesChanged = { [weak self] in

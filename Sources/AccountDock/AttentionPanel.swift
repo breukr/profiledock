@@ -124,6 +124,12 @@ final class AttentionPanelController: ObservableObject {
         return AgentRegistry.tool(id: item.source)?.name ?? item.source.capitalized
     }
     /// "now", "4 min", "2 h", "3 d".
+    /// Time left before the agent's own dialog takes over. Plain digits (no locale grouping such as "3.586s").
+    nonisolated static func countdown(_ left: TimeInterval) -> String {
+        let seconds = Int(max(0, left).rounded(.up))
+        return seconds < 100 ? "\(seconds)s" : "\((seconds + 59) / 60) min"
+    }
+
     nonisolated static func age(of date: Date, now: Date) -> String {
         let seconds = max(0, now.timeIntervalSince(date))
         if seconds < 60 { return "now" }
@@ -358,7 +364,8 @@ private struct AttentionCard: View {
     private var band: CGFloat { controller.notchHeight }
     private var glass: Bool { if #available(macOS 26, *) { return style == .automatic }; return false }
     private var shape: UnevenRoundedRectangle {
-        let top: CGFloat = band > 0 ? 8 : 22
+        // Flat where it meets the top of the screen, like the strip, so it reads as part of the notch.
+        let top: CGFloat = band > 0 ? 2 : 22
         return UnevenRoundedRectangle(topLeadingRadius: top, bottomLeadingRadius: 22, bottomTrailingRadius: 22, topTrailingRadius: top, style: .continuous)
     }
     private var profile: Profile? { controller.profile(for: item) }
@@ -384,7 +391,16 @@ private struct AttentionCard: View {
         .onHover { controller.hovered = $0 }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(Self.kindLabel(item)) from \(AttentionPanelController.agentName(item))")
-        if glass, #available(macOS 26, *) { GlassEffectContainer(spacing: 8) { content } } else { content }
+        if glass, #available(macOS 26, *) {
+            // The card itself is the glass, with its content placed on top. A glass view in the background
+            // (or a GlassEffectContainer around everything) renders above the text and blurs it.
+            content
+                .glassEffect(.regular.tint(.black.opacity(0.5)), in: shape)
+                .scaleEffect(x: revealed || reduceMotion ? 1 : 0.42, y: revealed || reduceMotion ? 1 : 0.12, anchor: .top)
+                .opacity(revealed ? 1 : 0)
+                .animation(reduceMotion ? .easeOut(duration: AttentionPanelController.reducedFade)
+                           : revealed ? .spring(duration: AttentionPanelController.openDuration, bounce: 0.18) : .spring(duration: AttentionPanelController.closeDuration, bounce: 0), value: revealed)
+        } else { content }
     }
 
     static func kindLabel(_ item: AgentAttention) -> String {
@@ -400,7 +416,7 @@ private struct AttentionCard: View {
             if band > 0 {
                 VStack(spacing: 0) {
                     Color.black.frame(height: band)
-                    LinearGradient(colors: [.black, .black.opacity(0)], startPoint: .top, endPoint: .bottom).frame(height: 14)
+                    LinearGradient(colors: [.black, .black.opacity(0)], startPoint: .top, endPoint: .bottom).frame(height: 36)
                 }
                 .clipShape(shape).accessibilityHidden(true)
             }
@@ -411,8 +427,8 @@ private struct AttentionCard: View {
                    : revealed ? .spring(duration: AttentionPanelController.openDuration, bounce: 0.18) : .spring(duration: AttentionPanelController.closeDuration, bounce: 0), value: revealed)
     }
     @ViewBuilder private var surfaceFill: some View {
-        if glass, #available(macOS 26, *) {
-            Color.clear.glassEffect(.regular.tint(.black.opacity(0.5)), in: shape)
+        if glass {
+            Color.clear  // the glass is applied to the whole card in `body`
         } else if style == .opaque {
             ZStack { Color.black; Color.white.opacity(0.06) }.clipShape(shape)
                 .overlay(shape.stroke(.white.opacity(0.16), lineWidth: 0.7))
@@ -692,7 +708,7 @@ private struct CountdownRing: View {
                         .animation(reduceMotion ? nil : .linear(duration: 1), value: left)
                 }
                 .frame(width: 16, height: 16)
-                Text("\(Int(left.rounded(.up)))s").font(.system(size: 11, weight: .medium)).monospacedDigit().foregroundStyle(.white.opacity(0.7))
+                Text(verbatim: AttentionPanelController.countdown(left)).font(.system(size: 11, weight: .medium)).monospacedDigit().foregroundStyle(.white.opacity(0.7))
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("\(Int(left.rounded(.up))) seconds left to answer here")
