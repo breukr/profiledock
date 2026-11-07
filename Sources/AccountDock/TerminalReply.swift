@@ -13,6 +13,8 @@ enum TerminalReplyError: LocalizedError, Equatable {
     /// The session runs in an app ProfileDock cannot type into (for example Ghostty, Warp or an editor).
     case unsupportedHost
     case failed(String)
+    /// Not an error: the reply went to the pasteboard because the session has no terminal and no held hook.
+    case copiedForChat
 
     var errorDescription: String? {
         switch self {
@@ -23,9 +25,28 @@ enum TerminalReplyError: LocalizedError, Equatable {
         case .sessionGone: return "This session’s terminal has closed."
         case .unsupportedHost: return "Replies work in Terminal, iTerm2 and tmux. Open the session to answer there."
         case .failed(let detail): return detail
+        case .copiedForChat: return "Copied. Paste with ⌘V in the chat."
         }
     }
     var opensAutomationSettings: Bool { if case .automationDenied = self { return true }; return false }
+    /// Confirmation rather than a failure, shown without a warning sign.
+    var isInformational: Bool { self == .copiedForChat }
+}
+
+/// Where a reply typed in the pop-up goes, for any agent. Text is never dropped: when neither the agent's hook nor its
+/// terminal can take it, it goes to the pasteboard (the system clipboard) and the exact chat opens.
+enum ReplyRoute: Equatable, Sendable {
+    /// A held Stop hook continues the session with the text (`AttentionDecision.reply`), terminal or desktop chat alike.
+    case decision
+    /// Typed into the session's own terminal tab, found by its TTY.
+    case terminal
+    /// Copied, then the chat opens so the user pastes it.
+    case pasteboard
+
+    static func `for`(_ item: AgentAttention) -> ReplyRoute {
+        if item.awaitsDecision, item.kind == .finished || item.kind == .waiting { return .decision }
+        return TerminalReply.canReply(to: item) ? .terminal : .pasteboard
+    }
 }
 
 /// Result of one helper process (osascript or tmux).
