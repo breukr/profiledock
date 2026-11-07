@@ -388,14 +388,16 @@ private struct AttentionCard: View {
     /// Grows out of the collapsed island at the top of the screen (notch or menu-bar island) instead of appearing as a card.
     private var fused: Bool { band > 0 && controller.origin.width > 0 }
     private var open: Bool { revealed || reduceMotion }
-    private var fullSize: CGSize { CGSize(width: AttentionPanelController.cardWidth, height: max(contentHeight, band + 40)) }
+    /// Concave curves where the open pop-up meets the top edge of the screen, like the hardware notch's own shoulders.
+    nonisolated static let shoulder: CGFloat = 10
+    private var shoulder: CGFloat { fused && open ? Self.shoulder : 0 }
+    private var fullSize: CGSize { CGSize(width: AttentionPanelController.cardWidth + 2 * shoulder, height: max(contentHeight, band + 40)) }
     /// One shape from start to finish: the island's size and small bottom corners when folded, the card when open.
     private var blobSize: CGSize { fused && !open ? controller.origin : fullSize }
-    private var shape: UnevenRoundedRectangle {
-        // Flat where it meets the top of the screen, like the strip, so it reads as part of the notch.
-        let top: CGFloat = fused ? 2 : 22
-        let bottom: CGFloat = fused && !open ? min(12, controller.origin.height / 2) : 22
-        return UnevenRoundedRectangle(topLeadingRadius: top, bottomLeadingRadius: bottom, bottomTrailingRadius: bottom, topTrailingRadius: top, style: .continuous)
+    private var shape: NotchShape {
+        // Flat where it meets the top of the screen (with shoulders once open), so it reads as part of the notch.
+        let bottom: CGFloat = fused && !open ? min(12, controller.origin.height / 2) : 27
+        return NotchShape(shoulder: shoulder, bottomRadius: bottom, topRadius: fused ? 2 : 27)
     }
     /// Dynamic Island-like spring: a little overshoot opening, none closing.
     private var morph: Animation {
@@ -457,7 +459,8 @@ private struct AttentionCard: View {
             if band > 0 {
                 VStack(spacing: 0) {
                     Color.black.frame(height: band)
-                    LinearGradient(colors: [.black, .black.opacity(0)], startPoint: .top, endPoint: .bottom).frame(height: 36)
+                    // The surface below already carries the shade, so the band fades to clear: no step where it ends.
+                    LinearGradient(colors: [.black, .black.opacity(0)], startPoint: .top, endPoint: .bottom).frame(height: StripGlass.fade)
                     Spacer(minLength: 0)
                 }
                 .frame(width: size.width, height: size.height).clipShape(shape)
@@ -472,12 +475,14 @@ private struct AttentionCard: View {
     }
     @ViewBuilder private func surfaceFill(_ size: CGSize) -> some View {
         if glass, #available(macOS 26, *) {
-            Color.clear.frame(width: size.width, height: size.height).glassEffect(.regular.tint(.black.opacity(0.5)), in: shape)
+            // Same recipe as the strip: dark-tinted glass under a black shade, so both surfaces read as one material.
+            Color.clear.frame(width: size.width, height: size.height).glassEffect(.regular.tint(.black.opacity(0.3)), in: shape)
+                .overlay(shape.fill(Color.black.opacity(StripGlass.shadeOpacity)))
         } else if style == .opaque {
-            ZStack { Color.black; Color.white.opacity(0.06) }.frame(width: size.width, height: size.height).clipShape(shape)
+            ZStack { Color.black; Color.white.opacity(0.06); Color.black.opacity(StripGlass.shadeOpacity) }.frame(width: size.width, height: size.height).clipShape(shape)
                 .overlay(shape.stroke(.white.opacity(0.16), lineWidth: 0.7))
         } else {
-            ZStack { AttentionBlur(); Color.black.opacity(0.35) }.frame(width: size.width, height: size.height).clipShape(shape)
+            ZStack { AttentionBlur(); Color.black.opacity(StripGlass.shadeOpacity) }.frame(width: size.width, height: size.height).clipShape(shape)
                 .overlay(shape.stroke(.white.opacity(0.14), lineWidth: 0.7))
                 .shadow(color: .black.opacity(revealed ? 0.35 : 0), radius: 16, y: 8)
         }
@@ -730,7 +735,7 @@ private struct AttentionButton: ViewModifier {
     let glass: Bool
     func body(content: Content) -> some View {
         if glass, #available(macOS 26, *) {
-            if prominent { content.buttonStyle(.glassProminent) } else { content.buttonStyle(.glass) }
+            if prominent { content.buttonStyle(.glassProminent).tint(.blue) } else { content.buttonStyle(.glass) }
         } else if prominent { content.buttonStyle(.borderedProminent) } else { content.buttonStyle(.bordered) }
     }
 }
@@ -769,4 +774,56 @@ private struct AttentionBlur: NSViewRepresentable {
         return view
     }
     func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+}
+
+/// The pop-up's outline: flat along the top edge of the screen with concave shoulders that flare into it (as the
+/// hardware notch does), straight sides and round bottom corners. Every value animates, so the island can morph into it.
+struct NotchShape: Shape {
+    var shoulder: CGFloat
+    var bottomRadius: CGFloat
+    var topRadius: CGFloat
+    var animatableData: AnimatablePair<CGFloat, AnimatablePair<CGFloat, CGFloat>> {
+        get { AnimatablePair(shoulder, AnimatablePair(bottomRadius, topRadius)) }
+        set { shoulder = newValue.first; bottomRadius = newValue.second.first; topRadius = newValue.second.second }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let s = max(0, min(shoulder, rect.width / 4, rect.height / 4))
+        let body = rect.insetBy(dx: s, dy: 0)
+        let r = max(0, min(bottomRadius, body.width / 2, body.height / 2))
+        if s > 0 { return shoulderPath(rect: rect, s: s, r: r) }
+        return roundedPath(rect: rect, t: max(0, min(topRadius, body.width / 2, body.height / 2)), r: r)
+    }
+
+    private func shoulderPath(rect: CGRect, s: CGFloat, r: CGFloat) -> Path {
+        let left = rect.minX + s, right = rect.maxX - s, top = rect.minY, bottom = rect.maxY
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: top))
+        path.addLine(to: CGPoint(x: rect.maxX, y: top))
+        path.addQuadCurve(to: CGPoint(x: right, y: top + s), control: CGPoint(x: right, y: top))
+        path.addLine(to: CGPoint(x: right, y: bottom - r))
+        path.addArc(tangent1End: CGPoint(x: right, y: bottom), tangent2End: CGPoint(x: right - r, y: bottom), radius: r)
+        path.addLine(to: CGPoint(x: left + r, y: bottom))
+        path.addArc(tangent1End: CGPoint(x: left, y: bottom), tangent2End: CGPoint(x: left, y: bottom - r), radius: r)
+        path.addLine(to: CGPoint(x: left, y: top + s))
+        path.addQuadCurve(to: CGPoint(x: rect.minX, y: top), control: CGPoint(x: left, y: top))
+        path.closeSubpath()
+        return path
+    }
+
+    private func roundedPath(rect: CGRect, t: CGFloat, r: CGFloat) -> Path {
+        let left = rect.minX, right = rect.maxX, top = rect.minY, bottom = rect.maxY
+        var path = Path()
+        path.move(to: CGPoint(x: left + t, y: top))
+        path.addLine(to: CGPoint(x: right - t, y: top))
+        path.addArc(tangent1End: CGPoint(x: right, y: top), tangent2End: CGPoint(x: right, y: top + t), radius: t)
+        path.addLine(to: CGPoint(x: right, y: bottom - r))
+        path.addArc(tangent1End: CGPoint(x: right, y: bottom), tangent2End: CGPoint(x: right - r, y: bottom), radius: r)
+        path.addLine(to: CGPoint(x: left + r, y: bottom))
+        path.addArc(tangent1End: CGPoint(x: left, y: bottom), tangent2End: CGPoint(x: left, y: bottom - r), radius: r)
+        path.addLine(to: CGPoint(x: left, y: top + t))
+        path.addArc(tangent1End: CGPoint(x: left, y: top), tangent2End: CGPoint(x: left + t, y: top), radius: t)
+        path.closeSubpath()
+        return path
+    }
 }

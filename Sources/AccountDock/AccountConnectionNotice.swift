@@ -30,8 +30,8 @@ struct SignInNoticeBanner: View {
             }
             .padding(.horizontal, 12).padding(.vertical, 10)
             .frame(maxWidth: 560)
-            .background(Color.orange.opacity(0.11), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.orange.opacity(0.32), lineWidth: 0.5))
+            .background(Color.orange.opacity(0.11), in: RoundedRectangle(cornerRadius: CGFloat(CardMetrics.cornerRadius), style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: CGFloat(CardMetrics.cornerRadius), style: .continuous).strokeBorder(Color.orange.opacity(0.32), lineWidth: 0.5))
             .frame(maxWidth: .infinity)
             .accessibilityElement(children: .contain).accessibilityLabel(profiles.count == 1 ? "Sign-in needed" : "\(profiles.count) accounts need sign-in")
         }
@@ -81,7 +81,7 @@ struct SignInNoticeBanner: View {
                 Button("Don’t remind me about this account") { model.muteSignInReminders(for: key) }
             } label: {
                 Image(systemName: "ellipsis").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.75))
-                    .frame(width: Self.menuColumn, height: 24).contentShape(Rectangle())
+                    .frame(width: Self.menuColumn, height: 28).contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             .accessibilityLabel("More options for \(profile.name)").help("Remind me later, or stop reminders for this account")
@@ -96,7 +96,7 @@ struct SignInNoticeBanner: View {
     private func dismissButton(help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).foregroundStyle(.white.opacity(0.7))
-                .frame(width: Self.menuColumn, height: 24).contentShape(Rectangle())
+                .frame(width: Self.menuColumn, height: 28).contentShape(Rectangle())
         }
         .buttonStyle(.plain).help(help).accessibilityLabel("Remind me later")
     }

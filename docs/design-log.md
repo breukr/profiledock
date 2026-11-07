@@ -28,3 +28,10 @@ Rejected: keeping the pure black strip (Sam asked for glass); masking the glass 
 Why: Sam's screenshot of the live notice ("alignment and look feel weird") and his brief (Apple-native, futuristic, glassy). Live check of the glass via a preview copy with fictional profiles; Sam supplied full-screen screenshots of it.
 Reviewer: pending (after the horizontal card layout lands).
 Sam: feedback 2026-11-07 on the first glass build: cards too vertical, alignment can be better, show real app logos. Approval pending.
+
+## Round 2 (2026-11-07): horizontal cards, notch pop-up as one shape
+Decision: tiles became horizontal cards (badge left, name and status, usage table with shared columns, saved resets on one line), header got attention chips ("1 needs you · 1 working · 1 done"), cards fill their row and columns follow the larger section. The answerable pop-up grows out of the collapsed island (notch or menu-bar island) as one shape: island size to card with a spring, concave shoulders at the top edge, black band continuing the island, the strip's glass and shade; it folds back into the island when closed or while the strip is open. Agent cards without usage reserve one row and say the tool shares no limits; passed resets show full and dimmed.
+Rejected: a separate card below the menu bar (Sam: "should look like one big smooth blob"); scale-in animation (distorted radii and text); centered grids with dead space; tiles capped at 340 pt on wide strips.
+Why: Sam's feedback on the first glass build (cards too vertical, alignment, logos) and on the pop-up (must come out of the notch, no gap). Design reviewer round 1 FAIL: stale renders, missing shoulders, pop-up lighter than strip, radius and copy mismatches, two small hit targets; all fixed in this round.
+Reviewer: round 1 FAIL (fixed); round 2 not run yet.
+Sam: pending.

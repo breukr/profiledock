@@ -263,7 +263,7 @@ final class AttentionPanelTests: XCTestCase {
         let multi = AttentionQuestion(header: "Checks", question: "Which checks should run before the push?", options: [
             .init(label: "Unit tests"), .init(label: "Lint"), .init(label: "Snapshot renders", detail: "About 45 s")], multiSelect: true)
         let longMessage = "Finished the Noordhaven importer. Parsed 1,204 rows, skipped 3 with missing postcodes and wrote a summary to reports/import.md. The Meridian API now accepts the new field, and the migration ran cleanly on staging. Next I can add the retry queue or clean up the old CSV reader; tell me which you prefer."
-        struct Case { let name: String; let items: [AgentAttention]; var style: AttentionSurfaceStyle = .fallback; var draft: String? = nil; var select: [Int]? = nil; var note: Bool = false; var error: TerminalReplyError? = nil; var band: CGFloat = 38 }
+        struct Case { let name: String; let items: [AgentAttention]; var style: AttentionSurfaceStyle = .fallback; var draft: String? = nil; var select: [Int]? = nil; var note: Bool = false; var error: TerminalReplyError? = nil; var band: CGFloat = 38; var island: CGSize = .zero }
         let cases = [
             Case(name: "permission-long-command", items: [item(.permission, id: "p", title: "Run a command?", message: "Claude wants to run a shell command in meridian-api.", preview: command, config: atlasConfig, tty: "/dev/ttys004", received: now.addingTimeInterval(-40), deadline: now.addingTimeInterval(50), tool: "Bash")]),
             Case(name: "permission-deny-note", items: [item(.permission, id: "p", title: "Edit a file?", message: "Claude wants to edit src/sync.ts.", preview: "src/sync.ts", config: atlasConfig, received: now.addingTimeInterval(-80), deadline: now.addingTimeInterval(8), tool: "Edit")], note: true),
@@ -278,12 +278,15 @@ final class AttentionPanelTests: XCTestCase {
                 item(.waiting, id: "w", source: "codex", session: "b", title: "Codex is waiting", message: "Waiting for input.", received: now.addingTimeInterval(-90)),
                 item(.finished, id: "f", session: "c", title: "Done", message: "Updated the README.", tty: "/dev/ttys004", received: now.addingTimeInterval(-300))]),
             Case(name: "reduce-transparency", items: [item(.permission, id: "p", title: "Run a command?", message: "Claude wants to run a shell command.", preview: command, received: now.addingTimeInterval(-40), deadline: now.addingTimeInterval(50), tool: "Bash")], style: .opaque),
+            // Grown out of the notch island: flat top with shoulders, black band continuing the notch.
+            Case(name: "fused-notch-permission", items: [item(.permission, id: "p", title: "Run a command?", message: "Claude wants to run a shell command in meridian-api.", preview: "npm run migrate -- --env staging", config: atlasConfig, tty: "/dev/ttys004", received: now.addingTimeInterval(-10), deadline: now.addingTimeInterval(80), tool: "Bash")], island: CGSize(width: 200, height: 38)),
+            Case(name: "fused-menubar-finished", items: [item(.finished, id: "f", title: "Done", message: "Finished the Noordhaven importer and wrote a summary to reports/import.md.", tty: "/dev/ttys004", received: now.addingTimeInterval(-30))], band: 31, island: CGSize(width: 194, height: 31)),
             Case(name: "floating-no-notch", items: [item(.finished, id: "f", title: "Done", message: "Refactored the Atlas client.", tty: "/dev/ttys004", received: now.addingTimeInterval(-60))], band: 0),
         ]
         for value in cases {
             let center = AttentionCenter()
             let controller = AttentionPanelController(center: center, model: model)
-            controller.showsWindow = false; controller.notchHeight = value.band; controller.start()
+            controller.showsWindow = false; controller.notchHeight = value.band; controller.origin = value.island; controller.start()
             value.items.forEach(center.post)
             let current = try XCTUnwrap(controller.current)
             if let draft = value.draft { controller.drafts[current.id] = draft }

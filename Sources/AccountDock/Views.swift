@@ -132,7 +132,7 @@ struct StripAttention: Equatable {
     var isEmpty: Bool { needsYou == 0 && working == 0 && done == 0 }
     /// Chips in priority order; zero counts are left out.
     var chips: [(count: Int, label: String, state: ProfileActivityState)] {
-        [(needsYou, "need you", .waiting), (working, "working", .working), (done, "done", .unread)].filter { $0.0 > 0 }
+        [(needsYou, needsYou == 1 ? "needs you" : "need you", .waiting), (working, "working", .working), (done, "done", .unread)].filter { $0.0 > 0 }
     }
 }
 
@@ -160,7 +160,7 @@ struct CompactIslandView: View {
         HStack(spacing: 7) {
             if model.placement == .free { DockDragHandle(drag: drag).frame(width: 22).help("Drag to move ProfileDock") }
             BrandMark(size: 11).foregroundStyle(.white.opacity(0.85))
-            Text(needsYou > 0 ? "\(needsYou) need you" : "Agents").font(.system(size: 10, weight: needsYou > 0 ? .semibold : .medium)).monospacedDigit()
+            Text(needsYou > 0 ? "\(needsYou) \(needsYou == 1 ? "needs" : "need") you" : "Agents").font(.system(size: 10, weight: needsYou > 0 ? .semibold : .medium)).monospacedDigit()
                 .foregroundStyle(needsYou > 0 ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.white.opacity(0.9))).lineLimit(1).fixedSize()
             HStack(spacing: 5) {
                 ForEach(Array(model.displayedProfiles.prefix(visible))) { profile in
@@ -175,7 +175,7 @@ struct CompactIslandView: View {
         .background(.black)
         .clipShape(UnevenRoundedRectangle(topLeadingRadius: model.placement == .topCenter ? 2 : 12, bottomLeadingRadius: 12, bottomTrailingRadius: 12, topTrailingRadius: model.placement == .topCenter ? 2 : 12))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("ProfileDock, hover here to open. " + (needsYou > 0 ? "\(needsYou) need you. " : "") + statusDescription)
+        .accessibilityLabel("ProfileDock, hover here to open. " + (needsYou > 0 ? "\(needsYou) \(needsYou == 1 ? "needs" : "need") you. " : "") + statusDescription)
         .help(statusDescription)
         }
     }
@@ -623,7 +623,7 @@ struct ProfileCard: View {
 struct StripTextButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.font(.system(size: 10, weight: .medium)).lineLimit(1).fixedSize()
-            .padding(.vertical, 3).contentShape(Rectangle()).padding(.vertical, -3)
+            .padding(.vertical, 5).contentShape(Rectangle()).padding(.vertical, -5)
             .opacity(configuration.isPressed ? 0.6 : 1)
     }
 }
