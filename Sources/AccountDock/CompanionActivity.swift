@@ -3,6 +3,9 @@ import DockCore
 
 extension ActivityMonitor {
     func updateCompanions(model: DockModel, now: Date = Date()) {
+        // States of sessions seen live in this pass. Any other entry is dropped below, so a resumed session id
+        // starts fresh instead of comparing against a state from before it closed (a false "Done" cue).
+        var seen = Set<String>()
         for profile in model.preferences.profiles where profile.kind != .codex && profile.kind != .agent {
             let records = model.companions.sessions(for: profile)
             let live = records.filter { $0.state != .closed && ClaudeProcess.isAlive($0) }
@@ -31,10 +34,10 @@ extension ActivityMonitor {
                     }
                 }
                 companionStates[key] = session.state
+                seen.insert(key)
             }
             if entries[profile.id] != summary { entries[profile.id] = summary }
         }
-        let allowed = Set(model.preferences.profiles.filter { $0.kind != .codex && $0.kind != .agent }.map(\.id))
-        companionStates = companionStates.filter { allowed.contains(String($0.key.split(separator: ":").first ?? "")) }
+        companionStates = companionStates.filter { seen.contains($0.key) }
     }
 }

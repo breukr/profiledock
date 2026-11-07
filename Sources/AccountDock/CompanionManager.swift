@@ -1,6 +1,40 @@
 import AppKit
 import DockCore
 
+/// How often terminals and Claude sessions are scanned. Each full scan runs `ps`, may ask Terminal through
+/// Automation and re-reads session files, so it only runs fast while someone is looking or an agent is busy.
+enum CompanionPolling {
+    static let active: TimeInterval = 2, idle: TimeInterval = 10, quiet: TimeInterval = 30
+    /// Apps whose terminals can host a coding agent. Without any of them running there is little to find.
+    static let terminalApps: Set<String> = ["com.apple.Terminal", "com.googlecode.iterm2", "com.mitchellh.ghostty", "dev.warp.Warp-Stable", "dev.warp.Warp-Preview",
+        "com.github.wez.wezterm", "org.alacritty", "net.kovidgoyal.kitty", "co.zeit.hyper", "org.tabby", "com.microsoft.VSCode", "com.microsoft.VSCodeInsiders",
+        "com.todesktop.230313mzl4w4u92", "dev.zed.Zed", "com.exafunction.windsurf", "com.vscodium"]
+    static func isTerminalApp(_ bundle: String?) -> Bool {
+        guard let bundle else { return false }
+        return terminalApps.contains(bundle) || bundle.hasPrefix("com.jetbrains.")
+    }
+    static func interval(expanded: Bool, busy: Bool, terminalRunning: Bool) -> TimeInterval {
+        expanded || busy ? active : terminalRunning ? idle : quiet
+    }
+    /// A session counts as busy while its process lives and it works or waits for an answer.
+    static func busy(_ sessions: [ClaudeSession], isAlive: (ClaudeSession) -> Bool = ClaudeProcess.isAlive) -> Bool {
+        sessions.contains { ($0.state == .working || $0.state == .waiting) && isAlive($0) }
+    }
+}
+
+/// Everything a scan produces that views and activity cues read. A scan that changes none of it does not notify them.
+struct CompanionScan: Equatable {
+    var sessions: [ClaudeSession]
+    var windows: [TerminalWindow]
+    var hostedWindows: [TerminalWindow]
+    var terminalStarted: Double?
+    var terminalError: String?
+    var hostedError: Bool
+    var profiles: [Profile]
+    var activeProfile: String?
+    var openProfiles: Set<String>
+}
+
 @MainActor final class CompanionMonitor {
     weak var model: DockModel?
     private var timer: Timer?
@@ -12,31 +46,165 @@ import DockCore
     /// Coding sessions in other terminal apps and in tmux.
     var hostedWindows: [TerminalWindow] = []
     var hostedError = false
+    private var started = false
+    /// While the screens sleep or another user is active, nothing is scanned.
+    private(set) var paused = false
+    /// Strips (one per screen) that are open right now. Any open strip scans every two seconds.
+    private var expandedStrips: Set<String> = []
+    /// A refresh asked for while a scan runs; it runs once that scan finishes so the request is not lost.
+    private var refreshQueued = false
+    private var lastScan: CompanionScan?
+    private var lastNotified = Date.distantPast
+    private var lastPrune: Date?
+    private let cache = ClaudeSessionCache()
+    private var watcher: DispatchSourceFileSystemObject?
+    private var watchedEvent: Task<Void, Never>?
+    private var observers: [(NotificationCenter, NSObjectProtocol)] = []
+    /// The delay before the next scan, chosen after each scan.
+    private(set) var interval = CompanionPolling.active
     init(model: DockModel) { self.model = model }
     func start() {
-        guard timer == nil else { return }
+        guard !started else { return }
+        started = true
         if let model, model.claudeBridge.enabled, model.preferences.autoAddAgents != false, model.needsClaudeDesktopEntry {
             let application = NSRunningApplication.runningApplications(withBundleIdentifier: ProfileProvider.claude.bundleIdentifier).first?.bundleURL
                 ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: ProfileProvider.claude.bundleIdentifier)
             _ = try? model.recognizeClaudeDesktop(application: application, automatic: true)
         }
-        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+        let workspace = NSWorkspace.shared.notificationCenter
+        observe(workspace, [NSWorkspace.screensDidSleepNotification, NSWorkspace.sessionDidResignActiveNotification]) { $0.setPaused(true) }
+        observe(workspace, [NSWorkspace.screensDidWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification]) { $0.setPaused(false) }
+        // After the Mac sleeps, sessions may have changed while no timer could fire.
+        observe(workspace, [NSWorkspace.didWakeNotification]) { $0.refresh() }
+        // A terminal app that opens or quits changes what there is to find, so scan right away.
+        observe(workspace, [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification]) { monitor, notification in
+            let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            if CompanionPolling.isTerminalApp(app?.bundleIdentifier) { monitor.refresh() }
         }
-        timer?.tolerance = 0.5
         refresh()
     }
-    func stop() { timer?.invalidate(); timer = nil; task?.cancel(); task = nil }
-    func refresh() {
+    func stop() {
+        started = false
+        timer?.invalidate(); timer = nil; task?.cancel(); task = nil
+        watcher?.cancel(); watcher = nil; watchedEvent?.cancel(); watchedEvent = nil
+        for (center, token) in observers { center.removeObserver(token) }
+        observers = []
+    }
+    private func observe(_ center: NotificationCenter, _ names: [Notification.Name], _ handler: @escaping @MainActor (CompanionMonitor, Notification) -> Void) {
+        for name in names {
+            observers.append((center, center.addObserver(forName: name, object: nil, queue: .main) { [weak self] notification in
+                MainActor.assumeIsolated { if let self { handler(self, notification) } }
+            }))
+        }
+    }
+    private func observe(_ center: NotificationCenter, _ names: [Notification.Name], _ handler: @escaping @MainActor (CompanionMonitor) -> Void) {
+        observe(center, names) { monitor, _ in handler(monitor) }
+    }
+
+    /// The strip calls this when it opens or closes. `id` tells strips on different screens apart.
+    /// Opening scans at once, so the strip shows current sessions instead of a result up to 30 seconds old.
+    func setStripExpanded(_ expanded: Bool, id: String = "") {
+        let wasExpanded = !expandedStrips.isEmpty
+        if expanded { expandedStrips.insert(id) } else { expandedStrips.remove(id) }
+        if expanded, !wasExpanded { refresh() }
+    }
+    var stripExpanded: Bool { !expandedStrips.isEmpty }
+
+    func setPaused(_ value: Bool) {
+        guard paused != value else { return }
+        paused = value
+        if paused { timer?.invalidate(); timer = nil } else { refresh() }
+    }
+
+    private func scheduleNext() {
+        timer?.invalidate(); timer = nil
+        guard started, !paused, let model else { return }
+        interval = CompanionPolling.interval(expanded: stripExpanded, busy: CompanionPolling.busy(sessions),
+                                             terminalRunning: model.runningBundles.contains(where: CompanionPolling.isTerminalApp))
+        let timer = Timer(timeInterval: interval, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refresh() }
+        }
+        // Tolerance lets macOS group this wake-up with others, which saves battery.
+        timer.tolerance = interval / 5
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    /// Claude Code's hook helper writes into the session folder. Watching it shows a new question or a finished
+    /// turn at once, even while the idle scan waits 10 or 30 seconds.
+    private func watchSessions(_ root: URL) {
+        guard watcher == nil, started else { return }
+        let descriptor = Darwin.open(root.path, O_EVTONLY)
+        guard descriptor >= 0 else { return }
+        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: [.write, .rename, .delete], queue: .main)
+        source.setEventHandler { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if source.data.contains(.delete) || source.data.contains(.rename) { self.watcher?.cancel(); self.watcher = nil; return }
+                self.sessionsChanged()
+            }
+        }
+        source.setCancelHandler { Darwin.close(descriptor) }
+        source.resume()
+        watcher = source
+    }
+
+    /// Coalesces a burst of session writes (a working session reports several times a second) into one light refresh.
+    private func sessionsChanged() {
+        guard watchedEvent == nil, !paused else { return }
+        watchedEvent = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard let self, !Task.isCancelled else { return }
+            self.watchedEvent = nil
+            self.refreshSessions()
+        }
+    }
+
+    /// Only re-reads the session files, which the cache makes cheap. Terminal and process scans wait for the timer.
+    func refreshSessions() {
         guard task == nil, let model else { return }
-        let home = model.home
+        let home = model.home, cache = cache
+        task = Task { [weak self] in
+            let records = await Task.detached(priority: .utility) { ClaudeSessionStore(home: home).read(cache: cache) }.value
+            guard let self, !Task.isCancelled else { return }
+            self.task = nil
+            if records != self.sessions {
+                self.sessions = records
+                model.rememberCompanionSessions()
+                self.publish()
+                // A session that starts working switches to the fast interval now.
+                if CompanionPolling.busy(records), self.interval > CompanionPolling.active { self.scheduleNext() }
+            }
+            self.runQueuedRefresh()
+        }
+    }
+
+    private func runQueuedRefresh() {
+        guard refreshQueued else { return }
+        refreshQueued = false; refresh()
+    }
+
+    func refresh() {
+        guard let model else { return }
+        guard task == nil else { refreshQueued = true; return }
+        let home = model.home, cache = cache
         let terminals = model.preferences.discoverTerminals != false || model.preferences.profiles.contains { $0.kind.usesTerminal && $0.discoveredTerminal != true }
+        // Old session files are removed at most once an hour, off the main thread.
+        let prunes = lastPrune.map { Date().timeIntervalSince($0) > 3600 } ?? true
+        if prunes { lastPrune = Date() }
         task = Task { [weak self, weak model] in
             guard let self, let model else { return }
-            defer { self.task = nil }
-            let records = await Task.detached(priority: .utility) { ClaudeSessionStore(home: home).read() }.value
+            defer { self.task = nil; self.scheduleNext(); self.runQueuedRefresh() }
+            let (records, remaining) = await Task.detached(priority: .utility) {
+                let store = ClaudeSessionStore(home: home)
+                let remaining = prunes ? store.prune() : nil
+                return (store.read(cache: cache), remaining)
+            }.value
             guard !Task.isCancelled else { return }
             self.sessions = records
+            if let remaining { model.trimReadMarkers(keeping: remaining) }
+            if self.watcher == nil { self.watchSessions(ClaudeSessionStore(home: home).root) }
+            // Terminal.app is only asked through Automation (osascript) while it runs.
             if terminals, NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Terminal").isEmpty == false {
                 do {
                     self.windows = try await TerminalClient.shared.windows(installs: InstalledAgent.installs(model.installedAgents ?? []))
@@ -62,8 +230,20 @@ import DockCore
             model.reconcileDiscoveredTerminals(includeTerminalApp: self.terminalError == nil, includeHosted: !self.hostedError)
             model.rememberCompanionSessions()
             model.refresh()
-            model.companionRevision += 1
+            self.publish()
         }
+    }
+
+    /// Bumps `companionRevision` only when the scan changed something, plus once a minute so time-based state
+    /// (expired usage windows, stale subagents) still updates. Each bump re-renders the strip and re-checks activity.
+    private func publish(now: Date = Date()) {
+        guard let model else { return }
+        let scan = CompanionScan(sessions: sessions, windows: windows, hostedWindows: hostedWindows, terminalStarted: terminalStarted,
+                                 terminalError: terminalError, hostedError: hostedError, profiles: model.preferences.profiles,
+                                 activeProfile: model.activeProfile, openProfiles: Set(model.running.keys))
+        guard scan != lastScan || now.timeIntervalSince(lastNotified) >= 60 else { return }
+        lastScan = scan; lastNotified = now
+        model.companionRevision += 1
     }
     func window(for profile: Profile) -> TerminalWindow? {
         if profile.terminalHost != nil { return hostedWindows.first { $0.matches(profile, processStarted: nil) } }
@@ -534,6 +714,12 @@ import DockCore
             do { try await TerminalClient.shared.close(window) }
             catch { showProfileMessage(error.localizedDescription, for: profile, actionTitle: "Show Window") }
         }
+    }
+    /// Read markers of sessions whose metadata was removed are dropped, so the list does not grow forever.
+    func trimReadMarkers(keeping ids: Set<String>) {
+        guard let marks = preferences.claudeReadAt, marks.keys.contains(where: { !ids.contains($0) }) else { return }
+        preferences.claudeReadAt = marks.filter { ids.contains($0.key) }
+        save()
     }
     func markCompanionRead(_ profile: Profile) {
         if preferences.claudeReadAt == nil { preferences.claudeReadAt = [:] }
