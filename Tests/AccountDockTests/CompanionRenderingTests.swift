@@ -4,14 +4,91 @@ import XCTest
 import DockCore
 @testable import AccountDock
 
+/// Fictional usage for strip renders: a 5-hour and a weekly window, two saved resets, and fixed errors per profile id.
+actor StripFixtureUsage: UsageFetching {
+    let failures: [String: UsageLoadError]
+    init(failures: [String: UsageLoadError] = [:]) { self.failures = failures }
+    func identity(for profile: Profile) async throws -> String { profile.id }
+    func fetch(_ profile: Profile, expectedIdentity: String) async throws -> UsageSnapshot {
+        if let failure = failures[profile.id] { throw failure }
+        let now = Date(), seed = Double(abs(profile.id.hashValue % 70))
+        return UsageSnapshot(identity: expectedIdentity, plan: "fixture",
+                             windows: [UsageWindow(id: "five_hour", duration: 18000, usedPercent: 12 + seed, resetsAt: now.addingTimeInterval(2 * 3600 + 840)),
+                                       UsageWindow(id: "seven_day", duration: 604800, usedPercent: 30 + seed * 0.9, resetsAt: now.addingTimeInterval(3 * 86400 + 5 * 3600))],
+                             bankedResets: 2, applicableResets: 1, resetExpiries: [now.addingTimeInterval(3 * 86400 + 600), now.addingTimeInterval(9 * 86400)], fetchedAt: now)
+    }
+}
+
+/// Frames the strip reports through `StripFramesKey`, collected outside SwiftUI.
+final class StripFrameBox: @unchecked Sendable { var frames: [String: CGRect] = [:] }
+
+@MainActor func settleUsage(_ usage: UsageStore) async throws {
+    let deadline = Date().addingTimeInterval(3)
+    while usage.isRefreshing && Date() < deadline { try await Task.sleep(for: .milliseconds(5)) }
+}
+
 final class CompanionRenderingTests: XCTestCase {
+    /// Cards in one row share a height, every section starts on the header's left edge, and the panel is exactly
+    /// as tall as its content (no empty band at the bottom).
+    @MainActor func testStripCardsShareRowHeightsLeadingEdgeAndExactPanelHeight() async throws {
+        _ = NSApplication.shared
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let model = DockModel(home: home), activity = ActivityMonitor(home: home), insights = InsightsStore()
+        let fixture = StripFixtureUsage(failures: ["fixture-2": .network, "fixture-4": .claudeTokenStale])
+        let usage = UsageStore(client: fixture, claudeClient: fixture, claudeAccountClient: { _ in fixture })
+        defer { activity.shutdown(); usage.shutdown(); insights.shutdown() }
+        model.preferences.profiles = ["Noordhaven", "Veldkamp", "Atlas", "Rijnstaal", "Meridian"].enumerated().map { index, name in
+            var profile = Profile(id: "fixture-\(index + 1)", name: name, color: "377CF6"); profile.dockIconStyle = .initials
+            return profile
+        }
+        usage.configure(model.preferences.profiles); usage.refreshAll()
+        try await settleUsage(usage)
+        activity.entries["fixture-1"] = ActivitySummary(unread: 0, working: 2, liveAvailable: true, appOpen: true)
+        activity.entries["fixture-3"] = ActivitySummary(unread: 0, waiting: 1, liveAvailable: true, appOpen: true)
+        model.activeProfile = "fixture-1"
+        for (width, scale) in [(360.0, 0.85), (680.0, 1.0), (1040.0, 1.3), (1040.0, 0.85)] {
+            model.preferences.scale = scale
+            let layout = IslandLayout(screen: CGRect(x: 0, y: 0, width: 1512, height: 982), notchHeight: 0, notchWidth: 0, count: model.displayedProfiles.count, scale: scale,
+                                      hasMessage: false, usageRows: usage.cardUsageRows, expandedWidth: width, terminalCount: model.liveTerminalProfiles.count)
+            let presentation = IslandPresentation(expanded: true)
+            presentation.profileColumns = layout.profileColumns; presentation.profileRows = layout.profileRows
+            let box = StripFrameBox()
+            let size = layout.expanded.size
+            let view = IslandView(model: model, usage: usage, activity: activity, insights: insights, presentation: presentation, notchHeight: 0, settings: {}, drag: { _, _ in })
+                .onPreferenceChange(StripFramesKey.self) { box.frames = $0 }
+            let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height))
+            let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host; host.frame = CGRect(origin: .zero, size: size)
+            host.layoutSubtreeIfNeeded(); try await Task.sleep(for: .milliseconds(100)); host.layoutSubtreeIfNeeded()
+            defer { window.close() }
+            let label = "\(Int(width)) x \(scale)"
+            let cards = box.frames.filter { $0.key.hasPrefix("card:") }.map(\.value)
+            XCTAssertEqual(cards.count, min(5, layout.profileColumns * layout.profileRows), label)
+            let header = try XCTUnwrap(box.frames["header"], label), content = try XCTUnwrap(box.frames["content"], label)
+            let terminals = try XCTUnwrap(box.frames["terminals"], label)
+            let expectedWidth = WidgetSizing.cardWidth(columns: layout.profileColumns, available: size.width - 32, scale: scale)
+            for card in cards {
+                XCTAssertEqual(card.width, expectedWidth, accuracy: 0.5, label)
+                XCTAssertEqual(card.height, CardMetrics.height(usageRows: usage.cardUsageRows, scale: scale), accuracy: 0.5, label)
+                for other in cards where abs(other.minY - card.minY) < 0.5 { XCTAssertEqual(other.height, card.height, accuracy: 0.5, "Equal heights per row at \(label)") }
+            }
+            let leading = try XCTUnwrap(cards.map(\.minX).min())
+            XCTAssertEqual(leading, header.minX, accuracy: 1, "Cards start on the header's left edge at \(label)")
+            XCTAssertEqual(terminals.minX, header.minX, accuracy: 1, "Terminals start on the header's left edge at \(label)")
+            XCTAssertEqual(header.minX, 16, accuracy: 1, label)
+            XCTAssertEqual(content.height + IslandLayout.topInset + IslandLayout.bottomInset, size.height, accuracy: 1, "The panel is exactly as tall as its content at \(label)")
+        }
+    }
+
     @MainActor func testMixedProviderDesktopLayouts() async throws {
         guard let path = ProcessInfo.processInfo.environment["PROFILEDOCK_RENDER_COMPANIONS"] else { throw XCTSkip("Opt-in mixed provider previews") }
         let directory = URL(fileURLWithPath: path)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
-        let model = DockModel(home: home), activity = ActivityMonitor(home: home), usage = UsageStore(), insights = InsightsStore()
+        let fixture = StripFixtureUsage()
+        let model = DockModel(home: home), activity = ActivityMonitor(home: home), usage = UsageStore(client: fixture, claudeClient: fixture, claudeAccountClient: { _ in fixture }), insights = InsightsStore()
         defer { activity.shutdown(); usage.shutdown(); insights.shutdown() }
         var codex = Profile(id: "default", name: "Personal", color: "377CF6"); codex.dockIconStyle = .chatgpt
         try FileManager.default.createDirectory(at: codex.home(in: home), withIntermediateDirectories: true)
@@ -26,22 +103,48 @@ final class CompanionRenderingTests: XCTestCase {
             model.update(profile)
             model.companions.windows.append(TerminalWindow(windowID: index, tty: profile.terminalTTY!, title: "Fixture", selected: false, front: false, agent: profile.kind == .claudeCode ? .claude : .codex))
         }
+        usage.configure(model.preferences.profiles); usage.refreshAll()
+        try await settleUsage(usage)
+        activity.entries["default"] = ActivitySummary(unread: 0, working: 2, liveAvailable: true, appOpen: true)
+        if let claude = model.preferences.profiles.first(where: { $0.kind == .claude }) { activity.entries[claude.id] = ActivitySummary(unread: 1, liveAvailable: true, appOpen: true) }
+        if let code = model.preferences.profiles.first(where: { $0.kind == .claudeCode }) { activity.entries[code.id] = ActivitySummary(waiting: 1, liveAvailable: true, appOpen: true) }
+        model.activeProfile = "default"
         for width in [360.0, 680, 1040] {
             for scale in [0.85, 1, 1.3] {
                 model.preferences.scale = scale
+                // Columns, rows and height come from the real layout for this width, so the render shows any empty band.
+                let layout = IslandLayout(screen: CGRect(x: 0, y: 0, width: 1512, height: 982), notchHeight: 0, notchWidth: 0, count: model.displayedProfiles.count, scale: scale,
+                                          hasMessage: false, usageRows: usage.cardUsageRows, expandedWidth: width, terminalCount: model.liveTerminalProfiles.count)
                 let presentation = IslandPresentation(expanded: true)
-                presentation.profileColumns = width < 500 ? 2 : 4; presentation.profileRows = width < 500 ? 2 : 1
-                let height = width < 500 ? 800.0 : 720.0
+                presentation.profileColumns = layout.profileColumns; presentation.profileRows = layout.profileRows
                 let view = IslandView(model: model, usage: usage, activity: activity, insights: insights, presentation: presentation,
                                       notchHeight: 0, settings: {}, drag: { _, _ in }).background(.black)
-                try await render(view, size: CGSize(width: width, height: height), to: directory.appendingPathComponent("strip-\(Int(width))-\(scale).png"))
+                try await render(view, size: layout.expanded.size, to: directory.appendingPathComponent("strip-\(Int(width))-\(scale).png"))
             }
         }
+        // One card with its saved-reset expiry list open.
+        let details = IslandPresentation(expanded: true)
+        details.profileColumns = 3; details.profileRows = 2
+        details.toggleResetDetails("default")
+        model.preferences.scale = 1
+        let detailsLayout = IslandLayout(screen: CGRect(x: 0, y: 0, width: 1512, height: 982), notchHeight: 0, notchWidth: 0, count: model.displayedProfiles.count, scale: 1,
+                                         hasMessage: false, showsResetDetails: true, usageRows: usage.cardUsageRows, expandedWidth: 880, terminalCount: model.liveTerminalProfiles.count)
+        details.profileColumns = detailsLayout.profileColumns; details.profileRows = detailsLayout.profileRows
+        try await render(IslandView(model: model, usage: usage, activity: activity, insights: insights, presentation: details, notchHeight: 0, settings: {}, drag: { _, _ in }).background(.black),
+                         size: detailsLayout.expanded.size, to: directory.appendingPathComponent("strip-reset-details.png"))
         try await render(ActivityConnectionsView(model: model, activity: activity).padding(20).background(Color(nsColor: .windowBackgroundColor)), size: CGSize(width: 600, height: 940), to: directory.appendingPathComponent("connectors.png"))
         model.preferences.terminalsExpanded = false
         let collapsedPresentation = IslandPresentation(expanded: true)
-        collapsedPresentation.profileColumns = 4
-        try await render(IslandView(model: model, usage: usage, activity: activity, insights: insights, presentation: collapsedPresentation, notchHeight: 0, settings: {}, drag: { _, _ in }).background(.black), size: CGSize(width: 680, height: 440), to: directory.appendingPathComponent("terminals-collapsed.png"))
+        let collapsedLayout = IslandLayout(screen: CGRect(x: 0, y: 0, width: 1512, height: 982), notchHeight: 0, notchWidth: 0, count: model.displayedProfiles.count, scale: 1,
+                                           hasMessage: false, usageRows: usage.cardUsageRows, expandedWidth: 680, terminalCount: 0)
+        collapsedPresentation.profileColumns = collapsedLayout.profileColumns; collapsedPresentation.profileRows = collapsedLayout.profileRows
+        model.preferences.scale = 1
+        try await render(IslandView(model: model, usage: usage, activity: activity, insights: insights, presentation: collapsedPresentation, notchHeight: 0, settings: {}, drag: { _, _ in }).background(.black), size: collapsedLayout.expanded.size, to: directory.appendingPathComponent("terminals-collapsed.png"))
+        // The collapsed strip on a display without a notch: attention count instead of "Agents".
+        for width in [194.0, 300] {
+            if width > 200 { activity.entries["default"] = ActivitySummary(unread: 0, waiting: 2, liveAvailable: true, appOpen: true) }
+            try await render(CompactIslandView(model: model, activity: activity, presentation: IslandPresentation(), drag: { _, _ in }), size: CGSize(width: width, height: 44), to: directory.appendingPathComponent("compact-\(Int(width)).png"))
+        }
         for size in [CGSize(width: 760, height: 560), CGSize(width: 920, height: 700), CGSize(width: 1280, height: 800)] {
             let view = SettingsView(model: model, loginItem: LoginItemModel(), activity: activity, updates: AppUpdates(), selfUpdates: ProfileDockUpdates(), insights: insights, cues: ActivityCues(), chooseImage: { _ in })
             try await render(view, size: size, to: directory.appendingPathComponent("settings-\(Int(size.width)).png"))
@@ -53,18 +156,21 @@ final class CompanionRenderingTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: home) }
-        let model = DockModel(home: home), usage = UsageStore(), activity = ActivityMonitor(home: home), insights = InsightsStore()
+        let fixture = StripFixtureUsage(failures: ["fixture-3": .claudeTokenStale, "fixture-6": .network])
+        let model = DockModel(home: home), usage = UsageStore(client: fixture, claudeClient: fixture, claudeAccountClient: { _ in fixture }), activity = ActivityMonitor(home: home), insights = InsightsStore()
         defer { usage.shutdown(); activity.shutdown(); insights.shutdown() }
         model.preferences.profiles = (1...9).map { index in
             var profile = Profile(id: "fixture-\(index)", name: "Profile \(index)", color: "377CF6")
             profile.dockIconStyle = .chatgpt
             return profile
         }
+        usage.configure(model.preferences.profiles); usage.refreshAll()
+        try await settleUsage(usage)
         for grid in ProfileGrid.presets {
             model.preferences.profileGrid = grid
             for scale in [0.85, 1.0, 1.3] {
                 model.preferences.scale = scale
-                let layout = IslandLayout(screen: CGRect(x: 0, y: 0, width: 1512, height: 982), notchHeight: 0, notchWidth: 0, count: 9, scale: scale, hasMessage: false, terminalCount: 0, grid: grid)
+                let layout = IslandLayout(screen: CGRect(x: 0, y: 0, width: 1512, height: 982), notchHeight: 0, notchWidth: 0, count: 9, scale: scale, hasMessage: false, usageRows: usage.cardUsageRows, terminalCount: 0, grid: grid)
                 let presentation = IslandPresentation(expanded: true)
                 presentation.profileColumns = layout.profileColumns; presentation.profileRows = layout.profileRows
                 let view = IslandView(model: model, usage: usage, activity: activity, insights: insights, presentation: presentation, notchHeight: 0, settings: {}, drag: { _, _ in }).background(.black)
@@ -75,8 +181,10 @@ final class CompanionRenderingTests: XCTestCase {
         model.preferences.showTerminalsSection = false; model.preferences.showInsightsSection = false
         model.preferences.scale = 1
         let presentation = IslandPresentation(expanded: true)
-        presentation.profileColumns = 3; presentation.profileRows = 2
-        try await render(IslandView(model: model, usage: usage, activity: activity, insights: insights, presentation: presentation, notchHeight: 0, settings: {}, drag: { _, _ in }).background(.black), size: CGSize(width: 460, height: 670), to: directory.appendingPathComponent("sections-hidden.png"))
+        let hiddenLayout = IslandLayout(screen: CGRect(x: 0, y: 0, width: 1512, height: 982), notchHeight: 0, notchWidth: 0, count: 9, scale: 1, hasMessage: false, usageRows: usage.cardUsageRows,
+                                        expandedWidth: 860, grid: ProfileGrid(columns: 3, rows: 2), showsInsightsSection: false)
+        presentation.profileColumns = hiddenLayout.profileColumns; presentation.profileRows = hiddenLayout.profileRows
+        try await render(IslandView(model: model, usage: usage, activity: activity, insights: insights, presentation: presentation, notchHeight: 0, settings: {}, drag: { _, _ in }).background(.black), size: hiddenLayout.expanded.size, to: directory.appendingPathComponent("sections-hidden.png"))
     }
     @MainActor private func render<V: View>(_ view: V, size: CGSize, to url: URL) async throws {
         let host = NSHostingView(rootView: view.environment(\.colorScheme, .dark).frame(width: size.width, height: size.height, alignment: .topLeading))

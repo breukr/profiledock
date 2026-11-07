@@ -32,8 +32,19 @@ public struct FloatingPosition: Codable, Equatable, Sendable {
 }
 
 public struct IslandLayout: Equatable, Sendable {
-    public static let resetDetailsHeight: Double = 120
+    /// Height a card grows by while its saved-reset expiry list is open (reserved only while open).
+    public static let resetDetailsHeight: Double = 96
     public static let messageHeight: Double = 100
+    /// Strip chrome shared with `IslandView`, so the panel height matches its content exactly (no empty band).
+    public static let topInset: Double = 12
+    public static let bottomInset: Double = 16
+    public static let sectionGap: Double = 12
+    public static let headerHeight: Double = 28
+    public static let sectionHeaderHeight: Double = 20
+    public static let insightsHeaderHeight: Double = 24
+    public static let pagerHeight: Double = 20
+    public static let emptyStateHeight: Double = 56
+    public static let maxAutomaticRows = 4
     public let screen: CGRect
     public let notchHeight: Double
     public let collapsed: CGRect
@@ -46,7 +57,10 @@ public struct IslandLayout: Equatable, Sendable {
     public static func usableFrame(screen: CGRect, visible: CGRect?) -> CGRect {
         (visible ?? screen).intersection(screen).insetBy(dx: 12, dy: 12)
     }
-    public static func usageHeight(rows: Int) -> Double { Double(max(1, rows)) * 46 + Double(max(0, rows - 1)) * 10 }
+    /// Height of `rows` card rows with the grid gap between them.
+    public static func gridHeight(rows: Int, usageRows: Int, scale: Double) -> Double {
+        rows <= 0 ? 0 : Double(rows) * CardMetrics.height(usageRows: usageRows, scale: scale) + Double(rows - 1) * WidgetSizing.gridGap
+    }
 
     public init(screen: CGRect, notchHeight: Double, notchWidth: Double, count: Int, scale: Double, hasMessage: Bool, menuBarHeight: Double = 24, showsResetDetails: Bool = false, placement: DockPlacement = .topCenter, visibleFrame: CGRect? = nil, position: FloatingPosition = FloatingPosition(), usageRows: Int = 2, showsInsights: Bool = false, compactWidth preferredCompact: Double? = nil, expandedWidth preferredExpanded: Double? = nil, terminalCount: Int? = nil, grid: ProfileGrid? = nil, showsInsightsSection: Bool = true) {
         self.screen = screen
@@ -55,26 +69,39 @@ public struct IslandLayout: Equatable, Sendable {
         let available = Self.usableFrame(screen: screen, visible: visibleFrame)
         let availableHeight: Double = placement == .topCenter ? Double(screen.maxY - (visibleFrame?.minY ?? screen.minY)) - 12 - self.notchHeight : Double(available.height)
         let insightsOpen = showsInsights && showsInsightsSection
-        let requestedWidth = grid.map { max(insightsOpen ? 520 : 320, Double($0.columns) * 142 * scale + 32) }
+        let requestedWidth = grid.map { max(insightsOpen ? 520 : 320, WidgetSizing.gridWidth(columns: $0.columns, scale: scale)) }
             ?? WidgetSizing.expanded(count: count, scale: scale, preferred: preferredExpanded, insights: insightsOpen)
         let expandedWidth = min(placement == .topCenter ? screen.width - 32 : available.width, requestedWidth)
         let insightsHeight = insightsOpen ? WidgetSizing.insightsHeight(width: expandedWidth, count: count) : 0
-        let singleRowHeight = 325 + 32 * scale + Self.usageHeight(rows: usageRows) - 104 + (hasMessage ? Self.messageHeight : 0) + (showsResetDetails ? Self.resetDetailsHeight : 0) + (showsInsightsSection ? 34 : 0)
-        let cardHeight = singleRowHeight - 110 - (hasMessage ? Self.messageHeight : 0) + (showsInsightsSection ? 0 : 34)
-        profileColumns = WidgetSizing.columns(count: grid?.columns ?? count, available: expandedWidth - 32, scale: scale)
-        let desiredRows: Int
-        if let terminalCount, terminalCount > 0 {
-            desiredRows = max(1, (max(0, count - terminalCount) + profileColumns - 1) / profileColumns + (terminalCount + profileColumns - 1) / profileColumns)
-        } else { desiredRows = (max(1, count) + profileColumns - 1) / profileColumns }
-        // Keep row count stable when reset details open, so the clicked account cannot disappear onto another page.
-        let resetReserve = showsResetDetails ? 0 : Self.resetDetailsHeight
-        let extraRows = max(0, Int((availableHeight - singleRowHeight - resetReserve - insightsHeight - 28) / (cardHeight + resetReserve + 10)))
-        profileRows = grid?.rows ?? min(desiredRows, min(2, 1 + extraRows))
+        let columns = WidgetSizing.columns(count: grid?.columns ?? count, available: expandedWidth - 2 * WidgetSizing.stripPadding, scale: scale)
+        profileColumns = columns
         let desktops = max(0, count - (terminalCount ?? 0)), terminals = max(0, terminalCount ?? 0)
-        let capacity = profileRows * profileColumns
-        let pagesHeight = Double((desktops > capacity ? 1 : 0) + (terminals > capacity ? 1 : 0)) * 28
-        let occupiedRows = grid == nil ? profileRows : max(1, min(profileRows, (desktops + profileColumns - 1) / profileColumns) + min(profileRows, (terminals + profileColumns - 1) / profileColumns))
-        let contentHeight = (terminalCount == nil ? 0 : 56) + singleRowHeight + Double(occupiedRows - 1) * (cardHeight + 10) + insightsHeight + pagesHeight
+        let desktopRows = (desktops + columns - 1) / columns, terminalRows = (terminals + columns - 1) / columns
+        // Everything except the card rows: header, notices, section headers, empty state and insights.
+        var chrome = Self.topInset + Self.headerHeight + Self.bottomInset + (hasMessage ? Self.messageHeight : 0)
+        if terminalCount != nil { chrome += Self.sectionGap + Self.sectionHeaderHeight }
+        if showsInsightsSection { chrome += Self.sectionGap + Self.insightsHeaderHeight }
+        if count == 0 { chrome += Self.sectionGap + Self.emptyStateHeight }
+        func occupied(_ rows: Int) -> Int { min(rows, desktopRows) + min(rows, terminalRows) }
+        if let grid { profileRows = grid.rows } else {
+            // Rows come from the screen budget with reset details always counted, so opening them never moves
+            // the clicked account to another page. One pager per section is reserved as well.
+            let card = CardMetrics.height(usageRows: usageRows, scale: scale)
+            let pagers = (terminalCount == nil ? 1.0 : 2.0) * (Self.sectionGap + Self.pagerHeight)
+            let sections = terminalCount == nil || terminals == 0 ? 1.0 : 2.0
+            let budget = availableHeight - chrome - insightsHeight - Self.resetDetailsHeight - pagers - sections * Self.sectionGap
+            let fitting = max(1, Int((budget + WidgetSizing.gridGap * sections) / (card + WidgetSizing.gridGap)))
+            var rows = 1
+            while rows < Self.maxAutomaticRows, occupied(rows + 1) > occupied(rows), occupied(rows + 1) <= fitting { rows += 1 }
+            profileRows = rows
+        }
+        let capacity = profileRows * columns
+        var contentHeight = chrome + insightsHeight + (showsResetDetails ? Self.resetDetailsHeight : 0)
+        let shownDesktopRows = min(profileRows, desktopRows), shownTerminalRows = terminalCount == nil ? 0 : min(profileRows, terminalRows)
+        if shownDesktopRows > 0 { contentHeight += Self.sectionGap + Self.gridHeight(rows: shownDesktopRows, usageRows: usageRows, scale: scale) }
+        if desktops > capacity { contentHeight += Self.sectionGap + Self.pagerHeight }
+        if shownTerminalRows > 0 { contentHeight += Self.sectionGap + Self.gridHeight(rows: shownTerminalRows, usageRows: usageRows, scale: scale) }
+        if terminalCount != nil, terminals > capacity { contentHeight += Self.sectionGap + Self.pagerHeight }
         if placement != .topCenter {
             let compactWidth = min(WidgetSizing.compact(count: count, preferred: preferredCompact), available.width)
             let expandedHeight = min(available.height, contentHeight)
