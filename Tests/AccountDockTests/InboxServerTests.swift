@@ -147,6 +147,16 @@ final class InboxServerTests: XCTestCase {
         }
     }
 
+    func testCodexModeReportsWithoutRecordingAClaudeSession() async throws {
+        let home = try shortHome(), (_, attention) = try started(home)
+        let result = try await run("codex", home: home, payload: ["session_id": "thr-fixture", "cwd": "/fixture/project", "hook_event_name": "PermissionRequest",
+                                                                  "tool_name": "Bash", "tool_input": ["command": "make fixture"]])
+        XCTAssertEqual(result.output, ""); XCTAssertEqual(result.status, 0)
+        try await until { !attention.items.isEmpty }
+        XCTAssertEqual(attention.items[0].source, "codex"); XCTAssertFalse(attention.items[0].awaitsDecision)
+        XCTAssertTrue(ClaudeSessionStore(home: home).read().isEmpty)
+    }
+
     // MARK: Server
 
     func testSocketIsPrivateAndRemovedOnStop() throws {

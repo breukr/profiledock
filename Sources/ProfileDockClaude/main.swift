@@ -6,7 +6,8 @@ import DockCore
 // written to disk. Only a terminal (`cli`) session's PermissionRequest or AskUserQuestion may wait, and only while the
 // app runs with "answer from the notch" on, for at most the hold time the app wrote. Allow, Deny or an answer prints
 // Claude Code's documented decision JSON; pass-through, timeout or any error prints nothing, so Claude's own dialog
-// takes over. Every other hook returns at once, and no hook forwards its input anywhere else.
+// takes over. Every other hook returns at once, and no hook forwards its input anywhere else. In "codex" mode (Codex's
+// hooks.json, never added automatically) Codex events are only reported, never held.
 signal(SIGPIPE, SIG_IGN)
 let mode = CommandLine.arguments.dropFirst().first ?? ""
 let statusline = mode == "statusline"
@@ -34,8 +35,9 @@ if input.count <= 1_048_576,
     let configDirectory = ClaudeBridgeSettings.configDirectory(environment: ProcessInfo.processInfo.environment, home: home)
     let saved = home.appendingPathComponent("Library/Application Support/Account Dock/ClaudeBridge/" + ClaudeBridgeSettings.originalStatuslineName(configDirectory: configDirectory))
     let original = (try? Data(contentsOf: saved)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-    // The "ask" group runs beside the regular PreToolUse group, which already records this call.
-    if mode != "ask", let session = try? ClaudeSessionStore(home: home).record(payload: payload, statusline: statusline, process: process, tty: tty, configDirectory: configDirectory), statusline, original == nil {
+    // The "ask" group runs beside the regular PreToolUse group, which already records this call. Codex sessions are
+    // not Claude sessions and are never recorded.
+    if mode != "ask", mode != "codex", let session = try? ClaudeSessionStore(home: home).record(payload: payload, statusline: statusline, process: process, tty: tty, configDirectory: configDirectory), statusline, original == nil {
         let text = session.limits.map { "\($0.duration == 18000 ? "5h" : "Week"): \(Int(min(100, $0.used)))% used" }.joined(separator: " · ")
         print(text.isEmpty ? "Claude Code · ProfileDock connected" : text)
     }
@@ -43,6 +45,9 @@ if input.count <= 1_048_576,
         let context = ClaudeHookContext(configDirectory: configDirectory, tty: tty, pid: process?.0,
                                         entrypoint: ProcessInfo.processInfo.environment["CLAUDE_CODE_ENTRYPOINT"], flags: AgentInboxFlags.read(home: home))
         if let output = ClaudeAttentionHook.deliver(payload: payload, mode: mode, context: context, socket: AgentInbox.socket(home: home)) { print(output) }
+    }
+    if mode == "codex", let message = CodexAttentionHook.message(payload: payload, codexHome: ProcessInfo.processInfo.environment["CODEX_HOME"]) {
+        AgentInboxClient.post(message, socket: AgentInbox.socket(home: home))
     }
     if statusline, let command = original?["command"] as? String {
         let child = Process(), pipe = Pipe()
