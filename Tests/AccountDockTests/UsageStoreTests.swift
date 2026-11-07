@@ -94,7 +94,7 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertEqual(store.entries[a.id]?.snapshot?.identity, "new-signed-in-user")
     }
 
-    func testNetworkFailureRetainsStaleReadingButAuthorizationFailureClearsIt() async throws {
+    func testNetworkAndAuthorizationFailuresKeepTheLastReading() async throws {
         let client = FixtureUsageClient()
         let store = UsageStore(client: client)
         defer { store.shutdown() }
@@ -109,7 +109,7 @@ final class UsageStoreTests: XCTestCase {
         await client.setFailure(.authorizationRequired)
         store.refreshAll(force: true)
         try await eventually { !store.isRefreshing }
-        XCTAssertNil(store.entries[a.id]?.snapshot)
+        XCTAssertEqual(store.entries[a.id]?.snapshot, reading, "Only another account's identity clears a reading")
         XCTAssertEqual(store.entries[a.id]?.error, .authorizationRequired)
     }
 
@@ -152,7 +152,8 @@ final class UsageStoreTests: XCTestCase {
         await claude.setFailure(.claudeSignInRequired)
         store.refreshAll(force: true)
         try await eventually { !store.isRefreshing }
-        XCTAssertNil(store.entries[profile.id]?.snapshot)
+        XCTAssertEqual(store.entries[profile.id]?.snapshot?.identity, "switched-claude-account")
+        XCTAssertEqual(store.entries[profile.id]?.error, .claudeSignInRequired)
     }
 
     func testStaleClaudeTokenKeepsReadingWithoutNudgeButCanReconnect() async throws {
@@ -185,7 +186,7 @@ final class UsageStoreTests: XCTestCase {
     func testExpiredClaudeSignInWithoutRefreshStillNudges() async throws {
         let client = FixtureUsageClient()
         var profile = a; profile.provider = .claude
-        let store = UsageStore(claudeClient: client)
+        let store = UsageStore(claudeClient: client, launchGraceCycles: 0)
         defer { store.shutdown() }
         var nudges = 0
         store.onConnectionLost = { _ in nudges += 1 }
@@ -193,7 +194,7 @@ final class UsageStoreTests: XCTestCase {
         try await eventually { !store.isRefreshing }
         await client.setIdentityFailure(.claudeSignInRequired)
         store.refreshAll(force: true); try await eventually { !store.isRefreshing }
-        XCTAssertNil(store.entries[profile.id]?.snapshot)
+        XCTAssertNotNil(store.entries[profile.id]?.snapshot, "The reading ages instead of disappearing")
         XCTAssertEqual(nudges, 1)
         XCTAssertEqual(store.disconnectedProfiles.map(\.id), [profile.id])
     }
@@ -209,7 +210,7 @@ final class UsageStoreTests: XCTestCase {
         let main = claude("shared", separate: false), first = claude("work", separate: true), second = claude("client", separate: true)
         var created: [String] = []
         let accounts = [first.claudeConfigPath(in: home)!: work, second.claudeConfigPath(in: home)!: client]
-        let store = UsageStore(claudeClient: shared, claudeAccountClient: { created.append($0); return accounts[$0]! }, signInRunner: runner, signInCommand: signInCommand, home: home)
+        let store = UsageStore(claudeClient: shared, claudeAccountClient: { created.append($0); return accounts[$0]! }, signInRunner: runner, signInCommand: signInCommand, home: home, launchGraceCycles: 0)
         defer { store.shutdown() }
         var nudges: [String] = []
         store.onConnectionLost = { nudges.append($0.id) }
@@ -228,7 +229,7 @@ final class UsageStoreTests: XCTestCase {
         await work.setIdentityFailure(.claudeSignInRequired)
         store.refreshAll(force: true); try await eventually { !store.isRefreshing }
         XCTAssertEqual(store.entries[second.id]?.error, .claudeConnectionNeeded)
-        XCTAssertNil(store.entries[second.id]?.snapshot)
+        XCTAssertEqual(store.entries[second.id]?.snapshot?.identity, second.id, "The last reading stays with its age")
         XCTAssertNotNil(store.entries[main.id]?.snapshot)
         XCTAssertEqual(nudges, [first.id], "Sign-in nudges are per account")
         XCTAssertEqual(store.disconnectedProfiles.map(\.id), [first.id])
@@ -275,9 +276,10 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertEqual(store.entries[profile.id]?.snapshot, expected)
     }
 
-    func testNudgeOncePerAuthFailureEpisodeAndNotForNetworkErrors() async throws {
+    func testNudgeAtMostOncePerDayAndNotForNetworkErrors() async throws {
         let client = FixtureUsageClient()
-        let store = UsageStore(client: client)
+        var now = Date()
+        let store = UsageStore(client: client, clock: { now }, launchGraceCycles: 0)
         defer { store.shutdown() }
         var nudges: [String] = []
         store.onConnectionLost = { nudges.append($0.id) }
@@ -295,13 +297,16 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertTrue(store.disconnectedProfiles.isEmpty)
         await client.setFailure(.notSignedIn); store.refreshAll(force: true)
         try await eventually { !store.isRefreshing }
+        XCTAssertEqual(nudges, [a.id], "A second problem the same day stays in the tile, without another reminder")
+        now = now.addingTimeInterval(86400 + 1)
+        store.refreshAll(force: true); try await eventually { !store.isRefreshing }
         XCTAssertEqual(nudges, [a.id, a.id])
     }
 
     func testClaudeNudgeAndReconnectAreSharedAndRestoreAllTiles() async throws {
         let client = FixtureUsageClient(), runner = FixtureSignInRunner()
         var first = a, second = b; first.provider = .claude; second.provider = .claude
-        let store = UsageStore(claudeClient: client, signInRunner: runner, signInCommand: signInCommand)
+        let store = UsageStore(claudeClient: client, signInRunner: runner, signInCommand: signInCommand, launchGraceCycles: 0)
         defer { store.shutdown() }
         var nudges = 0
         store.onConnectionLost = { _ in nudges += 1 }

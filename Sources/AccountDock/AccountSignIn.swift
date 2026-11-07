@@ -6,16 +6,31 @@ struct AccountSignInCommand: Sendable {
     let arguments: [String]
     let environment: [String: String]
 
-    static func make(profile: Profile, home: URL, executableExists: (String) -> Bool = FileManager.default.isExecutableFile(atPath:)) throws -> Self {
+    static let basePath = "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin"
+
+    static func make(profile: Profile, home: URL, executableExists: (String) -> Bool = FileManager.default.isExecutableFile(atPath:), shellLookup: () -> ShellTools = loginShellTools) throws -> Self {
         guard Profile.validID(profile.id), profile.kind == .codex || profile.usesClaudeAccountUsage else { throw AccountSignInError.unsupported }
-        let candidates = profile.usesClaudeAccountUsage
-            ? [home.appendingPathComponent(".local/bin/claude").path, "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
-            : [profile.applicationPath.map { $0 + "/Contents/Resources/codex" }, "/Applications/ChatGPT.app/Contents/Resources/codex", "/Applications/Codex.app/Contents/Resources/codex", "/opt/homebrew/bin/codex", "/usr/local/bin/codex"].compactMap { $0 }
-        guard let path = candidates.first(where: executableExists) else {
-            throw AccountSignInError.missingCLI(claude: profile.usesClaudeAccountUsage)
+        var searchPath = [String]()
+        let path: String
+        if profile.usesClaudeAccountUsage {
+            if let found = claudeCandidates(home: home).first(where: executableExists) { path = found }
+            else {
+                // Last resort: ask the user's login shell (it knows PATH entries from ~/.zprofile, nvm, volta, ...).
+                let tools = shellLookup()
+                guard let found = tools.claude, executableExists(found) else { throw AccountSignInError.missingCLI(claude: true) }
+                path = found
+                if let node = tools.node, executableExists(node) { searchPath.append((node as NSString).deletingLastPathComponent) }
+            }
+            // An npm-installed claude is a Node script (`#!/usr/bin/env node`): its own folder usually holds node too.
+            searchPath.insert((path as NSString).deletingLastPathComponent, at: 0)
+        } else {
+            let candidates = [profile.applicationPath.map { $0 + "/Contents/Resources/codex" }, "/Applications/ChatGPT.app/Contents/Resources/codex", "/Applications/Codex.app/Contents/Resources/codex", "/opt/homebrew/bin/codex", "/usr/local/bin/codex"].compactMap { $0 }
+            guard let found = candidates.first(where: executableExists) else { throw AccountSignInError.missingCLI(claude: false) }
+            path = found
         }
         // Use a clean environment so another running profile cannot supply authentication overrides.
-        var environment = ["HOME": home.path, "USER": NSUserName(), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin", "LANG": "en_US.UTF-8", "TMPDIR": NSTemporaryDirectory()]
+        let fullPath = (searchPath.filter { !$0.isEmpty && !basePath.split(separator: ":").contains(Substring($0)) } + [basePath]).joined(separator: ":")
+        var environment = ["HOME": home.path, "USER": NSUserName(), "PATH": fullPath, "LANG": "en_US.UTF-8", "TMPDIR": NSTemporaryDirectory()]
         if !profile.usesClaudeAccountUsage { environment["CODEX_HOME"] = profile.home(in: home).path }
         // A separate Claude account signs in to its own configuration, the same CLAUDE_CONFIG_DIR its app launches with.
         if let config = profile.claudeConfigPath(in: home) { environment["CLAUDE_CONFIG_DIR"] = config }
@@ -24,6 +39,47 @@ struct AccountSignInCommand: Sendable {
         if let account = ClaudeDesktopAccount.accountID(for: profile, home: home),
            let email = ClaudeDesktopAccount.email(for: profile, accountID: account, home: home) { arguments.append("--email=" + email) }
         return Self(executable: URL(fileURLWithPath: path), arguments: arguments, environment: environment)
+    }
+}
+
+extension AccountSignInCommand {
+    struct ShellTools: Equatable, Sendable { var claude: String?; var node: String? }
+
+    /// Fixed install locations first (native installer, Homebrew, npm global, nvm, volta, bun), then the copy
+    /// Claude Desktop downloads for its Code tab. Newest versions first.
+    static func claudeCandidates(home: URL, fileManager: FileManager = .default) -> [String] {
+        func newestFirst(_ folder: URL) -> [String] {
+            ((try? fileManager.contentsOfDirectory(atPath: folder.path)) ?? []).filter { !$0.hasPrefix(".") }
+                .sorted { $0.compare($1, options: .numeric) == .orderedDescending }
+        }
+        let nvm = home.appendingPathComponent(".nvm/versions/node")
+        let desktop = home.appendingPathComponent("Library/Application Support/Claude/claude-code")
+        let desktopCopies = newestFirst(desktop).flatMap { version in
+            newestFirst(desktop.appendingPathComponent(version)).map { desktop.appendingPathComponent("\(version)/\($0)/claude.app/Contents/MacOS/claude").path }
+        }
+        return [home.appendingPathComponent(".local/bin/claude").path, "/opt/homebrew/bin/claude", "/usr/local/bin/claude",
+                home.appendingPathComponent(".npm-global/bin/claude").path, home.appendingPathComponent(".claude/local/claude").path]
+            + newestFirst(nvm).map { nvm.appendingPathComponent("\($0)/bin/claude").path }
+            + [home.appendingPathComponent(".volta/bin/claude").path, home.appendingPathComponent(".bun/bin/claude").path]
+            + desktopCopies
+    }
+
+    /// `zsh -lc 'command -v claude; command -v node'` with a 3 second limit. Only absolute paths are accepted;
+    /// the output is never logged.
+    static func loginShellTools() -> ShellTools {
+        let process = Process(), output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-lc", "command -v claude; command -v node"]
+        process.environment = ["HOME": NSHomeDirectory(), "USER": NSUserName(), "PATH": basePath, "LANG": "en_US.UTF-8"]
+        process.standardInput = FileHandle.nullDevice; process.standardOutput = output; process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return ShellTools() }
+        let timeout = DispatchWorkItem { if process.isRunning { process.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 3, execute: timeout)
+        defer { timeout.cancel() }
+        let data = output.fileHandleForReading.readData(ofLength: 8192)
+        process.waitUntilExit()
+        let lines = String(decoding: data, as: UTF8.self).split(separator: "\n").map(String.init).filter { $0.hasPrefix("/") }
+        return ShellTools(claude: lines.first { $0.hasSuffix("/claude") }, node: lines.first { $0.hasSuffix("/node") })
     }
 }
 
