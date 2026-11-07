@@ -66,6 +66,15 @@ final class IslandController {
     var measureAnimations = false
     private var screenKey: String { String(describing: screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] ?? screen.localizedName) }
 
+    /// Black band at the top of the open strip: the notch plus a margin, or the menu bar on a screen without a notch,
+    /// so the strip reads as one shape with the island it grows out of. None when floating.
+    static func band(for layout: IslandLayout, screen: NSScreen) -> CGFloat {
+        guard layout.placement == .topCenter else { return 0 }
+        if layout.notchHeight > 0 { return layout.notchHeight + 6 }
+        let menuBar = screen.frame.maxY - screen.visibleFrame.maxY
+        return menuBar > 0 ? menuBar : NSStatusBar.system.thickness
+    }
+
     static func positionKey(for screen: NSScreen) -> String {
         if let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber,
            let uuid = CGDisplayCreateUUIDFromDisplayID(number.uint32Value)?.takeRetainedValue() {
@@ -114,7 +123,7 @@ final class IslandController {
         panel.setFrame(layout.expanded, display: false)
         compactPanel.setFrame(layout.collapsed, display: false)
         surface.layoutSubtreeIfNeeded()
-        surface.compactOrigin = layout.compactOrigin; surface.floating = layout.placement != .topCenter; surface.notchBand = layout.notchHeight > 0 ? layout.notchHeight + 6 : 0
+        surface.compactOrigin = layout.compactOrigin; surface.floating = layout.placement != .topCenter; surface.notchBand = Self.band(for: layout, screen: screen)
         surface.reveal(expanded: false, compactSize: layout.collapsed.size, duration: 0, fps: preferredFPS)
         presentation.onResetDetailsChange = { [weak self] in self?.updateLayout() }
         presentation.onInsightsWillChange = { [weak self] in
@@ -205,7 +214,7 @@ final class IslandController {
         layout = next
         presentation.profileColumns = layout.profileColumns; presentation.profileRows = layout.profileRows
         presentation.opensUpward = next.opensUpward
-        surface.compactOrigin = layout.compactOrigin; surface.floating = layout.placement != .topCenter; surface.notchBand = layout.notchHeight > 0 ? layout.notchHeight + 6 : 0
+        surface.compactOrigin = layout.compactOrigin; surface.floating = layout.placement != .topCenter; surface.notchBand = Self.band(for: layout, screen: screen)
         // Resize the native window once; animate its mask and content layers on a fixed canvas.
         let canvas = animate ? oldFrame.union(next.expanded) : next.expanded
         panel.setFrame(canvas, display: false)
@@ -403,7 +412,11 @@ final class IslandSurface: NSView {
         defer { CATransaction.commit() }
         veilLayer.removeAnimation(forKey: "glass")
         guard active else { veilLayer.opacity = 1; backdrop.isHidden = true; glassActive = false; return }
-        backdrop.frame = contentRect ?? bounds
+        // The glass is a rounded rectangle the strip's mask cannot clip. Hanging from the top of the screen, it extends
+        // past the window's top edge so its upper corners are cut off by the window and no grey corner shows.
+        var frame = contentRect ?? bounds
+        if !floating { frame.size.height += StripGlass.topOverhang }
+        backdrop.frame = frame
         backdrop.isHidden = false
         let from = veilLayer.presentation()?.opacity ?? veilLayer.opacity
         veilLayer.opacity = 0; glassActive = true

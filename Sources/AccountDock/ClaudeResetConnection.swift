@@ -2,6 +2,19 @@ import AppKit
 import WebKit
 import SwiftUI
 import DockCore
+import os
+
+/// Web-usage diagnostics: outcome and HTTP status only, never cookies, tokens or response bodies.
+let claudeWebLog = WebUsageLog()
+/// Last web-usage outcome per connection, for the live diagnostics file (status words only).
+enum ClaudeWebDiagnostics { nonisolated(unsafe) static var outcomes: [String: String] = [:] }
+struct WebUsageLog {
+    let logger = Logger(subsystem: "nl.breukr.account-dock", category: "claude-web-usage")
+    func notice(_ message: String, key: String = "last") {
+        logger.notice("\(message)")
+        DispatchQueue.main.async { ClaudeWebDiagnostics.outcomes[key] = "\(Date()) \(message)" }
+    }
+}
 
 /// A first-party sign-in in ProfileDock's own WebKit store. No browser cookies are imported.
 /// The shared account keeps the default store; each separate Claude account gets its own persistent store.
@@ -124,22 +137,30 @@ final class ClaudeResetConnection: NSObject, ObservableObject, WKNavigationDeleg
     /// never from the OAuth token; with `expectedAccount` (the tile's Claude app account) a different account is refused.
     /// Cookie and token values never leave the web view: the page's own fetch sends them, Swift sees only JSON.
     func usage(expectedAccount: String?, knownIdentity: String?) async -> ClaudeWebUsage.Outcome {
-        guard enabled else { return .notConnected }
-        guard Date() >= retryAfter else { return .rateLimited }
+        guard enabled else { claudeWebLog.notice("web usage: not connected"); return .notConnected }
+        guard Date() >= retryAfter else { claudeWebLog.notice("web usage: paused after a rate limit"); return .rateLimited }
         let web = prepareWebView(), currentRevision = revision
-        guard await settled(web), enabled, revision == currentRevision else { return .unavailable }
-        guard let first = await run(Self.accountScript, arguments: [:], in: web) else { return .unavailable }
-        guard let status = first["status"] as? Int else { return .unavailable }
-        guard status == 200 else { return outcome(status) }
+        guard await settled(web), enabled, revision == currentRevision else { claudeWebLog.notice("web usage: page did not settle"); return .unavailable }
+        guard let first = await run(Self.accountScript, arguments: [:], in: web) else { claudeWebLog.notice("web usage: account script failed"); return .unavailable }
+        guard let status = first["status"] as? Int else { claudeWebLog.notice("web usage: account response without status"); return .unavailable }
+        guard status == 200 else { claudeWebLog.notice("web usage: account status \(status)"); return outcome(status) }
         guard let account = ClaudeWebUsage.account(account: first["account"], organizations: first["organizations"]),
-              let organization = ClaudeWebUsage.organization(for: account, knownIdentity: knownIdentity) else { return .unavailable }
-        if let expectedAccount, expectedAccount != account.accountID.lowercased() { return .otherAccount }
+              let organization = ClaudeWebUsage.organization(for: account, knownIdentity: knownIdentity) else {
+            claudeWebLog.notice("web usage: account or organization not recognized (account present: \(first["account"] != nil), organizations: \((first["organizations"] as? [Any])?.count ?? -1))")
+            return .unavailable
+        }
+        if let expectedAccount, expectedAccount != account.accountID.lowercased() { claudeWebLog.notice("web usage: signed in to another account"); return .otherAccount }
         guard let second = await run(Self.usageScript, arguments: ["organization": organization], in: web),
-              let usageStatus = second["status"] as? Int, enabled, revision == currentRevision else { return .unavailable }
-        guard usageStatus == 200 else { return outcome(usageStatus) }
-        guard let text = second["usage"] as? String, let data = text.data(using: .utf8) else { return .unavailable }
+              let usageStatus = second["status"] as? Int, enabled, revision == currentRevision else { claudeWebLog.notice("web usage: usage script failed"); return .unavailable }
+        guard usageStatus == 200 else { claudeWebLog.notice("web usage: usage status \(usageStatus)"); return outcome(usageStatus) }
+        guard let text = second["usage"] as? String, let data = text.data(using: .utf8) else { claudeWebLog.notice("web usage: empty usage body"); return .unavailable }
         let identity = ClaudeWebUsage.identity(accountID: account.accountID, organizationID: organization)
-        guard let reading = try? ClaudeWebUsage.snapshot(usage: data, identity: identity, plan: nil, fetchedAt: Date()) else { return .unavailable }
+        guard let reading = try? ClaudeWebUsage.snapshot(usage: data, identity: identity, plan: nil, fetchedAt: Date()) else {
+            let keys = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any]).map { $0.keys.sorted().joined(separator: ",") } ?? "not an object"
+            claudeWebLog.notice("web usage: usage payload not recognized (keys: \(keys))")
+            return .unavailable
+        }
+        claudeWebLog.notice("web usage: reading with \(reading.windows.count) windows")
         message = "Connected. Usage and saved resets refresh automatically, even when Claude Code's sign-in is stale."
         return .reading(reading)
     }

@@ -51,14 +51,14 @@ public enum WidgetSizing {
 /// Geometry of one horizontal profile card in the strip. `IslandView` frames every part with these values,
 /// so `IslandLayout` can size the panel to the cards exactly.
 public enum CardMetrics {
-    public static let padding = 12.0
+    public static let padding = 14.0
     public static let cornerRadius = 16.0
     /// Name (13 pt) over the status line (11 pt).
     public static let textHeight = 32.0
-    public static let usageGap = 10.0
-    public static let rowHeight = 14.0
-    public static let rowGap = 6.0
-    public static let footerGap = 6.0
+    public static let usageGap = 14.0
+    public static let rowHeight = 16.0
+    public static let rowGap = 8.0
+    public static let footerGap = 8.0
     /// The saved-resets line is a button, so it keeps a 20 pt hit target.
     public static let footerHeight = 20.0
     public static func minWidth(scale: Double) -> Double { 240 * scale }

@@ -711,9 +711,9 @@ struct ResetExpiryList: View {
 struct UsageWindowView: View {
     let window: UsageWindow
     let now: Date
-    static let labelWidth: CGFloat = 32
-    static let percentWidth: CGFloat = 32
-    static let resetWidth: CGFloat = 46
+    static let labelWidth: CGFloat = 38
+    static let percentWidth: CGFloat = 36
+    static let resetWidth: CGFloat = 52
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The window's reset time passed since this reading: it is full again, shown dimmed until the next reading.
     private var reset: Bool { window.isPastReset(now: now) }
@@ -738,7 +738,7 @@ struct UsageWindowView: View {
             Text(shortReset).monospacedDigit().foregroundStyle(.white.opacity(0.45)).lineLimit(1)
                 .frame(width: Self.resetWidth, alignment: .trailing)
         }
-        .font(.system(size: 10, weight: .medium))
+        .font(.system(size: 11, weight: .medium))
         .opacity(reset ? 0.55 : 1)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(window.title), \(Int(remaining.rounded())) percent remaining. \(resetText)")

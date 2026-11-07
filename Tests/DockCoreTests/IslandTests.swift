@@ -54,8 +54,8 @@ final class IslandTests: XCTestCase {
         let screen = CGRect(x: 0, y: 0, width: 1920, height: 1080)
         let closed = IslandLayout(screen: screen, notchHeight: 0, notchWidth: 0, count: 5, scale: 1, hasMessage: false)
         let open = IslandLayout(screen: screen, notchHeight: 0, notchWidth: 0, count: 5, scale: 1, hasMessage: false, showsResetDetails: true)
-        // Top 12 + header 28 + gap 12 + two 130 pt card rows with a 10 pt gap + gap 12 + insights header 24 + bottom 16.
-        XCTAssertEqual(closed.expanded.height, 12 + 28 + 12 + 270 + 12 + 24 + 16)
+        // Top 12 + header 28 + gap 12 + two 146 pt card rows with a 10 pt gap + gap 12 + insights header 24 + bottom 16.
+        XCTAssertEqual(closed.expanded.height, 12 + 28 + 12 + 302 + 12 + 24 + 16)
         XCTAssertEqual(closed.expanded.height, IslandLayout.topInset + IslandLayout.headerHeight + IslandLayout.sectionGap
                        + IslandLayout.gridHeight(rows: 2, usageRows: 2, scale: 1) + IslandLayout.sectionGap + IslandLayout.insightsHeaderHeight + IslandLayout.bottomInset)
         XCTAssertEqual(open.expanded.height - closed.expanded.height, IslandLayout.resetDetailsHeight)
@@ -78,11 +78,11 @@ final class IslandTests: XCTestCase {
         let none = IslandLayout(screen: screen, notchHeight: 0, notchWidth: 0, count: 4, scale: 1, hasMessage: false, terminalCount: 0)
         let two = IslandLayout(screen: screen, notchHeight: 0, notchWidth: 0, count: 6, scale: 1, hasMessage: false, terminalCount: 2)
         // Columns follow the bigger section: four desktops keep their row of four, and the two terminals get one
-        // row of their own under the Terminals header (12 + 130) instead of pushing the desktops onto a second row.
+        // row of their own under the Terminals header (12 + 146) instead of pushing the desktops onto a second row.
         XCTAssertEqual(none.profileColumns, 4)
         XCTAssertEqual(two.profileColumns, 4)
         XCTAssertEqual(two.profileRows, 1)
-        XCTAssertEqual(two.expanded.height - none.expanded.height, 12 + 130)
+        XCTAssertEqual(two.expanded.height - none.expanded.height, 12 + 146)
     }
     func testGridDecoderBoundsInvalidDimensions() throws {
         let grid = try JSONDecoder().decode(ProfileGrid.self, from: Data(#"{"columns":999,"rows":-2}"#.utf8))

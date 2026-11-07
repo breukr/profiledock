@@ -52,10 +52,10 @@ final class WidgetSizingTests: XCTestCase {
     }
     func testCardHeightFollowsGeometryExactly() {
         // 12 padding + 36 header + 10 + two 14 pt rows with a 6 pt gap + 6 + 20 footer + 12 padding.
-        XCTAssertEqual(CardMetrics.height(usageRows: 2, scale: 1), 130)
-        XCTAssertEqual(CardMetrics.height(usageRows: 1, scale: 1), 110)
-        XCTAssertEqual(CardMetrics.height(usageRows: 2, scale: 0.85), 126, "The text column sets the header height on small scales")
-        XCTAssertEqual(CardMetrics.height(usageRows: 2, scale: 1.3), 141)
+        XCTAssertEqual(CardMetrics.height(usageRows: 2, scale: 1), 146)
+        XCTAssertEqual(CardMetrics.height(usageRows: 1, scale: 1), 122)
+        XCTAssertEqual(CardMetrics.height(usageRows: 2, scale: 0.85), 142, "The text column sets the header height on small scales")
+        XCTAssertEqual(CardMetrics.height(usageRows: 2, scale: 1.3), 157)
     }
     func testLayoutsStayOnScreenWithManyProfiles() {
         let screen = CGRect(x: 0, y: 0, width: 1024, height: 640)

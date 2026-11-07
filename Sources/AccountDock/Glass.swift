@@ -15,6 +15,8 @@ enum StripGlass {
     static let shadeOpacity: CGFloat = 0.66
     /// Height over which the notch band fades into the glass.
     static let fade: CGFloat = 56
+    /// How far the glass extends above the window's top edge, so its rounded top corners fall outside the window.
+    static let topOverhang: CGFloat = 40
     /// Cross-fade from solid black to glass after the strip settles.
     static let fadeIn: CFTimeInterval = 0.22
 

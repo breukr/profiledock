@@ -182,7 +182,9 @@ actor ClaudeUsageClient: UsageFetching {
     /// A verified web reading, or the original OAuth error when the web sign-in cannot help. A web session that
     /// belongs to another account than the tile's Claude app never shows its numbers.
     private func webReading(for profile: Profile, otherwise error: UsageLoadError) async throws -> UsageSnapshot {
-        switch await webUsage(expectedAccount?(profile), knownIdentity) {
+        let outcome = await webUsage(expectedAccount?(profile), knownIdentity)
+        claudeWebLog.notice("\(profile.name): OAuth \(error), web \(outcome.label)", key: profile.id)
+        switch outcome {
         case .reading(let value):
             knownIdentity = value.identity; webSnapshot = value
             return value
@@ -262,4 +264,18 @@ actor ClaudeUsageClient: UsageFetching {
 extension Profile {
     /// Separate Claude accounts read their own CLAUDE_CONFIG_DIR sign-in; all other Claude tiles share ~/.claude.
     var usesClaudeAccountUsage: Bool { kind == .claude || kind == .claudeCode || (kind == .terminal && terminalAgent == .claude) }
+}
+
+extension ClaudeWebUsage.Outcome {
+    /// Short word for diagnostics; never includes the reading itself.
+    var label: String {
+        switch self {
+        case .notConnected: return "not connected"
+        case .signedOut: return "signed out"
+        case .otherAccount: return "other account"
+        case .rateLimited: return "rate limited"
+        case .unavailable: return "unavailable"
+        case .reading(let value): return "reading (\(value.windows.count) windows)"
+        }
+    }
 }
