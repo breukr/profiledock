@@ -1,12 +1,14 @@
 import Foundation
 
-public struct UsageWindow: Identifiable, Equatable, Sendable {
+public struct UsageWindow: Identifiable, Equatable, Codable, Sendable {
     public let id: String
     public let duration: TimeInterval
     public let usedPercent: Double
     public let resetsAt: Date?
     public var remainingPercent: Double { max(0, min(100, 100 - usedPercent)) }
     public var title: String {
+        // Per-model weekly limits (e.g. `seven_day_opus`) carry the model in their id.
+        if id.hasPrefix("seven_day_"), let model = id.split(separator: "_").last, model != "day" { return model.capitalized + " week" }
         if duration == 604800 { return "Week" }
         if duration == 18000 { return "5 hours" }
         if duration >= 86400, duration.truncatingRemainder(dividingBy: 86400) == 0 { return "\(Int(duration / 86400)) days" }
@@ -16,9 +18,12 @@ public struct UsageWindow: Identifiable, Equatable, Sendable {
     public init(id: String, duration: TimeInterval, usedPercent: Double, resetsAt: Date?) {
         self.id = id; self.duration = duration; self.usedPercent = usedPercent; self.resetsAt = resetsAt
     }
+    /// True once the window's reset time has passed but no newer reading arrived yet, so the bar is out of date
+    /// (the view can say "reset, refreshing" instead of showing the old percentage).
+    public func isPastReset(now: Date = Date()) -> Bool { resetsAt.map { $0 <= now } ?? false }
 }
 
-public struct UsageSnapshot: Equatable, Sendable {
+public struct UsageSnapshot: Equatable, Codable, Sendable {
     public let identity: String
     public let plan: String?
     public let windows: [UsageWindow]
@@ -27,11 +32,33 @@ public struct UsageSnapshot: Equatable, Sendable {
     public let resetExpiries: [Date]?
     public let fetchedAt: Date
     public let hasUnparsedWindows: Bool
+    /// Extra per-model weekly limits (Claude's Opus or Sonnet week). Kept apart from `windows` so tiles keep
+    /// their row count; a view can show them on demand.
+    public let modelWindows: [UsageWindow]
 
-    public init(identity: String, plan: String?, windows: [UsageWindow], bankedResets: Int?, applicableResets: Int?, resetExpiries: [Date]?, fetchedAt: Date, hasUnparsedWindows: Bool = false) {
+    public init(identity: String, plan: String?, windows: [UsageWindow], bankedResets: Int?, applicableResets: Int?, resetExpiries: [Date]?, fetchedAt: Date, hasUnparsedWindows: Bool = false, modelWindows: [UsageWindow] = []) {
         self.identity = identity; self.plan = plan; self.windows = windows
         self.bankedResets = bankedResets; self.applicableResets = applicableResets
         self.resetExpiries = resetExpiries; self.fetchedAt = fetchedAt; self.hasUnparsedWindows = hasUnparsedWindows
+        self.modelWindows = modelWindows
+    }
+
+    private enum CodingKeys: String, CodingKey { case identity, plan, windows, bankedResets, applicableResets, resetExpiries, fetchedAt, hasUnparsedWindows, modelWindows }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(identity: try values.decode(String.self, forKey: .identity), plan: try values.decodeIfPresent(String.self, forKey: .plan),
+                  windows: try values.decode([UsageWindow].self, forKey: .windows),
+                  bankedResets: try values.decodeIfPresent(Int.self, forKey: .bankedResets), applicableResets: try values.decodeIfPresent(Int.self, forKey: .applicableResets),
+                  resetExpiries: try values.decodeIfPresent([Date].self, forKey: .resetExpiries), fetchedAt: try values.decode(Date.self, forKey: .fetchedAt),
+                  hasUnparsedWindows: try values.decodeIfPresent(Bool.self, forKey: .hasUnparsedWindows) ?? false,
+                  modelWindows: try values.decodeIfPresent([UsageWindow].self, forKey: .modelWindows) ?? [])
+    }
+
+    /// The same reading with extra fields replaced; nil keeps the current value.
+    public func with(bankedResets: Int?? = nil, applicableResets: Int?? = nil, resetExpiries: [Date]?? = nil, modelWindows: [UsageWindow]? = nil) -> UsageSnapshot {
+        UsageSnapshot(identity: identity, plan: plan, windows: windows, bankedResets: bankedResets ?? self.bankedResets,
+                      applicableResets: applicableResets ?? self.applicableResets, resetExpiries: resetExpiries ?? self.resetExpiries,
+                      fetchedAt: fetchedAt, hasUnparsedWindows: hasUnparsedWindows, modelWindows: modelWindows ?? self.modelWindows)
     }
 }
 

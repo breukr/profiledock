@@ -22,9 +22,11 @@ struct ProfileDragHandle: NSViewRepresentable {
         override var isFlipped: Bool { true }
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
         override func resetCursorRects() { addCursorRect(bounds, cursor: .openHand) }
+        /// Two columns of three dots, vertically centered, kept inside the card's 12 pt leading padding.
         override func draw(_ dirtyRect: NSRect) {
             NSColor.secondaryLabelColor.setFill()
-            for x in [5.0, 10.0] { for y in [5.0, 10.0, 15.0] { NSBezierPath(ovalIn: NSRect(x: x, y: y, width: 2, height: 2)).fill() } }
+            let left = min((bounds.midX - 3.5).rounded(), 3), top = (bounds.midY - 6).rounded()
+            for x in [left, left + 5] { for y in [top, top + 5, top + 10] { NSBezierPath(ovalIn: NSRect(x: x, y: y, width: 2, height: 2)).fill() } }
         }
         override func mouseDown(with event: NSEvent) { start = event.locationInWindow }
         override func mouseDragged(with event: NSEvent) {
@@ -123,7 +125,9 @@ struct ReorderableProfile: ViewModifier {
     let profile: Profile
     var handle = true
     var displayedOnly = false
+    var cornerRadius: CGFloat = 12
     @State private var targeted = false
+    @State private var hovering = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func body(content: Content) -> some View {
         let dragging = model.draggingProfileID == profile.id
@@ -133,12 +137,20 @@ struct ReorderableProfile: ViewModifier {
         content
         .opacity(dragging ? 0.3 : 1)
         .scaleEffect(dragging && !reduceMotion ? 0.96 : 1)
-        .background(RoundedRectangle(cornerRadius: 12).fill(receiving ? Color.accentColor.opacity(0.12) : .clear))
+        .background(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).fill(receiving ? Color.accentColor.opacity(0.12) : .clear))
         .overlay { ProfileDropTarget(model: model, target: profile.id, terminalGroup: displayedOnly ? profile.kind.usesTerminal : nil, targeted: $targeted) }
-        .overlay(alignment: .topLeading) {
-            if handle { ProfileDragHandle(model: model, profile: profile).frame(width: 18, height: 22).padding(3) }
+        .overlay(alignment: displayedOnly ? .leading : .topLeading) {
+            // Strip cards: a grip in the leading gutter, shown on hover. It stays in the accessibility tree,
+            // and Move earlier / Move later remain available as actions and in the menu.
+            if handle {
+                ProfileDragHandle(model: model, profile: profile)
+                    .frame(width: displayedOnly ? 20 : 18, height: displayedOnly ? 28 : 22).padding(displayedOnly ? 0 : 3)
+                    .opacity(!displayedOnly || hovering || dragging ? 1 : 0)
+            }
         }
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(receiving ? Color.accentColor.opacity(0.7) : .clear, lineWidth: 2).allowsHitTesting(false))
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .overlay(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).stroke(receiving ? Color.accentColor.opacity(0.7) : .clear, lineWidth: 2).allowsHitTesting(false))
         .overlay(alignment: displayedOnly ? (sourceIndex < targetIndex ? .trailing : .leading) : (sourceIndex < targetIndex ? .bottom : .top)) {
             if receiving {
                 Capsule().fill(Color.accentColor)

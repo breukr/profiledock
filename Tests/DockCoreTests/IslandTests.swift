@@ -8,13 +8,20 @@ final class IslandTests: XCTestCase {
         for grid in ProfileGrid.presets {
             for scale in [0.85, 1.0, 1.3] {
                 let layout = IslandLayout(screen: screen, notchHeight: 32, notchWidth: 180, count: 18, scale: scale, hasMessage: false, grid: grid)
-                XCTAssertEqual(layout.profileColumns, grid.columns)
+                let available = layout.expanded.width - 32
+                // Chosen columns are honored while minimum-width cards fit; a wide grid on a small display keeps its rows.
+                XCTAssertEqual(layout.profileColumns, min(grid.columns, WidgetSizing.columns(count: 12, available: available, scale: scale)))
                 XCTAssertEqual(layout.profileRows, grid.rows)
                 XCTAssertTrue(screen.contains(layout.expanded))
                 XCTAssertEqual(layout.expanded.maxY, screen.maxY)
-                XCTAssertLessThanOrEqual(Double(layout.profileColumns) * WidgetSizing.tile(count: layout.profileColumns, available: layout.expanded.width - 32, scale: scale) + Double(layout.profileColumns - 1) * 10 * scale, layout.expanded.width - 32 + 0.01)
+                let card = WidgetSizing.cardWidth(columns: layout.profileColumns, available: available, scale: scale)
+                XCTAssertGreaterThanOrEqual(card, CardMetrics.minWidth(scale: scale) - 1)
+                XCTAssertLessThanOrEqual(Double(layout.profileColumns) * card + Double(layout.profileColumns - 1) * WidgetSizing.gridGap, available + 0.01)
             }
         }
+        // 3 x 3 and 2 x 2 fit a 1512 pt display at every scale; 6 x 1 fits at 0.85.
+        XCTAssertEqual(IslandLayout(screen: screen, notchHeight: 32, notchWidth: 180, count: 18, scale: 1.3, hasMessage: false, grid: ProfileGrid(columns: 3, rows: 3)).profileColumns, 3)
+        XCTAssertEqual(IslandLayout(screen: screen, notchHeight: 32, notchWidth: 180, count: 18, scale: 0.85, hasMessage: false, grid: ProfileGrid(columns: 6, rows: 1)).profileColumns, 6)
         let six = IslandLayout(screen: screen, notchHeight: 32, notchWidth: 180, count: 6, scale: 1, hasMessage: false, grid: ProfileGrid(columns: 1, rows: 6))
         XCTAssertEqual(six.profileRows, 6)
         XCTAssertLessThan(six.expanded.height, 6 * 300)
@@ -38,9 +45,44 @@ final class IslandTests: XCTestCase {
         let screen = CGRect(x: 0, y: 0, width: 1920, height: 2800)
         let shown = IslandLayout(screen: screen, notchHeight: 0, notchWidth: 0, count: 9, scale: 1, hasMessage: false, terminalCount: 0, grid: ProfileGrid(columns: 3, rows: 3))
         let hidden = IslandLayout(screen: screen, notchHeight: 0, notchWidth: 0, count: 9, scale: 1, hasMessage: false, showsInsights: true, grid: ProfileGrid(columns: 3, rows: 3), showsInsightsSection: false)
-        XCTAssertEqual(shown.expanded.height - hidden.expanded.height, 90)
+        // Terminals header (12 gap + 20) and the insights header (12 gap + 24).
+        XCTAssertEqual(shown.expanded.height - hidden.expanded.height, 68)
         XCTAssertEqual(shown.expanded.width, hidden.expanded.width)
         XCTAssertEqual(shown.profileColumns, hidden.profileColumns)
+    }
+    func testPanelHeightMatchesCardsExactlyAndResetDetailsReserveOnlyWhileOpen() {
+        let screen = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        let closed = IslandLayout(screen: screen, notchHeight: 0, notchWidth: 0, count: 5, scale: 1, hasMessage: false)
+        let open = IslandLayout(screen: screen, notchHeight: 0, notchWidth: 0, count: 5, scale: 1, hasMessage: false, showsResetDetails: true)
+        // Top 12 + header 28 + gap 12 + two 146 pt card rows with a 10 pt gap + gap 12 + insights header 24 + bottom 16.
+        XCTAssertEqual(closed.expanded.height, 12 + 28 + 12 + 302 + 12 + 24 + 16)
+        XCTAssertEqual(closed.expanded.height, IslandLayout.topInset + IslandLayout.headerHeight + IslandLayout.sectionGap
+                       + IslandLayout.gridHeight(rows: 2, usageRows: 2, scale: 1) + IslandLayout.sectionGap + IslandLayout.insightsHeaderHeight + IslandLayout.bottomInset)
+        XCTAssertEqual(open.expanded.height - closed.expanded.height, IslandLayout.resetDetailsHeight)
+        XCTAssertEqual(open.profileRows, closed.profileRows)
+        XCTAssertEqual(open.profileColumns, closed.profileColumns)
+        // A notch adds only its own height above the same content.
+        let notch = IslandLayout(screen: screen, notchHeight: 32, notchWidth: 180, count: 5, scale: 1, hasMessage: false)
+        XCTAssertEqual(notch.expanded.height - closed.expanded.height, 32)
+        // Rows stay stable when details open, also on a short display where the budget is tight.
+        let short = CGRect(x: 0, y: 0, width: 1280, height: 640)
+        for count in [3, 8, 14] {
+            let a = IslandLayout(screen: short, notchHeight: 32, notchWidth: 180, count: count, scale: 1.3, hasMessage: true)
+            let b = IslandLayout(screen: short, notchHeight: 32, notchWidth: 180, count: count, scale: 1.3, hasMessage: true, showsResetDetails: true)
+            XCTAssertEqual(a.profileRows, b.profileRows)
+            XCTAssertTrue(short.contains(b.expanded))
+        }
+    }
+    func testTerminalSectionAddsItsOwnRowsAndPagers() {
+        let screen = CGRect(x: 0, y: 0, width: 1920, height: 1400)
+        let none = IslandLayout(screen: screen, notchHeight: 0, notchWidth: 0, count: 4, scale: 1, hasMessage: false, terminalCount: 0)
+        let two = IslandLayout(screen: screen, notchHeight: 0, notchWidth: 0, count: 6, scale: 1, hasMessage: false, terminalCount: 2)
+        // Columns follow the bigger section: four desktops keep their row of four, and the two terminals get one
+        // row of their own under the Terminals header (12 + 146) instead of pushing the desktops onto a second row.
+        XCTAssertEqual(none.profileColumns, 4)
+        XCTAssertEqual(two.profileColumns, 4)
+        XCTAssertEqual(two.profileRows, 1)
+        XCTAssertEqual(two.expanded.height - none.expanded.height, 12 + 146)
     }
     func testGridDecoderBoundsInvalidDimensions() throws {
         let grid = try JSONDecoder().decode(ProfileGrid.self, from: Data(#"{"columns":999,"rows":-2}"#.utf8))
@@ -98,7 +140,9 @@ final class IslandTests: XCTestCase {
         let screen = CGRect(x: 0, y: 0, width: 1920, height: 1080)
         let one = IslandLayout(screen: screen, notchHeight: 0, notchWidth: 0, count: 5, scale: 1, hasMessage: false, usageRows: 1)
         let two = IslandLayout(screen: screen, notchHeight: 0, notchWidth: 0, count: 5, scale: 1, hasMessage: false, usageRows: 2)
-        XCTAssertEqual(two.expanded.height - one.expanded.height, 56)
+        // Five profiles fill two card rows; each card grows by one 14 pt row plus its 6 pt gap.
+        XCTAssertEqual(two.profileRows, 2)
+        XCTAssertEqual(two.expanded.height - one.expanded.height, 2 * (CardMetrics.rowHeight + CardMetrics.rowGap))
         XCTAssertEqual(two.expanded.maxY, one.expanded.maxY)
     }
 

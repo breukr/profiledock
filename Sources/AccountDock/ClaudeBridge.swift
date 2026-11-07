@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import DockCore
 
 struct ClaudeBridge {
@@ -9,14 +10,17 @@ struct ClaudeBridge {
     var helper: URL { directory.appendingPathComponent("ProfileDockClaude") }
     var settings: URL { (configDirectory ?? home.appendingPathComponent(".claude")).appendingPathComponent("settings.json") }
     var originalStatusline: URL { directory.appendingPathComponent(ClaudeBridgeSettings.originalStatuslineName(configDirectory: configDirectory?.standardizedFileURL.path)) }
-    private func installed(_ events: [String]) -> Bool {
+    private func installed(_ events: [String]) -> Bool { hooksPresent(events) && FileManager.default.isExecutableFile(atPath: helper.path) }
+    private func hooksPresent(_ events: [String]) -> Bool {
         guard let data = try? Data(contentsOf: settings), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let hooks = json["hooks"] as? [String: [[String: Any]]] else { return false }
         return events.allSatisfy { event in
             (hooks[event] ?? []).contains { group in ((group["hooks"] as? [[String: Any]]) ?? []).contains { ClaudeBridgeSettings.isOurs($0, helper: helper) } }
-        } && FileManager.default.isExecutableFile(atPath: helper.path)
+        }
     }
     var enabled: Bool { installed(ClaudeBridgeSettings.coreEvents) }
+    /// The user connected this configuration, even if the installed helper copy has since gone missing.
+    var connected: Bool { hooksPresent(ClaudeBridgeSettings.coreEvents) }
     /// False for a connection made before subagent tracking existed. Connecting again adds the hooks and a newer helper.
     var tracksSubagents: Bool { installed(ClaudeBridgeSettings.events) }
     var hasCustomStatusline: Bool {
@@ -24,13 +28,13 @@ struct ClaudeBridge {
               let status = json["statusLine"] as? [String: Any] else { return false }
         return status["command"] as? String != ClaudeBridgeSettings.command(helper: helper, mode: "statusline")
     }
-    func setEnabled(_ enabled: Bool, bundledHelper: URL?) throws {
+    func setEnabled(_ enabled: Bool, bundledHelper: URL?, hold: Int = AgentInbox.defaultHold) throws {
         let fm = FileManager.default
         for url in [directory, settings] where url.resolvingSymlinksInPath() != url.standardizedFileURL {
             throw CompanionError.message("Claude integration cannot modify a linked settings or helper path.")
         }
         let original = fm.fileExists(atPath: settings.path) ? try Data(contentsOf: settings) : nil
-        var changed = try ClaudeBridgeSettings.updating(original, helper: helper, enabled: enabled)
+        var changed = try ClaudeBridgeSettings.updating(original, helper: helper, enabled: enabled, hold: hold)
         let before = try original.map { try JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? nil
         let status = before?["statusLine"] as? [String: Any]
         let ours = ClaudeBridgeSettings.command(helper: helper, mode: "statusline")
@@ -62,16 +66,63 @@ struct ClaudeBridge {
             try Data(contentsOf: bundledHelper).write(to: helper, options: .atomic)
             try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
         }
-        try fm.createDirectory(at: settings.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try write(changed, replacing: original)
+    }
+
+    /// Brings a connection made by an older ProfileDock up to date at launch: replaces the installed helper when the
+    /// bundled one differs (by SHA-256 hash, a fingerprint of the file's bytes) and adds missing hook groups or changed
+    /// hold timeouts. The status line and other tools' hooks are left alone. True when something changed.
+    @discardableResult func refresh(bundledHelper: URL?, hold: Int = AgentInbox.defaultHold) throws -> Bool {
+        guard connected else { return false }
+        let fm = FileManager.default
+        for url in [directory, settings] where url.resolvingSymlinksInPath() != url.standardizedFileURL {
+            throw CompanionError.message("Claude integration cannot modify a linked settings or helper path.")
+        }
+        var changed = false
+        if let bundledHelper, fm.isExecutableFile(atPath: bundledHelper.path) {
+            let bundled = try Data(contentsOf: bundledHelper)
+            if (try? Data(contentsOf: helper)).map(Self.digest) != Self.digest(bundled) {
+                try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+                try bundled.write(to: helper, options: .atomic)
+                try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
+                changed = true
+            }
+        }
+        let original = try Data(contentsOf: settings)
+        let updated = try ClaudeBridgeSettings.updating(original, helper: helper, enabled: true, hold: hold, statusline: false)
+        if try JSONSerialization.jsonObject(with: original) as? NSDictionary != JSONSerialization.jsonObject(with: updated) as? NSDictionary {
+            try write(updated, replacing: original)
+            changed = true
+        }
+        return changed
+    }
+
+    static func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+    static let backupPrefix = "settings.profiledock-backup-"
+
+    /// Writes new settings after backing up the old ones. Keeps the newest ProfileDock backup and the oldest one
+    /// (the user's settings from before ProfileDock first connected); the ones in between are removed.
+    private func write(_ changed: Data, replacing original: Data?) throws {
+        let fm = FileManager.default, folder = settings.deletingLastPathComponent()
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         // Compare immediately before writing, so concurrent editor changes are not silently overwritten.
         let current = fm.fileExists(atPath: settings.path) ? try Data(contentsOf: settings) : nil
         guard current == original else { throw CompanionError.message("Claude settings changed during setup. Try again to keep those changes.") }
         if let original {
-            let backup = settings.deletingLastPathComponent().appendingPathComponent("settings.profiledock-backup-\(UUID().uuidString).json")
+            let backup = folder.appendingPathComponent(Self.backupPrefix + UUID().uuidString + ".json")
             try original.write(to: backup, options: .withoutOverwriting)
             try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: backup.path)
+            let older = ((try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isRegularFileKey, .creationDateKey])) ?? []).filter {
+                $0.lastPathComponent.hasPrefix(Self.backupPrefix) && $0.pathExtension == "json" && $0.lastPathComponent != backup.lastPathComponent
+                    && (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true
+            }.sorted { (($0.creationDate) ?? .distantFuture) < (($1.creationDate) ?? .distantFuture) }
+            for url in older.dropFirst() { try? fm.removeItem(at: url) }
         }
         try changed.write(to: settings, options: .atomic)
         try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: settings.path)
     }
+}
+
+private extension URL {
+    var creationDate: Date? { (try? resourceValues(forKeys: [.creationDateKey]))?.creationDate }
 }

@@ -197,10 +197,34 @@ public enum ClaudeBridgeSettings {
         let path = URL(fileURLWithPath: raw).standardizedFileURL.path
         return path == home.appendingPathComponent(".claude").standardizedFileURL.path ? nil : path
     }
+    /// The AskUserQuestion group runs the helper in "ask" mode, so a question is held once, not by every PreToolUse hook.
     public static func isOurs(_ hook: [String: Any], helper: URL) -> Bool {
-        hook["type"] as? String == "command" && hook["command"] as? String == command(helper: helper, mode: "hook")
+        guard hook["type"] as? String == "command", let value = hook["command"] as? String else { return false }
+        return value == command(helper: helper, mode: "hook") || value == command(helper: helper, mode: "ask")
     }
-    public static func updating(_ data: Data?, helper: URL, enabled: Bool) throws -> Data {
+    /// Spinner text Claude Code shows while a hook runs, which is only noticeable while a request is held.
+    public static let holdingStatus = "Waiting for an answer in ProfileDock"
+    /// Spinner text while a finished turn waits for a reply typed in the pop-up.
+    public static let replyStatus = "Waiting for a reply in ProfileDock"
+    /// The hook groups ProfileDock adds for `event`. Only the three that may wait get a long timeout: permission requests
+    /// and questions the configured hold (`AgentInbox.blockingTimeout`), Stop the longest reply hold (`AgentInbox.replyTimeout`,
+    /// since a reply can be extended while the user types); every other group keeps 5 seconds.
+    public static func groups(for event: String, helper: URL, hold: Int) -> [[String: Any]] {
+        let waiting = AgentInbox.blockingTimeout(hold: hold)
+        if event == "PermissionRequest" {
+            return [["hooks": [["type": "command", "command": command(helper: helper, mode: "hook"), "timeout": waiting, "statusMessage": holdingStatus]]]]
+        }
+        if event == "Stop" {
+            return [["hooks": [["type": "command", "command": command(helper: helper, mode: "hook"), "timeout": AgentInbox.replyTimeout, "statusMessage": replyStatus]]]]
+        }
+        var groups: [[String: Any]] = [["hooks": [["type": "command", "command": command(helper: helper, mode: "hook"), "timeout": 5]]]]
+        if event == "PreToolUse" {
+            groups.append(["matcher": "AskUserQuestion", "hooks": [["type": "command", "command": command(helper: helper, mode: "ask"), "timeout": waiting, "statusMessage": holdingStatus]]])
+        }
+        return groups
+    }
+    /// `statusline: false` leaves the status line exactly as it is (used when refreshing an existing connection).
+    public static func updating(_ data: Data?, helper: URL, enabled: Bool, hold: Int = AgentInbox.defaultHold, statusline: Bool = true) throws -> Data {
         var settings = try data.map { data -> [String: Any] in
             guard let value = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw CompanionError.message("Claude settings must be a JSON object.") }
             return value
@@ -217,14 +241,14 @@ public enum ClaudeBridgeSettings {
                 if remaining.isEmpty { return nil }
                 var value = group; value["hooks"] = remaining; return value
             }
-            if enabled { groups.append(["hooks": [["type": "command", "command": command(helper: helper, mode: "hook"), "timeout": 5]]]) }
+            if enabled { groups += Self.groups(for: event, helper: helper, hold: hold) }
             if groups.isEmpty { hooks.removeValue(forKey: event) } else { hooks[event] = groups }
         }
         settings["hooks"] = hooks
         // An existing status line is never replaced. Usage remains optional.
         let usage = command(helper: helper, mode: "statusline")
-        if enabled && settings["statusLine"] == nil { settings["statusLine"] = ["type": "command", "command": usage] }
-        if !enabled, (settings["statusLine"] as? [String: Any])?["command"] as? String == usage { settings.removeValue(forKey: "statusLine") }
+        if statusline, enabled && settings["statusLine"] == nil { settings["statusLine"] = ["type": "command", "command": usage] }
+        if statusline, !enabled, (settings["statusLine"] as? [String: Any])?["command"] as? String == usage { settings.removeValue(forKey: "statusLine") }
         return try JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys])
     }
 }

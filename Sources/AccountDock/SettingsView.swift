@@ -516,8 +516,8 @@ struct SettingsView: View {
                     }
                     Divider().padding(.leading, 16)
                     VStack(spacing: 18) {
-                        widthControl("Compact width", value: Binding(get: { model.preferences.compactWidth }, set: { model.preferences.compactWidth = $0; model.save() }), range: 160...480, automatic: WidgetSizing.compact(count: model.preferences.profiles.count, preferred: nil))
-                        if model.preferences.profileGrid == nil { widthControl("Expanded width", value: Binding(get: { model.preferences.expandedWidth }, set: { model.preferences.expandedWidth = $0; model.save() }), range: 320...1400, automatic: WidgetSizing.expanded(count: model.preferences.profiles.count, scale: model.preferences.scale, preferred: nil, insights: false)) }
+                        widthControl("Compact width", value: Binding(get: { model.preferences.compactWidth }, set: { model.preferences.compactWidth = $0; model.saveSoon() }), range: 160...480, automatic: WidgetSizing.compact(count: model.preferences.profiles.count, preferred: nil))
+                        if model.preferences.profileGrid == nil { widthControl("Expanded width", value: Binding(get: { model.preferences.expandedWidth }, set: { model.preferences.expandedWidth = $0; model.saveSoon() }), range: 320...1400, automatic: WidgetSizing.expanded(count: model.preferences.profiles.count, scale: model.preferences.scale, preferred: nil, insights: false)) }
                     }.padding(16)
                     if model.placement == .free {
                         Divider().padding(.leading, 16)
@@ -535,13 +535,39 @@ struct SettingsView: View {
                         Toggle("Show activity cues", isOn: Binding(get: { model.preferences.activityCues != false }, set: { model.preferences.activityCues = $0; model.save(); if !$0 { cues.dismiss() } })).labelsHidden()
                     }
                     Divider().padding(.leading, 16)
+                    SettingsRow(title: "Answerable pop-ups", detail: "When an agent asks for permission, asks a question, waits or finishes, show it below the notch with Allow, Deny, the answer choices and a reply field. Claude Code needs its activity connector.") {
+                        Toggle("Show answerable pop-ups", isOn: Binding(get: { model.preferences.attentionPopups != false }, set: { model.preferences.attentionPopups = $0; model.save() })).labelsHidden()
+                    }
+                    if model.preferences.attentionPopups != false {
+                        Divider().padding(.leading, 16)
+                        SettingsRow(title: "Answer permissions from the pop-up", detail: "Terminal Claude Code sessions wait up to \(model.preferences.attentionHoldSeconds ?? 90) seconds for your answer in the pop-up before showing their own prompt. Never while you are in a terminal app, and never for the Claude desktop app.") {
+                            HStack {
+                                Picker("Wait time", selection: Binding(get: { model.preferences.attentionHoldSeconds ?? 90 }, set: { model.preferences.attentionHoldSeconds = $0 == 90 ? nil : $0; model.save() })) {
+                                    ForEach([30, 60, 90, 180], id: \.self) { Text("\($0) s").tag($0) }
+                                }.labelsHidden().fixedSize().disabled(model.preferences.answerPermissionsFromNotch == false)
+                                Toggle("Answer permissions from the pop-up", isOn: Binding(get: { model.preferences.answerPermissionsFromNotch != false }, set: { model.preferences.answerPermissionsFromNotch = $0; model.save() })).labelsHidden()
+                            }
+                        }
+                    }
+                    if model.preferences.attentionPopups != false {
+                        Divider().padding(.leading, 16)
+                        SettingsRow(title: "Reply from the pop-up", detail: "When a Claude Code or Codex session finishes while you are in another app, it waits this long for a reply typed in the pop-up, and longer while you type. Your reply continues the session, also in the Claude and ChatGPT apps.") {
+                            Picker("Reply wait", selection: Binding(get: { model.preferences.replyHoldSeconds ?? 12 }, set: { model.preferences.replyHoldSeconds = $0 == 12 ? nil : $0; model.save() })) {
+                                Text("Off").tag(0)
+                                ForEach([8, 12, 20, 30], id: \.self) { Text("\($0) s").tag($0) }
+                            }.labelsHidden().fixedSize()
+                        }
+                    }
+                    Divider().padding(.leading, 16)
                     SettingsRow(title: "Activity sounds", detail: "Play a quiet sound with each cue.") {
                         Toggle("Play activity sounds", isOn: Binding(get: { model.preferences.activitySounds == true }, set: { model.preferences.activitySounds = $0; model.save() })).labelsHidden()
                     }
                     if model.preferences.activitySounds == true {
                         HStack(spacing: 12) {
                             Image(systemName: "speaker.wave.1")
-                            Slider(value: Binding(get: { model.preferences.activitySoundVolume ?? 0.18 }, set: { model.preferences.activitySoundVolume = $0; model.save() }), in: 0...0.5).accessibilityLabel("Activity sound volume")
+                            // Saved once the slider rests or is released, not on every tick (each save rebuilds the strip and menus).
+                            Slider(value: Binding(get: { model.preferences.activitySoundVolume ?? 0.18 }, set: { model.preferences.activitySoundVolume = $0; model.saveSoon() }), in: 0...0.5,
+                                   onEditingChanged: { if !$0 { model.flushPendingSave() } }).accessibilityLabel("Activity sound volume")
                             Image(systemName: "speaker.wave.2")
                         }.foregroundStyle(.secondary).padding(16)
                     }
@@ -582,7 +608,8 @@ struct SettingsView: View {
             }
             if let current = value.wrappedValue {
                 HStack {
-                    Slider(value: Binding(get: { value.wrappedValue ?? automatic }, set: { value.wrappedValue = $0 }), in: range, step: 10)
+                    Slider(value: Binding(get: { value.wrappedValue ?? automatic }, set: { value.wrappedValue = $0 }), in: range, step: 10,
+                           onEditingChanged: { if !$0 { model.flushPendingSave() } })
                         .accessibilityLabel(title)
                     Text("\(Int(current)) pt").font(.caption).monospacedDigit().frame(width: 52, alignment: .trailing)
                 }

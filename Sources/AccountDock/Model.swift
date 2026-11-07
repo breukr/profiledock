@@ -43,6 +43,14 @@ struct Preferences: Codable {
     var dismissedAgentTools: [String]?
     /// Installed tools the user asked not to be suggested. Automatic adding is not affected.
     var hiddenAgentOffers: [String]?
+    /// Nil means on: agent questions, permission requests and finished turns drop from the notch as an answerable pop-up.
+    var attentionPopups: Bool?
+    /// Nil means on: terminal Claude Code sessions wait briefly for an Allow or Deny from the pop-up before showing their own dialog.
+    var answerPermissionsFromNotch: Bool?
+    /// Seconds a waiting permission request is held for the pop-up before the agent's own dialog takes over. Nil means 90.
+    var attentionHoldSeconds: Int?
+    /// Seconds a finished Claude Code or Codex turn waits for a reply typed in the pop-up (0 = off). Nil means 12.
+    var replyHoldSeconds: Int?
 }
 
 struct ProfileMessageRecovery: Equatable {
@@ -108,6 +116,11 @@ final class DockModel: ObservableObject {
     @Published var draggingProfileID: String?
     var settingsURL: URL { home.appendingPathComponent("Library/Application Support/Account Dock/preferences.json") }
     var onPreferencesChanged: (() -> Void)?
+    /// What the settings file held beyond this version's preferences, written back on every save.
+    private var preferencesFile = PreferencesFile()
+    /// Set when the settings file could not be read. Saving is then refused so the file is never replaced.
+    private(set) var preferencesLocked = false
+    private var pendingSave: Task<Void, Never>?
     lazy var contextSettings = ContextSettingsStore(home: home)
     private var imageCache: [String: NSImage] = [:]
     private var artworkCache: [String: (profile: Profile, source: String, image: NSImage)] = [:]
@@ -117,6 +130,8 @@ final class DockModel: ObservableObject {
         var profile = Profile(id: agent.rawValue, name: agent == .claude ? "Cl" : agent == .codex ? "Cx" : agent.label, color: agent == .claude ? "C97B5D" : agent == .codex ? "202020" : (agent.tool?.color ?? "546E7A"))
         profile.dockIconStyle = .chatgpt
         let vendor = agent.bundleIdentifier.isEmpty ? nil : NSWorkspace.shared.urlForApplication(withBundleIdentifier: agent.bundleIdentifier).map { NSWorkspace.shared.icon(forFile: $0.path) }
+        // The tool's own app logo when one is installed (Hermes, Cursor, Grok...), otherwise the colored monogram.
+        if vendor == nil, let tool = agent.tool, let brand = AgentBrand.icon(for: tool) { terminalAgentArt[agent] = brand; return brand }
         let image = NativeProfileArtwork.preview(profile: profile, image: nil, vendor: vendor, margin: 0)
         terminalAgentArt[agent] = image
         return image
@@ -136,12 +151,15 @@ final class DockModel: ObservableObject {
     func artwork(for profile: Profile, style: DockIconStyle? = nil, margin: CGFloat = 0.1) -> NSImage {
         var value = profile
         if let style { value.dockIconStyle = style }
+        // Agent profiles without a chosen icon show their tool's real app logo plus the profile's color dot.
+        let brand = style == nil ? AgentBrand.defaultIcon(for: profile) : nil
+        if brand != nil { value.dockIconStyle = .dot }
         let source = applicationURL(for: value)
         let version = source.flatMap { Bundle(url: $0)?.object(forInfoDictionaryKey: "CFBundleVersion") as? String } ?? ""
         let sourceKey = (source?.path ?? "") + ":" + version
         let key = "\(profile.id):\(value.profileIconStyle.rawValue):\(margin)"
         if let cached = artworkCache[key], cached.profile == value, cached.source == sourceKey { return cached.image }
-        let vendor = source.map { NSWorkspace.shared.icon(forFile: $0.path) }
+        let vendor = brand ?? source.map { NSWorkspace.shared.icon(forFile: $0.path) }
         let image = NativeProfileArtwork.preview(profile: value, image: image(for: value), vendor: vendor, margin: margin)
         artworkCache[key] = (value, sourceKey, image)
         return image
@@ -192,18 +210,16 @@ final class DockModel: ObservableObject {
     init(home: URL = FileManager.default.homeDirectoryForCurrentUser) {
         self.home = home
         tracksApplications = home.resolvingSymlinksInPath() == FileManager.default.homeDirectoryForCurrentUser.resolvingSymlinksInPath()
+        loadPreferencesFile()
         do {
-            if FileManager.default.fileExists(atPath: settingsURL.path) {
-                preferences = try JSONDecoder().decode(Preferences.self, from: Data(contentsOf: settingsURL))
-            }
             // Agent entries with the shared sign-in have no folder of their own; a separate one recreates its folder when it opens.
             let saved = preferences.profiles.filter { Profile.validID($0.id) && ($0.discoveredTerminal == true || $0.kind == .agent || FileManager.default.fileExists(atPath: $0.home(in: home).path)) }
             let discovered = try ProfileCatalog.discover(home: home).filter { !(preferences.hiddenProfileIDs ?? []).contains($0.id) }
             preferences.profiles = ProfileCatalog.merge(discovered: discovered + saved.filter { item in !discovered.contains(where: { $0.id == item.id }) }, saved: saved)
             preferences.scale = min(1.3, max(0.85, preferences.scale))
         } catch {
-            message = "Could not load preferences: \(error.localizedDescription)"
-            preferences.profiles = (try? ProfileCatalog.discover(home: home)) ?? []
+            message = "Could not load profiles: \(error.localizedDescription)"
+            if preferences.profiles.isEmpty { preferences.profiles = (try? ProfileCatalog.discover(home: home)) ?? [] }
         }
         // Decode existing logos once at startup, before the first hover needs them.
         for profile in preferences.profiles { _ = image(for: profile) }
@@ -212,7 +228,27 @@ final class DockModel: ObservableObject {
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(workspaceChanged), name: NSWorkspace.didActivateApplicationNotification, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(workspaceChanged), name: NSWorkspace.didLaunchApplicationNotification, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(workspaceChanged), name: NSWorkspace.didTerminateApplicationNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(applicationWillTerminate), name: NSApplication.willTerminateNotification, object: nil)
     }
+
+    /// Reads preferences.json without ever discarding it. Unknown values (from a newer version) are kept aside and
+    /// written back. A file that cannot be read at all is copied to preferences.corrupt-<time>.json and never overwritten.
+    private func loadPreferencesFile() {
+        guard FileManager.default.fileExists(atPath: settingsURL.path) else { return }
+        do {
+            preferencesFile = try PreferencesFile.read(Data(contentsOf: settingsURL))
+            preferences = preferencesFile.preferences
+        } catch {
+            preferencesLocked = true
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyyMMdd-HHmmss"
+            let backup = settingsURL.deletingLastPathComponent().appendingPathComponent("preferences.corrupt-\(formatter.string(from: Date())).json")
+            let copied = (try? FileManager.default.copyItem(at: settingsURL, to: backup)) != nil
+            message = "ProfileDock could not read its settings file, so changes are not saved this session." + (copied ? " A copy is in \(backup.lastPathComponent)." : "")
+        }
+    }
+
+    @objc private func applicationWillTerminate(_ notification: Notification) { flushPendingSave() }
 
     @objc private func workspaceChanged(_ notification: Notification) {
         guard tracksApplications else { return }
@@ -489,14 +525,29 @@ final class DockModel: ObservableObject {
     }
 
     func save() {
+        pendingSave?.cancel(); pendingSave = nil
+        // An unreadable file stays as it is; the user's original settings may still be recovered from it.
+        guard !preferencesLocked else { onPreferencesChanged?(); return }
         do {
             try FileManager.default.createDirectory(at: settingsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(preferences).write(to: settingsURL, options: .atomic)
+            try preferencesFile.data(for: preferences).write(to: settingsURL, options: .atomic)
             onPreferencesChanged?()
         } catch { message = "Could not save: \(error.localizedDescription)" }
     }
+
+    /// Coalesces rapid changes, such as a dragged slider, into one save 300 ms after the last change.
+    /// Each save writes the whole file and rebuilds menus, hotkeys and the strip, so a save per slider tick stutters.
+    func saveSoon() {
+        pendingSave?.cancel()
+        pendingSave = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            self?.save()
+        }
+    }
+
+    /// Writes a change that `saveSoon` is still holding, for example when a slider is released or the app quits.
+    func flushPendingSave() { if pendingSave != nil { save() } }
 
     func state(_ profile: Profile) -> String {
         if closing.contains(profile.id) { return "Closing…" }

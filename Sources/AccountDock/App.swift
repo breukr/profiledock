@@ -14,6 +14,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     let appUpdates = AppUpdates()
     let selfUpdates = ProfileDockUpdates()
     let cues = ActivityCues()
+    let attention = AttentionCenter()
+    /// The local inbox for agent hooks. Nil in preview mode. Call `inbox?.preferencesChanged()` when preferences change.
+    private(set) var inbox: AgentInboxService?
+    lazy var attentionPanel = AttentionPanelController(center: attention, model: model)
     var islands: [IslandController] = []
     let iconAppearance = AppIconController()
     var status: NSStatusItem!
@@ -52,6 +56,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             return
         }
         applyVisibility()
+        // Last readings from disk first, so tiles show bars (with their age) right after launch.
+        if !previewMode { usage.useReadingCache(.standard()) }
+        if !previewMode {
+            inbox = AgentInboxService(model: model, attention: attention); inbox?.start()
+            // Someone already working in a terminal, or in the session's own app, sees the agent's own prompt at once;
+            // the pop-up only holds a request or a finished turn (for a reply) while they are in another app.
+            inbox?.server.shouldHold = { item in AttentionHoldPolicy.allows(item, frontmost: NSWorkspace.shared.frontmostApplication?.bundleIdentifier) }
+            // Switching to that terminal or app ends a turn's reply wait at once, so the agent's own input is never blocked.
+            NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didActivateApplicationNotification).sink { [weak self] note in
+                let bundle = (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier
+                self?.inbox?.server.releaseHeldReplies { AttentionHoldPolicy.releases($0, frontmost: bundle) }
+            }.store(in: &subscriptions)
+        }
         usage.configure(previewMode ? [] : model.stripProfiles)
         insights.prepare(profiles: model.preferences.profiles, home: model.home)
         if !previewMode {
@@ -60,7 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 self?.usage.claudeConnectionChanged(configDirectory: note.userInfo?[ClaudeResetConnection.configDirectoryKey] as? String)
             }.store(in: &subscriptions)
             NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification).sink { [weak self] _ in
-                self?.usage.refreshAll()
+                self?.usage.handleWake()
             }.store(in: &subscriptions)
         }
         activity.configure(previewMode ? [] : model.activityProfiles, running: Set(model.running.keys))
@@ -99,6 +116,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             self.cues.receive(event, model: self.model)
         }.store(in: &subscriptions)
         if !previewMode { registerHotKeys() }
+        if !previewMode {
+            attentionPanel.start()
+            cues.suppresses = { [weak self] id in self?.attentionPanel.isShowing(profileID: id) == true }
+        } else if CommandLine.arguments.contains("--preview-attention") {
+            // Visual check of the live pop-up glass with fictional items; nothing is answered or sent anywhere.
+            attentionPanel.start()
+            attention.post(AgentAttention(source: "claude", sessionID: "preview-1", kind: .permission, title: "Run a command?",
+                                          message: "Claude wants to run a shell command in meridian-api.", toolName: "Bash",
+                                          preview: "npm run migrate -- --env staging && git push origin feature/noordhaven-sync",
+                                          cwd: "/tmp/meridian-api", entrypoint: "cli", deadline: Date().addingTimeInterval(3600)))
+            attention.post(AgentAttention(source: "claude", sessionID: "preview-2", kind: .finished, title: "Done",
+                                          message: "Finished the Noordhaven importer. Parsed 1,204 rows and wrote a summary to reports/import.md.",
+                                          cwd: "/tmp/atlas-web", tty: "/dev/ttys999"))
+            // --preview-attention-loop replays the open and close motion every 7 seconds for review.
+            if CommandLine.arguments.contains("--preview-attention-loop") {
+                let center = attention
+                Timer.scheduledTimer(withTimeInterval: 7, repeats: true) { _ in
+                    MainActor.assumeIsolated {
+                        let saved = center.items
+                        saved.forEach { center.expire($0.id) }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            for item in saved { center.post(AgentAttention(source: item.source, sessionID: item.sessionID, kind: item.kind, title: item.title, message: item.message, toolName: item.toolName, preview: item.preview, questions: item.questions, cwd: item.cwd, tty: item.tty, entrypoint: item.entrypoint, deadline: item.deadline)) }
+                        }
+                    }
+                }
+            }
+        }
         if model.preferences.profiles.isEmpty || previewMode || CommandLine.arguments.contains("--settings") || CommandLine.arguments.contains("--context-settings") || CommandLine.arguments.contains("--search-chats") { showSettings() }
         model.onPreferencesChanged = { [weak self] in
             guard let self else { return }
@@ -111,6 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             self.applyVisibility()
             self.iconAppearance.update(self.model.preferences.appIconAppearance ?? .auto)
             self.configureMenu(); if !self.previewMode { self.registerHotKeys() }
+            self.inbox?.preferencesChanged()
         }
         DistributedNotificationCenter.default().addObserver(self, selector: #selector(showPanel), name: Notification.Name("nl.breukr.account-dock.show"), object: nil)
         DistributedNotificationCenter.default().addObserver(self, selector: #selector(writeDiagnostics), name: Notification.Name("nl.breukr.account-dock.diagnostics"), object: nil)
@@ -155,8 +200,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        inbox?.stop()
         iconAppearance.shutdown()
         cues.shutdown()
+        attentionPanel.stop()
         if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
         if let localMouseMonitor { NSEvent.removeMonitor(localMouseMonitor) }
         islands.forEach { $0.shutdown() }
@@ -200,7 +247,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc func writeDiagnostics(_ notification: Notification) {
         let destination = model.settingsURL.deletingLastPathComponent().appendingPathComponent("live-diagnostics.json")
         loginItem.refresh()
-        let output: [String: Any] = ["companions": ["codingTerminals": model.liveTerminalProfiles.count, "terminalTabs": model.companions.windows.count, "terminalError": model.companions.terminalError as Any? ?? NSNull(), "terminalsExpanded": model.preferences.terminalsExpanded != false, "discoveryEnabled": model.preferences.discoverTerminals != false], "requestID": notification.object as? String ?? "", "islands": islands.map(\.diagnostics), "usage": usage.diagnostics, "activity": activity.diagnostics, "mouseEvents": mouseEvents, "globalMouseMonitor": globalMouseMonitor != nil, "localMouseMonitor": localMouseMonitor != nil, "profileRefreshes": model.refreshCount, "loginItem": loginItem.statusName, "menuBarItem": status.isVisible, "pid": ProcessInfo.processInfo.processIdentifier, "iconAppearance": (model.preferences.appIconAppearance ?? .auto).rawValue]
+        let output: [String: Any] = ["companions": ["codingTerminals": model.liveTerminalProfiles.count, "terminalTabs": model.companions.windows.count, "terminalError": model.companions.terminalError as Any? ?? NSNull(), "terminalsExpanded": model.preferences.terminalsExpanded != false, "discoveryEnabled": model.preferences.discoverTerminals != false], "requestID": notification.object as? String ?? "", "islands": islands.map(\.diagnostics), "usage": usage.diagnostics, "activity": activity.diagnostics, "mouseEvents": mouseEvents, "globalMouseMonitor": globalMouseMonitor != nil, "localMouseMonitor": localMouseMonitor != nil, "profileRefreshes": model.refreshCount, "loginItem": loginItem.statusName, "menuBarItem": status.isVisible, "pid": ProcessInfo.processInfo.processIdentifier, "iconAppearance": (model.preferences.appIconAppearance ?? .auto).rawValue, "claudeWebUsage": ClaudeWebDiagnostics.outcomes]
         if let data = try? JSONSerialization.data(withJSONObject: output, options: [.prettyPrinted, .sortedKeys]) {
             try? FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? data.write(to: destination, options: .atomic)

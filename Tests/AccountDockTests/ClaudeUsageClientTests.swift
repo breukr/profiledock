@@ -66,8 +66,9 @@ final class ClaudeUsageClientTests: XCTestCase {
         var requested: [String] = []
         // Shared sign-in: the unsuffixed item only, never a file fallback.
         XCTAssertEqual(try ClaudeUsageCredential.read(configDirectory: nil, keychain: { requested.append($0); return valid }).plan, "pro")
+        // No item at all: usage was never connected, a soft state rather than a sign-in failure.
         do { _ = try ClaudeUsageCredential.read(configDirectory: nil, keychain: { _ in nil }); XCTFail("Missing shared sign-in") }
-        catch { XCTAssertEqual(error as? UsageLoadError, .claudeSignInRequired) }
+        catch { XCTAssertEqual(error as? UsageLoadError, .claudeConnectionNeeded) }
         // Separate account: its hashed item first.
         XCTAssertEqual(try ClaudeUsageCredential.read(configDirectory: config.path, keychain: { requested.append($0); return valid }).plan, "pro")
         XCTAssertEqual(requested, ["Claude Code-credentials", ClaudeCredentialService.name(configDirectory: config.path)])
@@ -223,8 +224,8 @@ final class ClaudeUsageClientTests: XCTestCase {
             do { _ = try ClaudeUsageCredential.read(configDirectory: directory, keychain: { _ in item }); return nil } catch { return error as? UsageLoadError }
         }
         XCTAssertEqual(failure(config.path, mcpOnly), .claudeConnectionNeeded)
-        // The shared sign-in has no file fallback: the same item there is still a sign-in failure.
-        XCTAssertEqual(failure(nil, mcpOnly), .claudeSignInRequired)
+        // The shared sign-in has no file fallback, and an item without a Claude login there also means "connect once".
+        XCTAssertEqual(failure(nil, mcpOnly), .claudeConnectionNeeded)
         // A Claude login in the documented file is used when the item has none.
         try valid.write(to: config.appendingPathComponent(".credentials.json"))
         XCTAssertEqual(try ClaudeUsageCredential.read(configDirectory: config.path, keychain: { _ in mcpOnly }).plan, "max")

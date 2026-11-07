@@ -45,6 +45,12 @@ final class IslandController {
     private(set) var layout: IslandLayout
     private(set) var expanded = false
     private(set) var animating = false
+    /// Strips currently open, across displays (the pop-up stays folded while any is open).
+    private static var openStrips = Set<ObjectIdentifier>()
+    static func anyExpanded(changing controller: IslandController, to value: Bool) -> Bool {
+        if value { openStrips.insert(ObjectIdentifier(controller)) } else { openStrips.remove(ObjectIdentifier(controller)) }
+        return !openStrips.isEmpty
+    }
     private let surface = IslandSurface()
     private var collapseTimer: Timer?
     private var scheduledCollapse: TimeInterval?
@@ -59,6 +65,15 @@ final class IslandController {
     private let frameMeter = AnimationFrameMeter()
     var measureAnimations = false
     private var screenKey: String { String(describing: screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] ?? screen.localizedName) }
+
+    /// Black band at the top of the open strip: the notch plus a margin, or the menu bar on a screen without a notch,
+    /// so the strip reads as one shape with the island it grows out of. None when floating.
+    static func band(for layout: IslandLayout, screen: NSScreen) -> CGFloat {
+        guard layout.placement == .topCenter else { return 0 }
+        if layout.notchHeight > 0 { return layout.notchHeight + 6 }
+        let menuBar = screen.frame.maxY - screen.visibleFrame.maxY
+        return menuBar > 0 ? menuBar : NSStatusBar.system.thickness
+    }
 
     static func positionKey(for screen: NSScreen) -> String {
         if let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber,
@@ -75,7 +90,10 @@ final class IslandController {
         } else { notchWidth = 180 }
         let topInset = screen.frame.maxY - screen.visibleFrame.maxY
         let menuBarHeight = topInset > 0 ? topInset : NSStatusBar.system.thickness
-        return IslandLayout(screen: screen.frame, notchHeight: screen.safeAreaInsets.top, notchWidth: notchWidth, count: model.displayedProfiles.count, scale: model.preferences.scale, hasMessage: model.message != nil || hasNotice, menuBarHeight: menuBarHeight, showsResetDetails: showsResetDetails, placement: model.placement, visibleFrame: screen.visibleFrame, position: position ?? model.floatingPosition(for: positionKey(for: screen)), usageRows: usageRows, showsInsights: model.preferences.showInsightsSection != false && (showsInsights || model.preferences.insightsExpansion == .always), compactWidth: model.preferences.compactWidth, expandedWidth: model.preferences.expandedWidth, terminalCount: model.preferences.showTerminalsSection == false ? nil : model.preferences.terminalsExpanded == false ? 0 : model.liveTerminalProfiles.count, grid: model.preferences.profileGrid, showsInsightsSection: model.preferences.showInsightsSection != false)
+        // Only cards that are actually drawn count: terminal sessions are not cards while their section is collapsed or hidden.
+        let desktopCount = model.displayedProfiles.filter { !$0.kind.usesTerminal }.count
+        let terminalCards: Int? = model.preferences.showTerminalsSection == false ? nil : model.preferences.terminalsExpanded == false ? 0 : model.displayedProfiles.count - desktopCount
+        return IslandLayout(screen: screen.frame, notchHeight: screen.safeAreaInsets.top, notchWidth: notchWidth, count: desktopCount + (terminalCards ?? 0), scale: model.preferences.scale, hasMessage: model.message != nil || hasNotice, menuBarHeight: menuBarHeight, showsResetDetails: showsResetDetails, placement: model.placement, visibleFrame: screen.visibleFrame, position: position ?? model.floatingPosition(for: positionKey(for: screen)), usageRows: usageRows, showsInsights: model.preferences.showInsightsSection != false && (showsInsights || model.preferences.insightsExpansion == .always), compactWidth: model.preferences.compactWidth, expandedWidth: model.preferences.expandedWidth, terminalCount: terminalCards, grid: model.preferences.profileGrid, showsInsightsSection: model.preferences.showInsightsSection != false)
     }
 
     init(screen: NSScreen, model: DockModel, usage: UsageStore, activity: ActivityMonitor? = nil, insights: InsightsStore? = nil, presentWindows: Bool = true,
@@ -105,7 +123,7 @@ final class IslandController {
         panel.setFrame(layout.expanded, display: false)
         compactPanel.setFrame(layout.collapsed, display: false)
         surface.layoutSubtreeIfNeeded()
-        surface.compactOrigin = layout.compactOrigin; surface.floating = layout.placement != .topCenter
+        surface.compactOrigin = layout.compactOrigin; surface.floating = layout.placement != .topCenter; surface.notchBand = Self.band(for: layout, screen: screen)
         surface.reveal(expanded: false, compactSize: layout.collapsed.size, duration: 0, fps: preferredFPS)
         presentation.onResetDetailsChange = { [weak self] in self?.updateLayout() }
         presentation.onInsightsWillChange = { [weak self] in
@@ -126,6 +144,10 @@ final class IslandController {
             if self.trackedMenus.isEmpty { self.checkHover() }
         }.store(in: &menuSubscriptions)
         showPanel()
+        // Visual checks of the live glass: keep a preview strip open without hovering (preview homes only).
+        if CommandLine.arguments.contains("--preview"), CommandLine.arguments.contains("--preview-expanded") {
+            DispatchQueue.main.async { [weak self] in self?.presentAttention(for: 3600) }
+        }
     }
 
     private static func makePanel(frame: NSRect, title: String) -> AccountPanel {
@@ -166,6 +188,8 @@ final class IslandController {
     }
 
     func shutdown() {
+        // A rebuilt strip must not leave the pop-up folded away.
+        NotificationCenter.default.post(name: AttentionPanelController.stripExpansionChanged, object: nil, userInfo: ["expanded": Self.anyExpanded(changing: self, to: false)])
         usageSubscription?.cancel()
         menuSubscriptions.removeAll(); trackedMenus.removeAll()
         presentation.expanded = false
@@ -190,7 +214,7 @@ final class IslandController {
         layout = next
         presentation.profileColumns = layout.profileColumns; presentation.profileRows = layout.profileRows
         presentation.opensUpward = next.opensUpward
-        surface.compactOrigin = layout.compactOrigin; surface.floating = layout.placement != .topCenter
+        surface.compactOrigin = layout.compactOrigin; surface.floating = layout.placement != .topCenter; surface.notchBand = Self.band(for: layout, screen: screen)
         // Resize the native window once; animate its mask and content layers on a fixed canvas.
         let canvas = animate ? oldFrame.union(next.expanded) : next.expanded
         panel.setFrame(canvas, display: false)
@@ -199,6 +223,7 @@ final class IslandController {
         surface.layoutSubtreeIfNeeded()
         if animate {
             animating = true
+            surface.setGlass(active: false, animated: false)
             if measureAnimations { frameMeter.start(screen: screen, fps: preferredFPS, surface: surface) }
             surface.resize(from: oldVisible.offsetBy(dx: -canvas.minX, dy: -canvas.minY),
                            to: surface.contentRect!, snapshot: snapshot,
@@ -211,6 +236,7 @@ final class IslandController {
         }
         surface.contentRect = nil
         surface.reveal(expanded: expanded, compactSize: layout.collapsed.size, duration: 0, fps: preferredFPS)
+        surface.setGlass(active: expanded, animated: false)
         if !expanded { panel.orderOut(nil) }
         showPanel()
     }
@@ -221,6 +247,7 @@ final class IslandController {
         surface.contentRect = nil
         surface.layoutSubtreeIfNeeded()
         surface.reveal(expanded: expanded, compactSize: layout.collapsed.size, duration: 0, fps: preferredFPS)
+        surface.setGlass(active: expanded, animated: expanded && !reduceMotion())
     }
 
     func pointerMoved(to point: NSPoint) {
@@ -292,6 +319,7 @@ final class IslandController {
         animationGeneration += 1
         let generation = animationGeneration
         let duration = reduceMotion() ? 0 : (value ? 0.16 : 0.14)
+        surface.setGlass(active: false, animated: false)
         animating = duration > 0
         if value {
             compactPanel.orderOut(nil)
@@ -299,10 +327,14 @@ final class IslandController {
             if presentWindows { panel.orderFrontRegardless() }
         } else { panel.ignoresMouseEvents = true }
         if measureAnimations && duration > 0 { frameMeter.start(screen: screen, fps: preferredFPS, surface: surface) }
+        // Terminals are scanned every 2 s while a strip is open, slower otherwise.
+        model.companions.setStripExpanded(value, id: screenKey)
+        NotificationCenter.default.post(name: AttentionPanelController.stripExpansionChanged, object: nil, userInfo: ["expanded": IslandController.anyExpanded(changing: self, to: value)])
         surface.reveal(expanded: value, compactSize: layout.collapsed.size, duration: duration, fps: preferredFPS) { [weak self] in
             guard let self, self.animationGeneration == generation else { return }
             self.animating = false
             self.frameMeter.stop()
+            if self.expanded { self.surface.setGlass(active: true, animated: !self.reduceMotion()) }
             if !self.expanded {
                 self.panel.orderOut(nil)
                 if self.model.preferences.insightsExpansion != .always { self.presentation.setInsightsExpanded(false) }
@@ -329,20 +361,37 @@ final class IslandSurface: NSView {
     var floating = false
     var contentRect: CGRect? { didSet { needsLayout = true } }
     private var hosted: NSView?
+    private var backdrop: NSView?
+    private let shade = StripShadeView()
+    private let veil = NSView()
     private let revealMask = CAShapeLayer()
     private let border = CAShapeLayer()
     private var outgoingContent: CALayer?
     private(set) var isResizing = false
+    /// Opaque black band at the top that fuses with the hardware notch (notch height plus a margin; 0 when floating).
+    var notchBand: CGFloat = 0 { didSet { shade.band = floating ? 0 : notchBand } }
+    var hasGlass: Bool { backdrop != nil }
 
     func install(_ view: NSView) {
         wantsLayer = true
-        layer?.backgroundColor = NSColor.black.cgColor
         layer?.mask = revealMask
+        // Dark Liquid Glass: backdrop, a solid black veil (shown while the outline moves), the black-to-shade
+        // gradient, then the content. The mask clips everything except the window-server glass itself.
+        if let glass = StripGlass.backdrop(cornerRadius: 27) {
+            layer?.backgroundColor = NSColor.clear.cgColor
+            glass.isHidden = true
+            addSubview(glass); backdrop = glass
+            veil.wantsLayer = true; veil.layer?.backgroundColor = NSColor.black.cgColor
+            veil.autoresizingMask = [.width, .height]
+            addSubview(veil)
+            shade.autoresizingMask = [.width, .height]
+            addSubview(shade)
+        } else { layer?.backgroundColor = NSColor.black.cgColor }
         view.wantsLayer = true
         view.autoresizingMask = [.width, .height]
         addSubview(view); hosted = view
         border.fillColor = nil
-        border.strokeColor = NSColor.white.withAlphaComponent(0.13).cgColor
+        border.strokeColor = NSColor.white.withAlphaComponent(backdrop == nil ? 0.13 : 0.18).cgColor
         border.lineWidth = 1
         layer?.addSublayer(border)
     }
@@ -350,8 +399,34 @@ final class IslandSurface: NSView {
     override func layout() {
         super.layout()
         hosted?.frame = contentRect ?? bounds
+        veil.frame = bounds; shade.frame = bounds
+        shade.band = floating ? 0 : notchBand
         border.frame = bounds; revealMask.frame = bounds
     }
+
+    /// Shows the glass once the outline has settled, sized to exactly the visible strip; hides it the moment the
+    /// outline starts to move again (the black veil covers the strip in between).
+    func setGlass(active: Bool, animated: Bool) {
+        guard let backdrop, let veilLayer = veil.layer else { return }
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        veilLayer.removeAnimation(forKey: "glass")
+        guard active else { veilLayer.opacity = 1; backdrop.isHidden = true; glassActive = false; return }
+        // The glass is a rounded rectangle the strip's mask cannot clip. Hanging from the top of the screen, it extends
+        // past the window's top edge so its upper corners are cut off by the window and no grey corner shows.
+        var frame = contentRect ?? bounds
+        if !floating { frame.size.height += StripGlass.topOverhang }
+        backdrop.frame = frame
+        backdrop.isHidden = false
+        let from = veilLayer.presentation()?.opacity ?? veilLayer.opacity
+        veilLayer.opacity = 0; glassActive = true
+        guard animated, from > 0 else { return }
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = from; fade.toValue = 0; fade.duration = StripGlass.fadeIn
+        fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        veilLayer.add(fade, forKey: "glass")
+    }
+    private(set) var glassActive = false
 
     var presentationBounds: CGRect? { revealMask.presentation()?.path?.boundingBoxOfPath }
     var contentFrame: CGRect { hosted?.frame ?? bounds }

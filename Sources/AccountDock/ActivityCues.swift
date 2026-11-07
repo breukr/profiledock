@@ -15,9 +15,11 @@ final class ActivityCues {
     private var lastSound = Date.distantPast
     private var generation = 0
     private static let visibleDuration = 3.2
+    /// True for a profile whose session the attention pop-up already shows; its small cue is skipped.
+    var suppresses: ((String) -> Bool)?
 
     func receive(_ event: ActivityEvent, model: DockModel) {
-        guard model.preferences.profiles.contains(where: { $0.id == event.profileID }) else { return }
+        guard model.preferences.profiles.contains(where: { $0.id == event.profileID }), suppresses?(event.profileID) != true else { return }
         let key = event.profileID + ":" + event.signal.rawValue
         let now = Date()
         guard now.timeIntervalSince(recent[key] ?? .distantPast) >= 5 else { return }
@@ -30,7 +32,7 @@ final class ActivityCues {
             guard !Task.isCancelled, let self, let model else { return }
             while !Task.isCancelled {
                 guard let notice = self.pending.next() else { break }
-                let profiles = model.preferences.profiles.filter { notice.profileIDs.contains($0.id) }
+                let profiles = model.preferences.profiles.filter { notice.profileIDs.contains($0.id) && self.suppresses?($0.id) != true }
                 guard !profiles.isEmpty else { continue }
                 self.show(notice.signal, profiles: profiles, model: model, preview: false)
                 try? await Task.sleep(for: .seconds(Self.visibleDuration + ActivityCueSurface.closeDuration + 0.1))

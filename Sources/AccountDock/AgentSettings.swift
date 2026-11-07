@@ -109,6 +109,7 @@ struct AgentsSettingsView: View {
                     }
                 }
             }
+            NotchPopupsSection(model: model)
             if let error = model.companions.terminalError {
                 SettingsNotice(text: error, symbol: "lock.trianglebadge.exclamationmark", isWarning: true,
                                actionTitle: "Open Privacy Settings", action: { NSWorkspace.shared.open(DockModel.automationSettings) })
@@ -292,5 +293,142 @@ struct StatusCapsule: View {
         }.fixedSize()
         .padding(.horizontal, 7).padding(.vertical, 2)
         .background(Color.primary.opacity(0.06), in: Capsule())
+    }
+}
+
+/// Settings → Coding Agents → Notch pop-ups: connect each installed agent's hooks so the notch can show when a session is
+/// done or needs the user. Nothing connects by itself; every change is one click here and can be undone the same way.
+struct NotchPopupsSection: View {
+    @ObservedObject var model: DockModel
+    @State private var statuses: [String: AgentHookBridge.Status] = [:]
+    /// Agents connected in this window while they were running: their open sessions keep the old hooks until restarted.
+    @State private var restart: Set<String> = []
+    @State private var busy: Set<String> = []
+    @State private var message: String?
+
+    private var bundledHelper: URL? { Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("ProfileDockClaude") }
+    /// Installed agents that ProfileDock can connect, in registry order.
+    private var rows: [(id: String, tool: AgentTool)] {
+        AgentHookBridge.ids.compactMap { id in
+            let tools = AgentHookBridge.tools(for: id).compactMap(AgentRegistry.tool(id:))
+            guard let tool = tools.first(where: { model.installedAgent($0.id)?.isInstalled == true }) ?? (tools.contains(where: model.isRunning) ? tools.first : nil) else { return nil }
+            return (id, tool)
+        }
+    }
+
+    var body: some View {
+        GroupBox("Notch pop-ups") {
+            VStack(spacing: 0) {
+                SettingsRow(title: "Show agents in the notch",
+                            detail: "When a session finishes, the notch shows a short Done. When it needs you, the pop-up shows what it asks. ProfileDock adds its own entry to each agent's hook settings and keeps everything else.") {
+                    Button("Connect All") { connectAll() }
+                        .disabled(rows.allSatisfy { statuses[$0.id] == .connected } || !busy.isEmpty)
+                        .help("Connect every agent listed below that is not connected yet.")
+                }
+                ForEach(rows, id: \.id) { row in
+                    Divider().padding(.leading, 16)
+                    rowView(row.id, tool: row.tool)
+                }
+                if rows.isEmpty, model.installedAgents != nil {
+                    Divider().padding(.leading, 16)
+                    Text("No agent that can show pop-ups is installed yet.").font(.callout).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).padding(.vertical, 12)
+                }
+            }
+        }
+        VStack(alignment: .leading, spacing: 6) {
+            if let message { Text(message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) }
+            if rows.contains(where: { $0.id == "codex" }) {
+                Text("Codex runs a new or changed hook only after you trust it: after connecting, type /hooks in Codex once and trust ProfileDock's entries.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .onAppear { reload() }
+        .onChange(of: model.installedAgents?.map(\.id) ?? []) { _ in reload() }
+    }
+
+    @ViewBuilder private func rowView(_ id: String, tool: AgentTool) -> some View {
+        let status = statuses[id]
+        HStack(spacing: 12) {
+            AgentIcon(model: model, tool: tool, size: 28)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(tool.name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                    capsule(id, status: status, tool: tool)
+                }
+                Text(Self.summary(id)).font(.caption).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            if busy.contains(id) { ProgressView().controlSize(.small).accessibilityLabel("Updating \(tool.name)") }
+            Group {
+                switch status {
+                case .connected?: Button("Disconnect") { set(id, false, name: tool.name) }
+                case .outdated?: Button("Update") { set(id, true, name: tool.name) }.buttonStyle(.borderedProminent)
+                case .unreadable(let reason)?: Button("Connect") {}.disabled(true).help(reason)
+                default: Button("Connect") { set(id, true, name: tool.name) }
+                }
+            }
+            .disabled(busy.contains(id)).frame(minWidth: 96, alignment: .trailing)
+            .accessibilityLabel(status == .connected ? "Disconnect \(tool.name) from the notch" : "Connect \(tool.name) to the notch")
+        }
+        .padding(.horizontal, 16).padding(.vertical, 10)
+        .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder private func capsule(_ id: String, status: AgentHookBridge.Status?, tool: AgentTool) -> some View {
+        switch status {
+        case .connected? where restart.contains(id): StatusCapsule(text: "Restart \(tool.name)", color: .orange).help("Sessions that were already open keep their old settings until \(tool.name) restarts.")
+        case .connected?: StatusCapsule(text: "Connected", color: .green)
+        case .outdated?: StatusCapsule(text: "Needs update", color: .orange)
+        case .unreadable(let reason)?: StatusCapsule(text: "Can't edit settings", color: .orange).help(reason)
+        case .notConnected?: StatusCapsule(text: "Not connected", color: .secondary)
+        case nil: EmptyView()
+        }
+    }
+
+    /// What the pop-up can do for each agent.
+    static func summary(_ id: String) -> String {
+        switch id {
+        case "claude": return "Done, approvals, questions, and replies from the pop-up."
+        case "codex": return "Done and approvals. Reply from the pop-up when a turn ends."
+        case "cursor": return "Done, for the Cursor app and the Cursor CLI."
+        case "opencode": return "Done, approvals and questions, through a small plugin file."
+        default: return "Done and approvals. Answer in the agent itself."
+        }
+    }
+
+    private func reload() {
+        let home = model.home, ids = rows.map(\.id), shared = model.claudeBridge
+        Task {
+            let result = await Task.detached { () -> [String: AgentHookBridge.Status] in
+                let bridge = AgentHookBridge(home: home)
+                var values: [String: AgentHookBridge.Status] = [:]
+                for id in ids {
+                    if id == "claude" { values[id] = shared.enabled ? .connected : shared.connected ? .outdated : .notConnected }
+                    else { values[id] = bridge.status(id) }
+                }
+                return values
+            }.value
+            statuses = result
+        }
+    }
+
+    private func connectAll() {
+        for row in rows where statuses[row.id] != .connected { if case .unreadable? = statuses[row.id] { continue }; set(row.id, true, name: row.tool.name) }
+    }
+
+    private func set(_ id: String, _ enabled: Bool, name: String) {
+        busy.insert(id); message = nil
+        let home = model.home, helper = bundledHelper, bridges = model.claudeBridges
+        let running = AgentHookBridge.tools(for: id).compactMap(AgentRegistry.tool(id:)).contains(where: model.isRunning)
+        Task {
+            defer { busy.remove(id); reload() }
+            do {
+                try await Task.detached {
+                    if id == "claude" { for bridge in bridges { try bridge.setEnabled(enabled, bundledHelper: helper) } }
+                    else { try AgentHookBridge(home: home).setConnected(id, enabled, bundledHelper: helper) }
+                }.value
+                if enabled, running { restart.insert(id) } else { restart.remove(id) }
+            } catch { message = "\(name): " + error.localizedDescription }
+        }
     }
 }

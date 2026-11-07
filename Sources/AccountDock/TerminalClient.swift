@@ -117,33 +117,21 @@ actor TerminalClient {
     func windows(installs: [String: String] = [:]) async throws -> [TerminalWindow] {
         let windows = try JSONDecoder().decode([TerminalWindow].self, from: await run(["list"]))
         guard !windows.isEmpty else { return [] }
-        let agents = try await Task.detached(priority: .utility) {
-            let process = Process(), output = Pipe()
-            process.executableURL = URL(fileURLWithPath: "/bin/ps")
-            process.arguments = ["-axo", "pid=,tpgid=,tty=,stat=,comm="]
-            process.standardOutput = output; process.standardError = FileHandle.nullDevice
-            try process.run()
-            let data = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
-            guard process.terminationStatus == 0 else { throw CompanionError.message("Running coding terminals could not be detected.") }
+        let processes = try await processSnapshot()
+        let agents = await Task.detached(priority: .utility) {
             // Script-based CLIs run as node or python; their argv names the script. The environment is never read.
-            return TerminalAgent.processes(String(data: data, encoding: .utf8) ?? "", installs: installs, inspect: DockModel.launch(pid:), executablePath: DockModel.executablePath(pid:), resolve: { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path })
+            TerminalAgent.processes(ProcessRow.agentTable(processes.rows), installs: installs, inspect: processes.launch, executablePath: processes.executablePath,
+                                    resolve: { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path })
         }.value
         return windows.map { var value = $0; value.agent = agents[value.tty]; return value }
     }
     /// Coding agents in other terminal apps and in tmux, from one `ps` run. Only names, parents, paths and the argv of
     /// runtimes are read, as for Terminal.app.
     func hostedSessions(installs: [String: String], skip: @escaping @Sendable (AgentHost) -> Bool) async throws -> [TerminalWindow] {
-        try await Task.detached(priority: .utility) {
-            let process = Process(), output = Pipe()
-            process.executableURL = URL(fileURLWithPath: "/bin/ps")
-            process.arguments = ["-axo", "pid=,ppid=,tpgid=,tty=,stat=,comm="]
-            process.standardOutput = output; process.standardError = FileHandle.nullDevice
-            try process.run()
-            let data = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
-            guard process.terminationStatus == 0 else { throw CompanionError.message("Running coding terminals could not be detected.") }
-            let rows = ProcessRow.rows(String(decoding: data, as: UTF8.self))
+        let processes = try await processSnapshot()
+        return await Task.detached(priority: .utility) {
             let applications = Set(NSWorkspace.shared.runningApplications.map(\.processIdentifier))
-            return AgentHosts.sessions(rows: rows, installs: installs, inspect: DockModel.launch(pid:), executablePath: DockModel.executablePath(pid:),
+            return AgentHosts.sessions(rows: processes.rows, installs: installs, inspect: processes.launch, executablePath: processes.executablePath,
                                        resolve: { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path },
                                        isApplication: { applications.contains($0) }, skip: skip).compactMap { session in
                 guard let host = session.host.applicationPath.flatMap({ Bundle(path: $0)?.bundleIdentifier }) ?? session.host.bundleIdentifier ?? session.host.multiplexer else { return nil }
@@ -153,6 +141,27 @@ actor TerminalClient {
                                       agentStarted: ClaudeProcess.startTime(session.pid), hostProcess: session.host.processIdentifier)
             }
         }.value
+    }
+
+    /// One `ps` table shared by `windows` and `hostedSessions` within a scan, instead of running `ps` twice.
+    private var snapshot: ProcessSnapshot?
+    /// Short enough that a later scan never sees an old table, long enough to cover both calls of one scan.
+    static let snapshotLifetime: TimeInterval = 1.5
+    func processSnapshot(now: Date = Date()) async throws -> ProcessSnapshot {
+        if let snapshot, now.timeIntervalSince(snapshot.taken) < Self.snapshotLifetime { return snapshot }
+        let table = try await Task.detached(priority: .utility) {
+            let process = Process(), output = Pipe()
+            process.executableURL = URL(fileURLWithPath: "/bin/ps")
+            process.arguments = ["-axo", "pid=,ppid=,tpgid=,tty=,stat=,comm="]
+            process.standardOutput = output; process.standardError = FileHandle.nullDevice
+            try process.run()
+            let data = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
+            guard process.terminationStatus == 0 else { throw CompanionError.message("Running coding terminals could not be detected.") }
+            return String(decoding: data, as: UTF8.self)
+        }.value
+        let value = ProcessSnapshot(taken: Date(), rows: ProcessRow.rows(table))
+        snapshot = value
+        return value
     }
 
     /// iTerm2 can select a session by its TTY. Other apps are only brought forward.
@@ -195,4 +204,31 @@ actor TerminalClient {
     }
     func select(_ window: TerminalWindow) async throws { _ = try await run(["select", String(window.windowID), window.tty]) }
     func close(_ window: TerminalWindow) async throws { _ = try await run(["close", String(window.windowID), window.tty]) }
+}
+
+/// A `ps` table and the process details read for it. Each process is inspected (a `sysctl` call) at most once per table.
+final class ProcessSnapshot: @unchecked Sendable {
+    let taken: Date
+    let rows: [ProcessRow]
+    private let lock = NSLock()
+    private var launches: [Int32: AgentProcessLaunch?] = [:]
+    private var paths: [Int32: String?] = [:]
+    init(taken: Date, rows: [ProcessRow], inspect: @escaping @Sendable (Int32) -> AgentProcessLaunch? = { DockModel.launch(pid: $0) },
+         path: @escaping @Sendable (Int32) -> String? = { DockModel.executablePath(pid: $0) }) {
+        self.taken = taken; self.rows = rows; self.inspect = inspect; self.path = path
+    }
+    private let inspect: @Sendable (Int32) -> AgentProcessLaunch?
+    private let path: @Sendable (Int32) -> String?
+    func launch(_ pid: Int32) -> AgentProcessLaunch? {
+        if let cached = lock.withLock({ launches[pid] }) { return cached }
+        let value = inspect(pid)
+        lock.withLock { launches[pid] = .some(value) }
+        return value
+    }
+    func executablePath(_ pid: Int32) -> String? {
+        if let cached = lock.withLock({ paths[pid] }) { return cached }
+        let value = path(pid)
+        lock.withLock { paths[pid] = .some(value) }
+        return value
+    }
 }

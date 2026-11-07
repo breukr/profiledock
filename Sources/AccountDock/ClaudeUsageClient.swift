@@ -26,12 +26,12 @@ struct ClaudeUsageCredential: Sendable {
 
     /// Reads the credential Claude Code keeps for `configDirectory` (nil: the shared ~/.claude sign-in).
     /// A separate account falls back to Claude Code's documented `<config>/.credentials.json` file.
-    /// Claude Code keeps MCP server logins in the same item, so for a separate account an item without
-    /// a Claude login means usage was never connected, not that a sign-in failed.
+    /// Claude Code keeps MCP server logins in the same item, so an item without a Claude login (or no item at all)
+    /// means usage was never connected, not that a sign-in failed.
     static func read(configDirectory: String? = nil, keychain: (String) throws -> Data? = keychainItem) throws -> Self {
         let item = try keychain(ClaudeCredentialService.name(configDirectory: configDirectory))
         guard let configDirectory else {
-            guard let item else { throw UsageLoadError.claudeSignInRequired }
+            guard let item, hasClaudeLogin(item) else { throw UsageLoadError.claudeConnectionNeeded }
             return try parse(item)
         }
         if let item, hasClaudeLogin(item) { return try parse(item) }
@@ -77,24 +77,35 @@ struct ClaudeUsageAccount: Sendable {
 actor ClaudeUsageClient: UsageFetching {
     typealias Credentials = @Sendable () throws -> ClaudeUsageCredential
     typealias ResetFetcher = @Sendable (ClaudeUsageAccount) async throws -> ClaudeUsageParser.ResetInventory?
+    /// Usage read through the account's claude.ai web sign-in: (expected account id, identity verified before).
+    typealias WebUsage = @Sendable (String?, String?) async -> ClaudeWebUsage.Outcome
     /// The account a tile's own Claude app is signed in to, or nil when the tile has no app of its own to compare with.
     typealias ExpectedAccount = @Sendable (Profile) -> String?
     static let desktopAccount: ExpectedAccount = { ClaudeDesktopAccount.accountID(for: $0, home: FileManager.default.homeDirectoryForCurrentUser) }
     private let resetFetcher: ResetFetcher
-    private let credentials: Credentials
+    private let webUsage: WebUsage
+    private let readCredentials: Credentials
     private let expectedAccount: ExpectedAccount?
     private let session: URLSession
     private let clock: @Sendable () -> Date
+    /// How long one Keychain read is reused. Each read spawns /usr/bin/security, so a refresh no longer starts ~6 of them.
+    private let credentialLifetime: TimeInterval
+    private var credentialCache: (at: Date, result: Result<ClaudeUsageCredential, Error>)?
+    private var lastFingerprint: String?
     private var accountCache: (fingerprint: String, account: ClaudeUsageAccount)?
     private var accountTask: (fingerprint: String, task: Task<ClaudeUsageAccount, Error>)?
     private var snapshot: UsageSnapshot?
     private var pending: (identity: String, id: UUID, task: Task<UsageSnapshot, Error>)?
     private var retryAfter: Date?
+    private var knownIdentity: String?
+    private var webSnapshot: UsageSnapshot?
 
     /// One client per Claude Code configuration: nil is the shared ~/.claude sign-in, otherwise a separate account's CLAUDE_CONFIG_DIR.
-    init(configDirectory: String? = nil, session: URLSession? = nil, credentials: Credentials? = nil, clock: @escaping @Sendable () -> Date = { Date() }, resetFetcher: ResetFetcher? = nil, expectedAccount: ExpectedAccount? = nil) {
-        self.credentials = credentials ?? { try ClaudeUsageCredential.read(configDirectory: configDirectory) }
+    init(configDirectory: String? = nil, session: URLSession? = nil, credentials: Credentials? = nil, clock: @escaping @Sendable () -> Date = { Date() }, resetFetcher: ResetFetcher? = nil, webUsage: WebUsage? = nil, expectedAccount: ExpectedAccount? = nil, credentialLifetime: TimeInterval? = nil) {
+        self.readCredentials = credentials ?? { try ClaudeUsageCredential.read(configDirectory: configDirectory) }
+        self.credentialLifetime = credentialLifetime ?? (credentials == nil ? 30 : 0)
         self.resetFetcher = resetFetcher ?? { try await ClaudeResetConnection.connection(configDirectory: configDirectory).inventory(for: $0) }
+        self.webUsage = webUsage ?? { await ClaudeResetConnection.connection(configDirectory: configDirectory).usage(expectedAccount: $0, knownIdentity: $1) }
         self.expectedAccount = expectedAccount
         self.clock = clock
         if let session { self.session = session }
@@ -107,19 +118,46 @@ actor ClaudeUsageClient: UsageFetching {
     }
 
     func invalidate() async {
-        snapshot = nil
+        snapshot = nil; webSnapshot = nil; retryAfter = nil; credentialCache = nil
         pending?.task.cancel(); pending = nil
     }
 
+    func remember(identity: String) async { if knownIdentity == nil { knownIdentity = identity } }
+
+    /// The Keychain credential, reused for `credentialLifetime`. A new token (Claude Code renewed it, or another
+    /// sign-in) lifts an earlier rate-limit pause, since that pause belonged to the old token.
+    private func credentials(fresh: Bool = false) throws -> ClaudeUsageCredential {
+        if !fresh, let credentialCache, clock().timeIntervalSince(credentialCache.at) < credentialLifetime { return try credentialCache.result.get() }
+        let result = Result { try readCredentials() }
+        credentialCache = (clock(), result)
+        if case .success(let value) = result {
+            if lastFingerprint != nil, lastFingerprint != value.fingerprint { retryAfter = nil }
+            lastFingerprint = value.fingerprint
+        }
+        return try result.get()
+    }
+
     func identity(for profile: Profile) async throws -> String {
-        let credential = try credentials()
-        let account = try await account(for: credential)
-        guard try credentials().fingerprint == credential.fingerprint else { throw UsageLoadError.accountChanged }
-        try verify(account, for: profile)
-        return account.identity
+        do {
+            let credential = try credentials()
+            let account = try await account(for: credential)
+            guard try credentials().fingerprint == credential.fingerprint else { throw UsageLoadError.accountChanged }
+            try verify(account, for: profile)
+            knownIdentity = account.identity; webSnapshot = nil
+            return account.identity
+        } catch let error as UsageLoadError where Self.webCanAnswer(error) {
+            // Claude Code's token is stale, refused or missing: the claude.ai web sign-in, when connected, still reads usage.
+            return try await webReading(for: profile, otherwise: error).identity
+        }
     }
 
     func fetch(_ profile: Profile, expectedIdentity: String) async throws -> UsageSnapshot {
+        if let webSnapshot, webSnapshot.identity == expectedIdentity {
+            if clock().timeIntervalSince(webSnapshot.fetchedAt) < 15 { return webSnapshot }
+            let reading = try await webReading(for: profile, otherwise: .claudeTokenStale)
+            guard reading.identity == expectedIdentity else { throw UsageLoadError.accountChanged }
+            return reading
+        }
         let credential = try credentials(), account = try await account(for: credential)
         guard try credentials().fingerprint == credential.fingerprint else { throw UsageLoadError.accountChanged }
         try verify(account, for: profile)
@@ -135,6 +173,24 @@ actor ClaudeUsageClient: UsageFetching {
         let value = try await task.value
         try Task.checkCancellation()
         snapshot = value; return value
+    }
+
+    private static func webCanAnswer(_ error: UsageLoadError) -> Bool {
+        [.claudeTokenStale, .claudeSignInRequired, .claudeConnectionNeeded].contains(error)
+    }
+
+    /// A verified web reading, or the original OAuth error when the web sign-in cannot help. A web session that
+    /// belongs to another account than the tile's Claude app never shows its numbers.
+    private func webReading(for profile: Profile, otherwise error: UsageLoadError) async throws -> UsageSnapshot {
+        let outcome = await webUsage(expectedAccount?(profile), knownIdentity)
+        claudeWebLog.notice("\(profile.name): OAuth \(error), web \(outcome.label)", key: profile.id)
+        switch outcome {
+        case .reading(let value):
+            knownIdentity = value.identity; webSnapshot = value
+            return value
+        case .otherAccount: throw UsageLoadError.claudeOtherAccount
+        case .notConnected, .signedOut, .rateLimited, .unavailable: throw error
+        }
     }
 
     /// A Claude app tile shows only its own account's usage. Claude Code's sign-in can belong to another account,
@@ -161,18 +217,27 @@ actor ClaudeUsageClient: UsageFetching {
         let data = try await request(path: "/api/oauth/usage?cedar_ember=1&skip_spend=1", credential: credential)
         guard try credentials().fingerprint == credential.fingerprint else { throw UsageLoadError.accountChanged }
         let parsed: UsageSnapshot
-        do { parsed = try ClaudeUsageParser.parse(data, identity: account.identity, plan: credential.plan, fetchedAt: clock()) }
+        do { parsed = try ClaudeUsageParser.parse(data, identity: account.identity, plan: credential.plan, fetchedAt: clock()).with(modelWindows: ClaudeWebUsage.modelWindows(data)) }
         catch { throw UsageLoadError.invalidResponse }
         let inventory = parsed.bankedResets == nil ? try? await resetFetcher(account) : nil
         guard try credentials().fingerprint == credential.fingerprint else { throw UsageLoadError.accountChanged }
         try Task.checkCancellation()
         guard let inventory else { return parsed }
-        return UsageSnapshot(identity: parsed.identity, plan: parsed.plan, windows: parsed.windows,
-                             bankedResets: inventory.count, applicableResets: inventory.usable, resetExpiries: inventory.expiries,
-                             fetchedAt: parsed.fetchedAt, hasUnparsedWindows: parsed.hasUnparsedWindows)
+        return parsed.with(bankedResets: .some(inventory.count), applicableResets: .some(inventory.usable), resetExpiries: .some(inventory.expiries))
     }
 
+    /// A 401 or 403 is retried once with a freshly read credential (Claude Code may have just renewed it);
+    /// only a second refusal counts as a real sign-in failure.
     private func request(path: String, credential: ClaudeUsageCredential) async throws -> Data {
+        do { return try await send(path: path, credential: credential) }
+        catch UsageLoadError.claudeSignInRequired {
+            let current = try credentials(fresh: true)
+            guard current.fingerprint == credential.fingerprint else { throw UsageLoadError.accountChanged }
+            return try await send(path: path, credential: current)
+        }
+    }
+
+    private func send(path: String, credential: ClaudeUsageCredential) async throws -> Data {
         if let retryAfter, retryAfter > clock() { throw UsageLoadError.rateLimited(retryAfter) }
         var request = URLRequest(url: URL(string: "https://api.anthropic.com" + path)!, cachePolicy: .reloadIgnoringLocalCacheData)
         request.httpMethod = "GET"
@@ -199,4 +264,18 @@ actor ClaudeUsageClient: UsageFetching {
 extension Profile {
     /// Separate Claude accounts read their own CLAUDE_CONFIG_DIR sign-in; all other Claude tiles share ~/.claude.
     var usesClaudeAccountUsage: Bool { kind == .claude || kind == .claudeCode || (kind == .terminal && terminalAgent == .claude) }
+}
+
+extension ClaudeWebUsage.Outcome {
+    /// Short word for diagnostics; never includes the reading itself.
+    var label: String {
+        switch self {
+        case .notConnected: return "not connected"
+        case .signedOut: return "signed out"
+        case .otherAccount: return "other account"
+        case .rateLimited: return "rate limited"
+        case .unavailable: return "unavailable"
+        case .reading(let value): return "reading (\(value.windows.count) windows)"
+        }
+    }
 }
