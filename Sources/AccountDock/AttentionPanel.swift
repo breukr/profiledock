@@ -237,9 +237,25 @@ final class AttentionPanelController: ObservableObject {
                 if hosted.host == TerminalReply.iTermBundle { focus { try await TerminalClient.shared.selectInITerm(tty: tty) } }
                 else if let pid = hosted.hostProcess { NSRunningApplication(processIdentifier: pid)?.activate() }
             }
-        } else if let profile { model.select(profile) }
-        else if item.entrypoint == "claude-desktop" { NSRunningApplication.runningApplications(withBundleIdentifier: "com.anthropic.claudefordesktop").first?.activate() }
+        } else if item.source == "claude" || item.source == "codex" { openChat(item, profile: profile) }
+        else if let profile { model.select(profile) }
         if hide && !item.awaitsDecision { hiddenIDs.insert(item.id); update(center.items) }
+    }
+
+    /// Opens the exact chat in its desktop app (Claude Desktop's Code session or the Codex app's thread), in the running
+    /// instance of that account. Falls back to bringing the profile's app forward when the chat cannot be found.
+    private func openChat(_ item: AgentAttention, profile: Profile?) {
+        let pid = profile.flatMap { model.running[$0.id]?.first?.processIdentifier }
+        let root = SessionLinks.claudeSessionsRoot(for: profile, home: model.home)
+        let session = item.sessionID, codex = item.source == "codex", desktop = item.entrypoint == "claude-desktop"
+        Task { [weak self] in
+            let url: URL? = codex ? SessionLinks.codexURL(thread: session)
+                : await Task.detached(priority: .userInitiated) { SessionLinks.claudeLocalSession(forCLISession: session, root: root).flatMap(SessionLinks.claudeURL) }.value
+            guard let self else { return }
+            if let url { SessionLinks.open(url, processIdentifier: pid) }
+            else if let profile { self.model.select(profile) }
+            else if desktop { NSRunningApplication.runningApplications(withBundleIdentifier: "com.anthropic.claudefordesktop").first?.activate() }
+        }
     }
     private func focus(_ action: @escaping @Sendable () async throws -> Void) {
         let id = currentID ?? ""
