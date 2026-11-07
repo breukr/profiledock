@@ -44,6 +44,23 @@ final class AccountConnectionRenderingTests: XCTestCase {
             window.close()
         }
         // Later hides the notice; muting and the global switch keep it hidden after a new loss of sign-in.
+        usage.mutedConnections = [usage.connectionKey(claude)]
+        XCTAssertEqual(usage.signInNotices.map(\.id), ["client"])
+        // A single account collapses to one row: badge, "<name> needs sign-in", reason, Reconnect, ⋯.
+        for width in [320.0, 440.0] {
+            let view = NSHostingView(rootView: SignInNoticeBanner(usage: usage, model: model).padding(16).environment(\.colorScheme, .dark).frame(width: width, height: 90, alignment: .top).background(Color.black))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 90), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = view
+            view.frame = NSRect(x: 0, y: 0, width: width, height: 90)
+            try await Task.sleep(for: .milliseconds(100))
+            view.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            if let folder = ProcessInfo.processInfo.environment["PROFILEDOCK_RENDER_CONNECTIONS"] {
+                try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: folder).appendingPathComponent("reconnect-single-\(Int(width)).png"))
+            }
+            window.close()
+        }
         usage.mutedConnections = [usage.connectionKey(codex)]
         XCTAssertEqual(usage.signInNotices.map(\.id), ["claude"])
         usage.dismissNotices()
