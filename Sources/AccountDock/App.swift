@@ -14,6 +14,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     let appUpdates = AppUpdates()
     let selfUpdates = ProfileDockUpdates()
     let cues = ActivityCues()
+    let attention = AttentionCenter()
+    /// The local inbox for agent hooks. Nil in preview mode. Call `inbox?.preferencesChanged()` when preferences change.
+    private(set) var inbox: AgentInboxService?
     var islands: [IslandController] = []
     let iconAppearance = AppIconController()
     var status: NSStatusItem!
@@ -52,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             return
         }
         applyVisibility()
+        if !previewMode { inbox = AgentInboxService(model: model, attention: attention); inbox?.start() }
         usage.configure(previewMode ? [] : model.stripProfiles)
         insights.prepare(profiles: model.preferences.profiles, home: model.home)
         if !previewMode {
@@ -155,6 +159,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        inbox?.stop()
         iconAppearance.shutdown()
         cues.shutdown()
         if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
