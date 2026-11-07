@@ -17,7 +17,7 @@ Regression snapshots: `./scripts/design-check.sh` (fixtures, gitignored output i
 | `candidates/insights-680-dark.png` | candidate | Usage insights chart at 680 wide, tokens/cost/sessions switch, system-colored series. | `docs/INSIGHTS.md`; approval not evidenced | 2026-10-16 |
 | `rejected/` (text) marketing hero sizes and pill buttons inside the app | rejected | Utility density: 12/13 pt type and system controls, not landing-page scale. | `docs/MENU-DESIGN.md` Reference lock | 2026-09-22 |
 | `rejected/` (text) off-center empty states, mismatched header and content columns | rejected | Empty state must center in the available pane; header and content share one 760 pt column. | `docs/MENU-DESIGN.md` decisions (Sam's screenshot feedback) | 2026-09-22 |
-| `rejected/` (text) custom glass effects, decorative bitmaps, fixed white or black in Settings | rejected | Flat system surfaces and semantic colors in both appearances. | `docs/MENU-DESIGN.md` Tokens | 2026-09-22 |
+| `rejected/` (text) custom glass effects, decorative bitmaps, fixed white or black in Settings | rejected (amended 2026-11-07) | Flat system surfaces and semantic colors in Settings. Superseded for the strip and pop-up by Sam's Dark Liquid Glass choice: native glass only, never hand-made blur. | `docs/MENU-DESIGN.md` Tokens; Sam 2026-11-07 | 2026-09-22 |
 | `rejected/` (text) inset colored border around a custom icon image | rejected | Custom images fill the rounded icon, center-cropped, no inset border. | `docs/NATIVE-DOCK.md` | 2026-09 |
 | `rejected/` (text) icon style only in experimental mode | rejected | One icon choice must show in editor, notch, list and menu even with experimental mode off. | `docs/MENU-DESIGN.md` decisions | 2026-09 |
 

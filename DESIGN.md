@@ -2,7 +2,7 @@
 
 Source of truth for how ProfileDock looks and moves. Extracted from the code (`Sources/AccountDock`, `Sources/DockCore`) and `docs/MENU-DESIGN.md`. Change this file together with the code. Decisions and their reasons live in `docs/MENU-DESIGN.md`; round history lives in `docs/design-log.md`.
 
-Product: native macOS 14+ utility (SwiftUI + AppKit, Apple Silicon). Two surfaces: the **strip** (a black notch/menu-bar island that expands on hover) and the **Settings window** (System Settings style). Direction is fixed: native controls, system fonts, system semantic colors, no marketing styling inside the app.
+Product: native macOS 14+ utility (SwiftUI + AppKit, Apple Silicon). Surfaces: the **strip** (a notch/menu-bar island that expands on hover), the **attention pop-up** (drops from the notch when an agent needs the user) and the **Settings window** (System Settings style). Direction (Sam, 2026-11-07): **Dark Liquid Glass**, Apple-native and quiet: native controls, system fonts, system semantic colors, native glass only, no marketing styling inside the app.
 
 ## Surfaces and tokens
 
@@ -17,7 +17,8 @@ There is no central tokens file. The tokens are the constants below; reuse the n
 - Components to reuse: `SettingsCard`, `SettingsGroupBoxStyle`, `SettingsRow`, `SettingsNotice`, `ProfileMessageNotice`, `ProfileGridSettings`. Icons are SF Symbols (`SettingsDestination.symbol`).
 
 ### Strip (`Views.swift`, `Island.swift`, `IslandLayout.swift`, `WidgetSizing.swift`)
-- Always dark: `.environment(\.colorScheme, .dark)` on a black surface. Text is white at 0.55 to 1.0 opacity; secondary labels 0.45 to 0.65. Do not add light-mode strip styling.
+- Always dark: `.environment(\.colorScheme, .dark)`. Surface (`Glass.swift`, `IslandSurface`): pure black band where the strip meets the notch (notch height + 6), fading over 56 pt into dark tinted native glass (`NSGlassEffectView` on macOS 26+, `.hudWindow` visual effect view on 14/15) under a black shade at 0.66. The strip opens and closes as solid black and the glass fades in (0.22 s) once the outline settles, because window-server glass ignores the animated layer mask. Reduce Transparency: no backdrop, opaque black. Text is white at 0.55 to 1.0 opacity; secondary labels 0.45 to 0.65. Do not add light-mode strip styling.
+- Agent identity: agent profiles without a chosen icon show their tool's real app logo with the profile's color dot (`AgentBrand.swift`); tools without an installed app keep a colored monogram.
 - Type: 10 to 11 pt system (11 semibold for titles and profile names, 10 for status lines, 9 for micro actions). Numbers use `.monospacedDigit()`.
 - Collapsed: notch-width capsule (or 160 to 480 pt free strip) with the 11 pt `BrandMark`, "Apps" label, one 6 pt activity dot per profile (`WidgetSizing.visibleDots` caps them, then "+N"), chevron. Top corners 2 pt on a notch, 12 pt when floating; bottom corners 12 pt.
 - Expanded width: `WidgetSizing.expanded` = count x 142 x scale + 32, max 880 automatic, 320 to 1400 when set, 520 minimum with Insights open. Custom grid: columns x 142 x scale + 32.
@@ -79,7 +80,7 @@ Every visible change meets all of these before it is shown to Sam.
 `./scripts/design-lint.sh` fails when a raw color literal (`Color(red:`, `Color(white:`, `NSColor(srgbRed:`, hex literals) appears in a file outside its allowed list, or when a file exceeds its baseline count. Run by `design-check.sh`. New colors go through system semantic colors or an existing helper (`UsageTint`, `ProfileActivityState.color`, `StatusDot`).
 
 ### AI-look blacklist (reject on sight)
-Generic purple/blue gradients, glassmorphism by default (`.ultraThinMaterial` panels, custom glass), bento grid as a default layout, emoji as icons (use SF Symbols), centered hero + three feature cards, gradient text on headlines, floating blobs or orbs, stock 3D illustrations, "trusted by" strips with fake logos, uniform rounded-2xl cards everywhere, shadow on everything, lorem ipsum or placeholder numbers, icon-in-circle feature rows. Repo-specific rejections (see `design/references/README.md`): marketing hero type sizes and pill buttons inside the app, decorative bitmap assets, off-center empty states, an inset colored border on custom icon images, fixed white or black in Settings.
+Generic purple/blue gradients, custom or fake glass (hand-made blur, `.ultraThinMaterial` panels on content, glass stacked on glass; only native Liquid Glass on floating surfaces: strip, pop-up, sidebar and toolbar), bento grid as a default layout, emoji as icons (use SF Symbols), centered hero + three feature cards, gradient text on headlines, floating blobs or orbs, stock 3D illustrations, "trusted by" strips with fake logos, uniform rounded-2xl cards everywhere, shadow on everything, lorem ipsum or placeholder numbers, icon-in-circle feature rows. Repo-specific rejections (see `design/references/README.md`): marketing hero type sizes and pill buttons inside the app, decorative bitmap assets, off-center empty states, an inset colored border on custom icon images, fixed white or black in Settings.
 
 ### Motion
 As in the Motion section: durations from the table, user-action or state triggered, no settling-free loops beyond the working pulse, Reduce Motion path required.
