@@ -15,12 +15,24 @@ final class CodexHookTests: XCTestCase {
         XCTAssertEqual(hooks["Stop"]?.count, 2)
         for event in CodexBridgeSettings.events {
             let ours = try XCTUnwrap(hooks[event]?.last?["hooks"] as? [[String: Any]]).first
-            XCTAssertEqual(ours?["command"] as? String, "'/fixture/helper' codex"); XCTAssertEqual(ours?["timeout"] as? Int, 5)
+            XCTAssertEqual(ours?["command"] as? String, "[ -x '/fixture/helper' ] && '/fixture/helper' codex; exit 0")
+            // Only Stop waits (for a reply); permission requests are reported and return at once.
+            XCTAssertEqual(ours?["timeout"] as? Int, event == "Stop" ? 615 : 5)
         }
+        XCTAssertTrue(CodexBridgeSettings.isConnected(first, helper: helper)); XCTAssertFalse(CodexBridgeSettings.isConnected(original, helper: helper))
+        // Entries from the earlier plain command are recognized, reported as outdated and replaced in place.
+        let legacy = Data(#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"'/fixture/helper' codex","timeout":5}]}]}}"#.utf8)
+        XCTAssertTrue(CodexBridgeSettings.hasEntries(legacy, helper: helper)); XCTAssertFalse(CodexBridgeSettings.isConnected(legacy, helper: helper))
+        let upgraded = try parsedCodexHooks(CodexBridgeSettings.updating(legacy, helper: helper, enabled: true))
+        XCTAssertEqual(upgraded["Stop"]?.count, 1)
         let removed = try CodexBridgeSettings.updating(first, helper: helper, enabled: false)
         XCTAssertEqual(try JSONSerialization.jsonObject(with: removed) as? NSDictionary, try JSONSerialization.jsonObject(with: original) as? NSDictionary)
         XCTAssertThrowsError(try CodexBridgeSettings.updating(Data(#"{"hooks":{"Stop":{}}}"#.utf8), helper: helper, enabled: true))
         XCTAssertThrowsError(try CodexBridgeSettings.updating(Data("[]".utf8), helper: helper, enabled: true))
+    }
+
+    private func parsedCodexHooks(_ data: Data) throws -> [String: [[String: Any]]] {
+        try XCTUnwrap((try JSONSerialization.jsonObject(with: data) as? [String: Any])?["hooks"] as? [String: [[String: Any]]])
     }
 
     func testApplyWritesAPrivateFileAndRefusesLinks() throws {

@@ -204,12 +204,18 @@ public enum ClaudeBridgeSettings {
     }
     /// Spinner text Claude Code shows while a hook runs, which is only noticeable while a request is held.
     public static let holdingStatus = "Waiting for an answer in ProfileDock"
-    /// The hook groups ProfileDock adds for `event`. Only the two that may wait for an answer get the long timeout
-    /// (`AgentInbox.blockingTimeout`); every other group keeps 5 seconds.
+    /// Spinner text while a finished turn waits for a reply typed in the pop-up.
+    public static let replyStatus = "Waiting for a reply in ProfileDock"
+    /// The hook groups ProfileDock adds for `event`. Only the three that may wait get a long timeout: permission requests
+    /// and questions the configured hold (`AgentInbox.blockingTimeout`), Stop the longest reply hold (`AgentInbox.replyTimeout`,
+    /// since a reply can be extended while the user types); every other group keeps 5 seconds.
     public static func groups(for event: String, helper: URL, hold: Int) -> [[String: Any]] {
         let waiting = AgentInbox.blockingTimeout(hold: hold)
         if event == "PermissionRequest" {
             return [["hooks": [["type": "command", "command": command(helper: helper, mode: "hook"), "timeout": waiting, "statusMessage": holdingStatus]]]]
+        }
+        if event == "Stop" {
+            return [["hooks": [["type": "command", "command": command(helper: helper, mode: "hook"), "timeout": AgentInbox.replyTimeout, "statusMessage": replyStatus]]]]
         }
         var groups: [[String: Any]] = [["hooks": [["type": "command", "command": command(helper: helper, mode: "hook"), "timeout": 5]]]]
         if event == "PreToolUse" {

@@ -130,7 +130,7 @@ final class InboxServerTests: XCTestCase {
         try await until { attention.items.contains { $0.sessionID == "desktop-session" } }
         XCTAssertFalse(attention.items[0].awaitsDecision)
 
-        try AgentInboxFlags(answerFromNotch: false, holdSeconds: 30).write(home: home)
+        try AgentInboxFlags(answerFromNotch: false, holdSeconds: 30, replyHoldSeconds: 0).write(home: home)
         let off = try await run(home: home, payload: permission("terminal-session"))
         XCTAssertEqual(off.output, ""); XCTAssertLessThan(off.elapsed, 2)
         try await until { attention.items.contains { $0.sessionID == "terminal-session" } }

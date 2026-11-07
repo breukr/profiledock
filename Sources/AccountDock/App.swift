@@ -60,9 +60,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if !previewMode { usage.useReadingCache(.standard()) }
         if !previewMode {
             inbox = AgentInboxService(model: model, attention: attention); inbox?.start()
-            // Someone already working in a terminal sees the agent's own prompt at once; the pop-up only holds
-            // a request while they are in another app.
-            inbox?.server.shouldHold = { _ in !CompanionPolling.isTerminalApp(NSWorkspace.shared.frontmostApplication?.bundleIdentifier) }
+            // Someone already working in a terminal, or in the session's own app, sees the agent's own prompt at once;
+            // the pop-up only holds a request or a finished turn (for a reply) while they are in another app.
+            inbox?.server.shouldHold = { item in AttentionHoldPolicy.allows(item, frontmost: NSWorkspace.shared.frontmostApplication?.bundleIdentifier) }
+            // Switching to that terminal or app ends a turn's reply wait at once, so the agent's own input is never blocked.
+            NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didActivateApplicationNotification).sink { [weak self] note in
+                let bundle = (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier
+                self?.inbox?.server.releaseHeldReplies { !AttentionHoldPolicy.allows($0, frontmost: bundle) }
+            }.store(in: &subscriptions)
         }
         usage.configure(previewMode ? [] : model.stripProfiles)
         insights.prepare(profiles: model.preferences.profiles, home: model.home)

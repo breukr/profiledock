@@ -32,6 +32,10 @@ final class InboxServer: @unchecked Sendable {
         let fd: Int32, source: DispatchSourceRead
         var frames = AgentInboxFrames()
         var requestID: String?
+        /// The held item's kind, current deadline and the latest it may be extended to (the helper enforces the same cap).
+        var kind: AttentionKind?
+        var deadline: Date?
+        var limit: Date?
         var timer: DispatchWorkItem?
         init(fd: Int32, source: DispatchSourceRead) { self.fd = fd; self.source = source }
     }
@@ -42,12 +46,13 @@ final class InboxServer: @unchecked Sendable {
 
     @MainActor func start() throws {
         attention.onDecision = { [weak self] id, decision in self?.send(id, decision) }
+        attention.onExtend = { [weak self] id, until in self?.extend(id, until: until) }
         try queue.sync { try listen() }
     }
 
     /// Closes every connection, so waiting hooks print nothing and the agents show their own dialogs.
     @MainActor func stop() {
-        attention.onDecision = nil
+        attention.onDecision = nil; attention.onExtend = nil
         queue.sync {
             listener?.cancel(); listener = nil
             for connection in connections.values { connection.timer?.cancel(); connection.source.cancel() }
@@ -132,14 +137,39 @@ final class InboxServer: @unchecked Sendable {
             remember(item.id)
             if item.awaitsDecision, let deadline = item.deadline {
                 connection.requestID = item.id; waiting[item.id] = connection.fd
+                connection.kind = item.kind; connection.deadline = deadline
+                // A reply can be extended while the user types; a permission wait keeps the hold the hook group was given.
+                connection.limit = item.kind == .finished ? StopReply.limit(receivedAt: item.receivedAt) : deadline
                 schedule(connection, after: deadline.timeIntervalSinceNow + 1)
             }
             main { $0.present(item, notification: notification) }
         case .clear(let source, let sessionID, let includeFinished):
             main { $0.clear(source: source, sessionID: sessionID, includeFinished: includeFinished) }
-        case .decision:
+        case .decision, .extend:
             close(connection)
         }
+    }
+
+    /// Moves a held request's deadline (the user is typing a reply) and tells its hook, capped at the request's limit.
+    /// When the cap is lower than asked, the item's countdown is corrected to the real deadline.
+    private func extend(_ id: String, until: Date) {
+        queue.async { [self] in
+            guard let fd = waiting[id], let connection = connections[fd], let limit = connection.limit else { return }
+            let capped = min(until, limit)
+            if let current = connection.deadline, capped > current,
+               let data = try? AgentInbox.encode(.extend(id: id, until: capped)), AgentInboxClient.write(data, to: fd, until: Date().addingTimeInterval(1)) {
+                connection.deadline = capped
+                schedule(connection, after: capped.timeIntervalSinceNow + 1)
+            }
+            let real = connection.deadline ?? capped
+            if real < until { main { $0.correctDeadline(id, to: real) } }
+        }
+    }
+
+    @MainActor private func correctDeadline(_ id: String, to deadline: Date) {
+        guard var item = attention.items.first(where: { $0.id == id }), item.deadline != deadline else { return }
+        item.deadline = deadline
+        attention.post(item)
     }
 
     private func remember(_ id: String) {
@@ -157,14 +187,31 @@ final class InboxServer: @unchecked Sendable {
         }
     }
 
-    /// Ends a connection. A request still waiting is expired, so its item leaves the notch.
+    /// Ends a connection. A request still waiting is expired, so its item leaves the notch; a finished turn that waited
+    /// for a reply stays as a plain "Done" item.
     private func close(_ connection: Connection, expire: Bool = true) {
         guard connections[connection.fd] === connection else { return }
         connections.removeValue(forKey: connection.fd)
         connection.timer?.cancel(); connection.source.cancel()
         if let id = connection.requestID, waiting[id] == connection.fd {
             waiting.removeValue(forKey: id)
-            if expire { main { $0.attention.expire(id) } }
+            if expire, connection.kind == .finished { main { $0.demote(id) } } else if expire { main { $0.attention.expire(id) } }
+        }
+    }
+
+    /// Keeps an item but marks it as no longer holding its agent (same id, no deadline).
+    @MainActor private func demote(_ id: String) {
+        guard var item = attention.items.first(where: { $0.id == id }), item.awaitsDecision else { return }
+        item.deadline = nil
+        attention.post(item)
+    }
+
+    /// Lets every held finished turn that `release` matches end now (for example the user switched to its terminal);
+    /// the items stay as plain "Done" items.
+    @MainActor func releaseHeldReplies(where release: (AgentAttention) -> Bool) {
+        for item in attention.items where item.kind == .finished && item.awaitsDecision && release(item) {
+            demote(item.id)
+            send(item.id, .passThrough)
         }
     }
 
@@ -181,6 +228,11 @@ final class InboxServer: @unchecked Sendable {
         if notification == "permission_prompt", permissionSessions.contains(key)
             || attention.items.contains(where: { $0.source == item.source && $0.sessionID == item.sessionID && ($0.kind == .permission || $0.kind == .question) }) { return }
         if item.awaitsDecision, let shouldHold, !shouldHold(item) {
+            if item.kind == .finished {
+                // The turn ends at once, but "Done" is still shown.
+                var shown = item; shown.deadline = nil
+                attention.post(shown); send(item.id, .passThrough); attention.compact(); return
+            }
             // Released before it was shown: the agent's own dialog takes over at once.
             attention.post(item); attention.respond(item.id, .passThrough); return
         }
@@ -193,6 +245,23 @@ final class InboxServer: @unchecked Sendable {
         permissionSessions.remove(source + "\u{0}" + sessionID)
         for item in attention.items where item.source == source && item.sessionID == sessionID && !item.awaitsDecision && (includeFinished || item.kind != .finished) {
             attention.expire(item.id)
+        }
+    }
+}
+
+/// Whether a request may hold its agent, given the app in front. Never while the user is in a terminal (they see the agent's
+/// own prompt) or in the session's own app (Claude Desktop for its Code tab, the Codex or ChatGPT app for Codex chats).
+enum AttentionHoldPolicy {
+    static let claudeDesktop = "com.anthropic.claudefordesktop"
+    static let codexApps: Set<String> = ["com.openai.codex", "com.openai.chat"]
+
+    static func allows(_ item: AgentAttention, frontmost: String?, isTerminal: (String?) -> Bool = CompanionPolling.isTerminalApp) -> Bool {
+        if isTerminal(frontmost) { return false }
+        guard let frontmost else { return true }
+        switch (item.source, item.entrypoint) {
+        case ("claude", "claude-desktop"): return frontmost != claudeDesktop
+        case ("codex", _): return !codexApps.contains(frontmost)
+        default: return true
         }
     }
 }
@@ -211,9 +280,11 @@ final class AgentInboxService {
         server = InboxServer(home: model.home, attention: attention)
     }
 
-    static func flags(for preferences: Preferences) -> AgentInboxFlags {
+    /// `replyHold` is the seconds a finished turn waits for a reply typed in the pop-up (0 = off). It has no preference
+    /// yet, so the default applies.
+    static func flags(for preferences: Preferences, replyHold: Int = AgentInbox.defaultReplyHold) -> AgentInboxFlags {
         AgentInboxFlags(popups: preferences.attentionPopups != false, answerFromNotch: preferences.answerPermissionsFromNotch != false,
-                        holdSeconds: AgentInbox.clampedHold(preferences.attentionHoldSeconds))
+                        holdSeconds: AgentInbox.clampedHold(preferences.attentionHoldSeconds), replyHoldSeconds: replyHold)
     }
 
     func start(bundledHelper: URL? = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("ProfileDockClaude")) {
@@ -230,8 +301,12 @@ final class AgentInboxService {
         }
         guard refreshedHold != flags.holdSeconds else { return }
         refreshedHold = flags.holdSeconds
-        let bridges = model.claudeBridges, hold = flags.holdSeconds
-        Task.detached(priority: .utility) { for bridge in bridges { _ = try? bridge.refresh(bundledHelper: bundledHelper, hold: hold) } }
+        let bridges = model.claudeBridges, hold = flags.holdSeconds, others = AgentHookBridge(home: model.home)
+        Task.detached(priority: .utility) {
+            for bridge in bridges { _ = try? bridge.refresh(bundledHelper: bundledHelper, hold: hold) }
+            // Other agents connected by an older version get their current entries (for example Codex's longer Stop timeout).
+            others.refreshConnected(bundledHelper: bundledHelper)
+        }
     }
 
     func stop() { server.stop() }

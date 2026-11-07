@@ -90,7 +90,7 @@ final class AgentInboxTests: XCTestCase {
         XCTAssertEqual(item.preview!.count, 300); XCTAssertTrue(item.preview!.hasSuffix("…"))
         XCTAssertEqual(item.message, "Lineone\n\nnext")
         let stop = base("Stop", ["last_assistant_message": String(repeating: "word ", count: 2_000)])
-        guard case .post(.attention(let done, _))? = ClaudeAttentionHook.outgoing(payload: stop, mode: "hook", context: context()) else { return XCTFail() }
+        guard case .post(.attention(let done, _))? = ClaudeAttentionHook.outgoing(payload: stop, mode: "hook", context: context(flags: AgentInboxFlags(replyHoldSeconds: 0))) else { return XCTFail() }
         XCTAssertEqual(done.message.count, 500); XCTAssertNil(done.deadline)
     }
 
@@ -110,9 +110,10 @@ final class AgentInboxTests: XCTestCase {
     }
 
     func testFinishedWaitingAndClearingEvents() {
-        guard case .post(.attention(let done, nil))? = ClaudeAttentionHook.outgoing(payload: base("Stop", ["last_assistant_message": "All tests pass."]), mode: "hook", context: context(), transcript: { _ in XCTFail(); return nil }) else { return XCTFail() }
+        let noReply = context(flags: AgentInboxFlags(replyHoldSeconds: 0))
+        guard case .post(.attention(let done, nil))? = ClaudeAttentionHook.outgoing(payload: base("Stop", ["last_assistant_message": "All tests pass."]), mode: "hook", context: noReply, transcript: { _ in XCTFail(); return nil }) else { return XCTFail() }
         XCTAssertEqual(done.kind, .finished); XCTAssertEqual(done.title, "Done"); XCTAssertEqual(done.message, "All tests pass.")
-        guard case .post(.attention(let fromTranscript, _))? = ClaudeAttentionHook.outgoing(payload: base("Stop", ["transcript_path": "/fixture/t.jsonl"]), mode: "hook", context: context(), transcript: { $0 == "/fixture/t.jsonl" ? "From the transcript" : nil }) else { return XCTFail() }
+        guard case .post(.attention(let fromTranscript, _))? = ClaudeAttentionHook.outgoing(payload: base("Stop", ["transcript_path": "/fixture/t.jsonl"]), mode: "hook", context: noReply, transcript: { $0 == "/fixture/t.jsonl" ? "From the transcript" : nil }) else { return XCTFail() }
         XCTAssertEqual(fromTranscript.message, "From the transcript")
         guard case .post(.attention(let idle, nil))? = ClaudeAttentionHook.outgoing(payload: base("Notification", ["notification_type": "idle_prompt", "message": "Claude is waiting for your input"]), mode: "hook", context: context()) else { return XCTFail() }
         XCTAssertEqual(idle.kind, .waiting); XCTAssertEqual(idle.message, "Claude is waiting for your input")
@@ -180,7 +181,8 @@ final class AgentInboxTests: XCTestCase {
             AgentAttention(id: id, source: "claude", sessionID: "s1", kind: kind, title: "T", message: "M", tty: "/dev/console", pid: -1, deadline: deadline)
         }
         XCTAssertNotNil(make(.permission, deadline: now.addingTimeInterval(60)).sanitized(now: now)?.deadline)
-        XCTAssertNil(make(.finished, deadline: now.addingTimeInterval(60)).sanitized(now: now)?.deadline)
+        XCTAssertNotNil(make(.finished, deadline: now.addingTimeInterval(60)).sanitized(now: now)?.deadline, "A finished turn may wait for a reply")
+        XCTAssertNil(make(.waiting, deadline: now.addingTimeInterval(60)).sanitized(now: now)?.deadline)
         XCTAssertNil(make(.permission, deadline: now.addingTimeInterval(-1)).sanitized(now: now)?.deadline)
         XCTAssertNil(make(.permission, deadline: now.addingTimeInterval(3_600)).sanitized(now: now)?.deadline)
         XCTAssertNil(make(.permission, deadline: nil).sanitized(now: now)?.tty)
@@ -218,17 +220,19 @@ final class AgentInboxTests: XCTestCase {
         try XCTUnwrap((try JSONSerialization.jsonObject(with: data) as? [String: Any])?["hooks"] as? [String: [[String: Any]]])
     }
 
-    func testOnlyTheTwoWaitingGroupsGetTheLongTimeout() throws {
+    func testOnlyTheWaitingGroupsGetLongTimeouts() throws {
         let helper = URL(fileURLWithPath: "/fixture/helper")
         let hooks = try parsedHooks(ClaudeBridgeSettings.updating(nil, helper: helper, enabled: true, hold: 60))
         for (event, groups) in hooks {
             for group in groups {
                 for hook in group["hooks"] as! [[String: Any]] {
                     let waits = event == "PermissionRequest" || group["matcher"] as? String == "AskUserQuestion"
-                    XCTAssertEqual(hook["timeout"] as? Int, waits ? 75 : 5, "\(event) \(group["matcher"] ?? "")")
+                    // Stop waits for a reply typed in the pop-up, extendable to ten minutes plus the 15-second margin.
+                    XCTAssertEqual(hook["timeout"] as? Int, event == "Stop" ? 615 : waits ? 75 : 5, "\(event) \(group["matcher"] ?? "")")
                 }
             }
         }
+        XCTAssertEqual((hooks["Stop"]?.first?["hooks"] as? [[String: Any]])?.first?["statusMessage"] as? String, "Waiting for a reply in ProfileDock")
         let preToolUse = try XCTUnwrap(hooks["PreToolUse"])
         XCTAssertEqual(preToolUse.count, 2)
         XCTAssertEqual(preToolUse[1]["matcher"] as? String, "AskUserQuestion")

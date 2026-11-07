@@ -10,8 +10,12 @@ public struct ClaudeHookContext: Sendable {
     /// The app's switches. Nil when the app never wrote them: nothing is held.
     public var flags: AgentInboxFlags?
     public var now: Date
-    public init(configDirectory: String? = nil, tty: String? = nil, pid: Int32? = nil, entrypoint: String? = nil, flags: AgentInboxFlags? = nil, now: Date = Date()) {
+    /// Remembers sessions continued by a pop-up reply (`StopReply`). Nil: a continued turn is never held again.
+    public var replyMarkers: StopReplyMarkers?
+    public init(configDirectory: String? = nil, tty: String? = nil, pid: Int32? = nil, entrypoint: String? = nil, flags: AgentInboxFlags? = nil, now: Date = Date(),
+                replyMarkers: StopReplyMarkers? = nil) {
         self.configDirectory = configDirectory; self.tty = tty; self.pid = pid; self.entrypoint = entrypoint; self.flags = flags; self.now = now
+        self.replyMarkers = replyMarkers
     }
 }
 
@@ -61,7 +65,11 @@ public enum ClaudeAttentionHook {
         case "Stop":
             let text = (payload["last_assistant_message"] as? String).flatMap { $0.isEmpty ? nil : $0 }
                 ?? (payload["transcript_path"] as? String).flatMap(transcript) ?? ""
-            return send(item(.finished, "Done", text))
+            // A terminal or Claude Desktop session may wait briefly for a reply typed in the pop-up.
+            let continued = context.replyMarkers?.consume(source: "claude", sessionID: sessionID, now: context.now) ?? false
+            let wait = StopReply.deadline(flags: context.flags, entrypoint: context.entrypoint, stopHookActive: payload["stop_hook_active"] as? Bool == true,
+                                          continuedByReply: continued, now: context.now)
+            return send(item(.finished, "Done", text, deadline: wait))
         case "Notification":
             let type = payload["notification_type"] as? String ?? ""
             let message = (payload["message"] as? String).flatMap { $0.isEmpty ? nil : $0 }
@@ -83,15 +91,21 @@ public enum ClaudeAttentionHook {
         switch outgoing(payload: payload, mode: mode, context: context) {
         case .post(let message)?: AgentInboxClient.post(message, socket: socket); return nil
         case .hold(let item)?:
-            guard let deadline = item.deadline, let decision = AgentInboxClient.request(item, socket: socket, deadline: deadline) else { return nil }
-            return output(for: decision, kind: item.kind, toolInput: payload["tool_input"] as? [String: Any])
+            // A reply may be extended while the user types (up to `AgentInbox.maxReplyHold`); permission waits are fixed.
+            let limit = item.kind == .finished ? StopReply.limit(receivedAt: item.receivedAt) : nil
+            guard let deadline = item.deadline, let decision = AgentInboxClient.request(item, socket: socket, deadline: deadline, limit: limit) else { return nil }
+            let text = output(for: decision, kind: item.kind, toolInput: payload["tool_input"] as? [String: Any])
+            if item.kind == .finished, text != nil { context.replyMarkers?.mark(source: "claude", sessionID: item.sessionID) }
+            return text
         case nil: return nil
         }
     }
 
     /// Claude Code's documented hook output for a decision (code.claude.com/docs/en/hooks: "PermissionRequest decision
-    /// control" and "Tools that require user interaction"). Nil for pass-through or a decision that does not fit the request.
+    /// control", "Tools that require user interaction" and "Stop decision control"). Nil for pass-through or a decision
+    /// that does not fit the request.
     public static func output(for decision: AttentionDecision, kind: AttentionKind, toolInput: [String: Any]?) -> String? {
+        if kind == .finished { return StopReply.output(for: decision) }
         let body: [String: Any]
         switch (kind, decision) {
         case (.permission, .allow):

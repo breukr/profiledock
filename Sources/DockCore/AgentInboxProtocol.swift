@@ -11,10 +11,19 @@ public enum AgentInbox {
     public static func clampedHold(_ value: Int?) -> Int { min(max(value ?? defaultHold, holdRange.lowerBound), holdRange.upperBound) }
     /// Hook timeout for the two hook groups that may wait. It leaves the helper 15 seconds to give up on its own first.
     public static func blockingTimeout(hold: Int) -> Int { clampedHold(hold) + 15 }
+    /// Seconds a finished turn waits for a reply typed in the pop-up before the agent ends its turn. 0 turns it off.
+    public static let defaultReplyHold = 12
+    /// A reply hold can be extended while the user types, but never past this many seconds after the turn ended.
+    public static let maxReplyHold = 600
+    public static func clampedReplyHold(_ value: Int?) -> Int { min(max(value ?? defaultReplyHold, 0), maxReplyHold) }
+    /// Hook timeout for the Stop group: the longest reply hold plus the same 15-second margin.
+    public static var replyTimeout: Int { maxReplyHold + 15 }
     public static func directory(home: URL) -> URL { home.appendingPathComponent("Library/Application Support/Account Dock/Inbox") }
     public static func socket(home: URL) -> URL { directory(home: home).appendingPathComponent("inbox.sock") }
     /// Written by the app, read by the helper: whether pop-ups and notch answers are on, and the hold time.
     public static func flagsFile(home: URL) -> URL { directory(home: home).appendingPathComponent("settings.json") }
+    /// Empty marker files, one per session whose last turn was continued by a pop-up reply (`StopReplyMarkers`).
+    public static func replyMarkers(home: URL) -> URL { directory(home: home).appendingPathComponent("replies") }
 
     /// Request ids are one-time tokens: letters, digits and dashes, at most 128 characters.
     public static func validID(_ value: String) -> Bool { value.count <= 128 && Profile.validID(value) }
@@ -42,22 +51,26 @@ public enum AgentInbox {
     }
 }
 
-/// Messages on the inbox socket. The helper sends `attention` and `clear`; the app answers a held request with `decision`.
+/// Messages on the inbox socket. The helper sends `attention` and `clear`; the app answers a held request with `decision`,
+/// and may first send `extend` to move its deadline while the user is still typing.
 public enum AgentInboxMessage: Equatable, Sendable {
     /// `notification` names the Claude Code notification type an item came from, so the app can skip duplicates.
     case attention(AgentAttention, notification: String?)
     case decision(id: String, decision: AttentionDecision)
+    /// Hold request `id` until `until` instead (the helper caps it, see `AgentInboxClient.request`).
+    case extend(id: String, until: Date)
     /// The session moved on (a tool ran, a prompt was sent, the session ended): stale display-only items can go.
     case clear(source: String, sessionID: String, includeFinished: Bool)
 }
 
 extension AgentInboxMessage: Codable {
-    private enum Keys: String, CodingKey { case type, item, notification, id, decision, source, sessionID, includeFinished }
+    private enum Keys: String, CodingKey { case type, item, notification, id, decision, source, sessionID, includeFinished, until }
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: Keys.self)
         switch try container.decode(String.self, forKey: .type) {
         case "attention": self = .attention(try container.decode(AgentAttention.self, forKey: .item), notification: try container.decodeIfPresent(String.self, forKey: .notification))
         case "decision": self = .decision(id: try container.decode(String.self, forKey: .id), decision: try container.decode(AttentionDecision.self, forKey: .decision))
+        case "extend": self = .extend(id: try container.decode(String.self, forKey: .id), until: try container.decode(Date.self, forKey: .until))
         case "clear": self = .clear(source: try container.decode(String.self, forKey: .source), sessionID: try container.decode(String.self, forKey: .sessionID),
                                     includeFinished: try container.decodeIfPresent(Bool.self, forKey: .includeFinished) ?? false)
         default: throw DecodingError.dataCorruptedError(forKey: .type, in: container, debugDescription: "Unknown inbox message")
@@ -70,6 +83,8 @@ extension AgentInboxMessage: Codable {
             try container.encode("attention", forKey: .type); try container.encode(item, forKey: .item); try container.encodeIfPresent(notification, forKey: .notification)
         case .decision(let id, let decision):
             try container.encode("decision", forKey: .type); try container.encode(id, forKey: .id); try container.encode(decision, forKey: .decision)
+        case .extend(let id, let until):
+            try container.encode("extend", forKey: .type); try container.encode(id, forKey: .id); try container.encode(until, forKey: .until)
         case .clear(let source, let sessionID, let includeFinished):
             try container.encode("clear", forKey: .type); try container.encode(source, forKey: .source)
             try container.encode(sessionID, forKey: .sessionID); try container.encode(includeFinished, forKey: .includeFinished)
@@ -108,11 +123,25 @@ public struct AgentInboxFlags: Codable, Equatable, Sendable {
     public var popups: Bool
     public var answerFromNotch: Bool
     public var holdSeconds: Int
-    public init(popups: Bool = true, answerFromNotch: Bool = true, holdSeconds: Int = AgentInbox.defaultHold) {
+    /// Seconds a finished turn waits for a reply typed in the pop-up (0 = off). Files written before this key existed
+    /// read as the default.
+    public var replyHoldSeconds: Int
+    public init(popups: Bool = true, answerFromNotch: Bool = true, holdSeconds: Int = AgentInbox.defaultHold, replyHoldSeconds: Int = AgentInbox.defaultReplyHold) {
         self.popups = popups; self.answerFromNotch = answerFromNotch; self.holdSeconds = AgentInbox.clampedHold(holdSeconds)
+        self.replyHoldSeconds = AgentInbox.clampedReplyHold(replyHoldSeconds)
     }
     /// A request is held only when the pop-up that can answer it is shown.
     public var holds: Bool { popups && answerFromNotch }
+    /// A finished turn is held for a reply only while pop-ups are on and the reply wait is not 0.
+    public var holdsReplies: Bool { popups && replyHoldSeconds > 0 }
+
+    private enum CodingKeys: String, CodingKey { case popups, answerFromNotch, holdSeconds, replyHoldSeconds }
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(popups: try container.decode(Bool.self, forKey: .popups), answerFromNotch: try container.decode(Bool.self, forKey: .answerFromNotch),
+                  holdSeconds: try container.decode(Int.self, forKey: .holdSeconds),
+                  replyHoldSeconds: try container.decodeIfPresent(Int.self, forKey: .replyHoldSeconds) ?? AgentInbox.defaultReplyHold)
+    }
 
     public static func read(home: URL) -> AgentInboxFlags? {
         let url = AgentInbox.flagsFile(home: home)
@@ -147,14 +176,16 @@ extension AttentionQuestion {
 
 extension AgentAttention {
     /// Re-validates an item that arrived over the socket: bounded text, known shapes, and a deadline only where a
-    /// decision is possible and within the longest hold. Nil for an item that cannot be shown.
+    /// decision is possible and within the longest hold. Nil for an item that cannot be shown. Sources are registry ids
+    /// (lowercase letters, digits and dashes, such as "cursor-cli").
     public func sanitized(now: Date = Date()) -> AgentAttention? {
-        guard AgentInbox.validID(id), source.count <= 16, source.range(of: "^[a-z]+$", options: .regularExpression) != nil,
+        guard AgentInbox.validID(id), source.count <= 16, source.range(of: "^[a-z][a-z0-9-]*$", options: .regularExpression) != nil,
               ClaudeSession.validID(sessionID) else { return nil }
         let questions = self.questions.prefix(4).compactMap { $0.sanitized() }
         guard kind != .question || !questions.isEmpty else { return nil }
         let latest = now.addingTimeInterval(TimeInterval(AgentInbox.blockingTimeout(hold: AgentInbox.holdRange.upperBound)))
-        let deadline = (kind == .permission || kind == .question) ? self.deadline.flatMap { $0 > now && $0 <= latest ? $0 : nil } : nil
+        // A finished turn may wait too: for a reply typed in the pop-up (`AttentionDecision.reply`).
+        let deadline = kind != .waiting ? self.deadline.flatMap { $0 > now && $0 <= latest ? $0 : nil } : nil
         func path(_ value: String?) -> String? { value.flatMap { $0.hasPrefix("/") && $0.utf8.count < 4_096 ? $0 : nil } }
         return AgentAttention(id: id, source: source, sessionID: sessionID, kind: kind, title: title, message: message, toolName: toolName, preview: preview,
                               questions: questions, cwd: path(cwd), configDirectory: path(configDirectory), tty: tty.flatMap { ClaudeSession.validTTY($0) ? $0 : nil },
@@ -190,17 +221,24 @@ public enum AgentInboxClient {
     }
 
     /// Sends a request and waits until `deadline` for the app's decision on that id. Nil means no answer: let the agent ask.
-    public static func request(_ item: AgentAttention, socket: URL, connectTimeout: TimeInterval = 0.1, deadline: Date) -> AttentionDecision? {
+    /// The app may move the deadline with `extend` while the user types, never past `limit` (nil: the deadline is fixed),
+    /// so the hook always gives up before the agent's own hook timeout.
+    public static func request(_ item: AgentAttention, socket: URL, connectTimeout: TimeInterval = 0.1, deadline: Date, limit: Date? = nil) -> AttentionDecision? {
         guard let data = try? AgentInbox.encode(.attention(item, notification: nil)), let fd = connect(socket, timeout: connectTimeout) else { return nil }
         defer { Darwin.close(fd) }
         guard write(data, to: fd, until: min(deadline, Date().addingTimeInterval(1))) else { return nil }
-        var frames = AgentInboxFrames(), buffer = [UInt8](repeating: 0, count: 16_384)
+        var frames = AgentInboxFrames(), buffer = [UInt8](repeating: 0, count: 16_384), deadline = deadline
+        let limit = max(limit ?? deadline, deadline)
         while wait(fd, for: Int16(POLLIN), until: deadline) {
             let count = Darwin.read(fd, &buffer, buffer.count)
             if count < 0, errno == EAGAIN || errno == EINTR { continue }
             guard count > 0, let bodies = try? frames.append(Data(buffer[0..<count])) else { return nil }
             for body in bodies {
-                if case .decision(let id, let decision)? = try? AgentInbox.decode(body), id == item.id { return decision }
+                switch try? AgentInbox.decode(body) {
+                case .decision(let id, let decision)? where id == item.id: return decision
+                case .extend(let id, let until)? where id == item.id: deadline = max(deadline, min(until, limit))
+                default: break
+                }
             }
         }
         return nil
