@@ -714,7 +714,10 @@ struct UsageWindowView: View {
     static let percentWidth: CGFloat = 32
     static let resetWidth: CGFloat = 46
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private var tint: Color { UsageTint.remaining(window.remainingPercent).color }
+    /// The window's reset time passed since this reading: it is full again, shown dimmed until the next reading.
+    private var reset: Bool { window.isPastReset(now: now) }
+    private var remaining: Double { reset ? 100 : window.remainingPercent }
+    private var tint: Color { UsageTint.remaining(remaining).color }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -723,20 +726,21 @@ struct UsageWindowView: View {
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     Capsule().fill(.white.opacity(0.12))
-                    Capsule().fill(tint).frame(width: proxy.size.width * window.remainingPercent / 100)
+                    Capsule().fill(tint).frame(width: proxy.size.width * remaining / 100)
                 }
             }
             .frame(height: 4)
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.45), value: window.remainingPercent)
-            Text("\(Int(window.remainingPercent.rounded()))%").monospacedDigit().foregroundStyle(tint)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.45), value: remaining)
+            Text(verbatim: "\(Int(remaining.rounded()))%").monospacedDigit().foregroundStyle(tint)
                 .frame(width: Self.percentWidth, alignment: .trailing)
-                .animation(reduceMotion ? nil : .easeInOut(duration: 0.45), value: window.remainingPercent)
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.45), value: remaining)
             Text(shortReset).monospacedDigit().foregroundStyle(.white.opacity(0.45)).lineLimit(1)
                 .frame(width: Self.resetWidth, alignment: .trailing)
         }
         .font(.system(size: 10, weight: .medium))
+        .opacity(reset ? 0.55 : 1)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(window.title), \(Int(window.remainingPercent.rounded())) percent remaining. \(resetText)")
+        .accessibilityLabel("\(window.title), \(Int(remaining.rounded())) percent remaining. \(resetText)")
         .help(window.resetsAt.map { "\(window.title): \(Int(window.usedPercent.rounded()))% used.\nResets at \(IslandView.absoluteDate($0))." } ?? "\(window.title): reset time unknown.")
     }
 
@@ -751,7 +755,7 @@ struct UsageWindowView: View {
     var shortReset: String {
         guard let reset = window.resetsAt else { return "—" }
         let seconds = reset.timeIntervalSince(now)
-        guard seconds > 0 else { return "now" }
+        guard seconds > 0 else { return "reset" }
         let hours = Int(seconds / 3600), days = hours / 24
         if days > 0 { return "\(days)d \(hours % 24)h" }
         if hours > 0 { return "\(hours)h \(Int(seconds / 60) % 60)m" }

@@ -27,8 +27,10 @@ final class AttentionPanelController: ObservableObject {
     @Published var hovered = false {
         didSet { if oldValue != hovered { lastActivity = now(); scheduleAutoHide() } }
     }
-    /// Height of the black band that continues the hardware notch (0 on screens without one).
+    /// Height of the black band that continues the notch or the collapsed island in the menu bar (0 when the strip floats).
     @Published var notchHeight: CGFloat = 0
+    /// Size of the collapsed island the pop-up grows out of, so opening reads as one shape morphing out of the notch.
+    @Published var origin: CGSize = .zero
     /// False in tests and renders: state updates as usual, but no window is put on screen.
     var showsWindow = true
 
@@ -137,7 +139,8 @@ final class AttentionPanelController: ObservableObject {
         if seconds < 86_400 { return "\(Int(seconds / 3600)) h" }
         return "\(Int(seconds / 86_400)) d"
     }
-    /// Panel frame: centered on the screen, hanging from the top edge on a notch screen, below the menu bar elsewhere.
+    /// Panel frame: centered on the screen and hanging from its top edge when it grows out of the island; below the
+    /// menu bar when the strip floats.
     nonisolated static func frame(screen: CGRect, visible: CGRect, notchHeight: CGFloat, contentHeight: CGFloat) -> CGRect {
         let width = cardWidth + margin * 2, height = ceil(contentHeight) + margin
         let top = notchHeight > 0 ? screen.maxY : visible.maxY - 6
@@ -244,12 +247,20 @@ final class AttentionPanelController: ObservableObject {
         if enabled, current != nil { show() } else { hide() }
         scheduleAutoHide()
     }
-    private func targetScreen() -> NSScreen? { NSScreen.screens.first { $0.safeAreaInsets.top > 0 } ?? NSScreen.main ?? NSScreen.screens.first }
+    /// The display the user is looking at (where the pointer is), so the pop-up grows out of that display's island.
+    private func targetScreen() -> NSScreen? {
+        let pointer = NSEvent.mouseLocation
+        return NSScreen.screens.first { NSMouseInRect(pointer, $0.frame, false) } ?? NSScreen.main ?? NSScreen.screens.first
+    }
 
     private func show() {
         guard let screen = targetScreen() else { return }
         closeWork?.cancel(); closeWork = nil
-        notchHeight = model.placement == .topCenter ? screen.safeAreaInsets.top : 0
+        if model.placement == .topCenter {
+            // Grow out of the collapsed island: the notch itself, or the black island in the menu bar.
+            let island = IslandController.layout(screen: screen, model: model).collapsed
+            notchHeight = island.height; origin = island.size
+        } else { notchHeight = 0; origin = .zero }
         let panel = self.panel ?? makePanel()
         self.panel = panel
         panel.setFrame(Self.frame(screen: screen.frame, visible: screen.visibleFrame, notchHeight: notchHeight, contentHeight: contentHeight), display: true)
@@ -363,10 +374,24 @@ private struct AttentionCard: View {
 
     private var band: CGFloat { controller.notchHeight }
     private var glass: Bool { if #available(macOS 26, *) { return style == .automatic }; return false }
+    /// Measured height of the card's content; the blob grows to exactly this height.
+    @State private var contentHeight: CGFloat = 0
+    /// Grows out of the collapsed island at the top of the screen (notch or menu-bar island) instead of appearing as a card.
+    private var fused: Bool { band > 0 && controller.origin.width > 0 }
+    private var open: Bool { revealed || reduceMotion }
+    private var fullSize: CGSize { CGSize(width: AttentionPanelController.cardWidth, height: max(contentHeight, band + 40)) }
+    /// One shape from start to finish: the island's size and small bottom corners when folded, the card when open.
+    private var blobSize: CGSize { fused && !open ? controller.origin : fullSize }
     private var shape: UnevenRoundedRectangle {
         // Flat where it meets the top of the screen, like the strip, so it reads as part of the notch.
-        let top: CGFloat = band > 0 ? 2 : 22
-        return UnevenRoundedRectangle(topLeadingRadius: top, bottomLeadingRadius: 22, bottomTrailingRadius: 22, topTrailingRadius: top, style: .continuous)
+        let top: CGFloat = fused ? 2 : 22
+        let bottom: CGFloat = fused && !open ? min(12, controller.origin.height / 2) : 22
+        return UnevenRoundedRectangle(topLeadingRadius: top, bottomLeadingRadius: bottom, bottomTrailingRadius: bottom, topTrailingRadius: top, style: .continuous)
+    }
+    /// Dynamic Island-like spring: a little overshoot opening, none closing.
+    private var morph: Animation {
+        reduceMotion ? .easeOut(duration: AttentionPanelController.reducedFade)
+            : revealed ? .spring(duration: AttentionPanelController.openDuration, bounce: 0.22) : .spring(duration: AttentionPanelController.closeDuration, bounce: 0)
     }
     private var profile: Profile? { controller.profile(for: item) }
     private var revealed: Bool { controller.revealed }
@@ -385,22 +410,22 @@ private struct AttentionCard: View {
         }
         .padding(.top, band + 10).padding(.horizontal, 16).padding(.bottom, 14)
         .frame(width: AttentionPanelController.cardWidth, alignment: .leading)
+        .background(GeometryReader { geometry in
+            Color.clear
+                .onAppear { contentHeight = geometry.size.height }
+                .onChange(of: geometry.size.height) { _, height in contentHeight = height }
+        })
+        // Text appears once the shape has mostly grown, and leaves first when it folds back.
         .opacity(revealed ? 1 : 0)
-        .animation(reduceMotion ? .easeOut(duration: AttentionPanelController.reducedFade) : revealed ? .easeOut(duration: AttentionPanelController.contentFade).delay(0.1) : .easeOut(duration: 0.12), value: revealed)
-        .background { surface }
+        .animation(reduceMotion ? .easeOut(duration: AttentionPanelController.reducedFade) : revealed ? .easeOut(duration: AttentionPanelController.contentFade).delay(fused ? 0.16 : 0.08) : .easeOut(duration: 0.1), value: revealed)
+        return ZStack(alignment: .top) {
+            blob
+            content
+        }
+        .frame(width: AttentionPanelController.cardWidth, alignment: .top)
         .onHover { controller.hovered = $0 }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(Self.kindLabel(item)) from \(AttentionPanelController.agentName(item))")
-        if glass, #available(macOS 26, *) {
-            // The card itself is the glass, with its content placed on top. A glass view in the background
-            // (or a GlassEffectContainer around everything) renders above the text and blurs it.
-            content
-                .glassEffect(.regular.tint(.black.opacity(0.5)), in: shape)
-                .scaleEffect(x: revealed || reduceMotion ? 1 : 0.42, y: revealed || reduceMotion ? 1 : 0.12, anchor: .top)
-                .opacity(revealed ? 1 : 0)
-                .animation(reduceMotion ? .easeOut(duration: AttentionPanelController.reducedFade)
-                           : revealed ? .spring(duration: AttentionPanelController.openDuration, bounce: 0.18) : .spring(duration: AttentionPanelController.closeDuration, bounce: 0), value: revealed)
-        } else { content }
     }
 
     static func kindLabel(_ item: AgentAttention) -> String {
@@ -409,33 +434,43 @@ private struct AttentionCard: View {
 
     // MARK: Surface
 
-    /// Springs out of the notch: the surface grows from notch size; Reduce Motion fades it in place.
-    private var surface: some View {
-        ZStack(alignment: .top) {
-            surfaceFill
+    /// The pop-up's body. Fused with the island it starts as the island itself (black, island-sized) and springs into
+    /// the card; a black veil over the glass lifts once it has grown, so the morph reads as one solid shape.
+    private var blob: some View {
+        let size = blobSize
+        return ZStack(alignment: .top) {
+            surfaceFill(size)
+            if fused {
+                shape.fill(Color.black).frame(width: size.width, height: size.height)
+                    .opacity(revealed ? 0 : 1)
+                    .animation(reduceMotion ? .easeOut(duration: AttentionPanelController.reducedFade) : revealed ? .easeOut(duration: 0.26).delay(AttentionPanelController.openDuration * 0.55) : .easeOut(duration: 0.14), value: revealed)
+            }
             if band > 0 {
                 VStack(spacing: 0) {
                     Color.black.frame(height: band)
                     LinearGradient(colors: [.black, .black.opacity(0)], startPoint: .top, endPoint: .bottom).frame(height: 36)
+                    Spacer(minLength: 0)
                 }
-                .clipShape(shape).accessibilityHidden(true)
+                .frame(width: size.width, height: size.height).clipShape(shape)
             }
         }
-        .scaleEffect(x: revealed || reduceMotion ? 1 : 0.42, y: revealed || reduceMotion ? 1 : 0.12, anchor: .top)
-        .opacity(revealed ? 1 : 0)
-        .animation(reduceMotion ? .easeOut(duration: AttentionPanelController.reducedFade)
-                   : revealed ? .spring(duration: AttentionPanelController.openDuration, bounce: 0.18) : .spring(duration: AttentionPanelController.closeDuration, bounce: 0), value: revealed)
+        .frame(width: size.width, height: size.height, alignment: .top)
+        .opacity(fused || revealed ? 1 : 0)
+        .scaleEffect(fused || open ? 1 : 0.96, anchor: .top)
+        .animation(morph, value: revealed)
+        .animation(reduceMotion ? nil : .spring(duration: 0.3, bounce: 0), value: contentHeight)
+        .accessibilityHidden(true)
     }
-    @ViewBuilder private var surfaceFill: some View {
-        if glass {
-            Color.clear  // the glass is applied to the whole card in `body`
+    @ViewBuilder private func surfaceFill(_ size: CGSize) -> some View {
+        if glass, #available(macOS 26, *) {
+            Color.clear.frame(width: size.width, height: size.height).glassEffect(.regular.tint(.black.opacity(0.5)), in: shape)
         } else if style == .opaque {
-            ZStack { Color.black; Color.white.opacity(0.06) }.clipShape(shape)
+            ZStack { Color.black; Color.white.opacity(0.06) }.frame(width: size.width, height: size.height).clipShape(shape)
                 .overlay(shape.stroke(.white.opacity(0.16), lineWidth: 0.7))
         } else {
-            ZStack { AttentionBlur(); Color.black.opacity(0.35) }.clipShape(shape)
+            ZStack { AttentionBlur(); Color.black.opacity(0.35) }.frame(width: size.width, height: size.height).clipShape(shape)
                 .overlay(shape.stroke(.white.opacity(0.14), lineWidth: 0.7))
-                .shadow(color: .black.opacity(0.35), radius: 16, y: 8)
+                .shadow(color: .black.opacity(revealed ? 0.35 : 0), radius: 16, y: 8)
         }
     }
 

@@ -124,6 +124,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             attention.post(AgentAttention(source: "claude", sessionID: "preview-2", kind: .finished, title: "Done",
                                           message: "Finished the Noordhaven importer. Parsed 1,204 rows and wrote a summary to reports/import.md.",
                                           cwd: "/tmp/atlas-web", tty: "/dev/ttys999"))
+            // --preview-attention-loop replays the open and close motion every 7 seconds for review.
+            if CommandLine.arguments.contains("--preview-attention-loop") {
+                let center = attention
+                Timer.scheduledTimer(withTimeInterval: 7, repeats: true) { _ in
+                    MainActor.assumeIsolated {
+                        let saved = center.items
+                        saved.forEach { center.expire($0.id) }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            for item in saved { center.post(AgentAttention(source: item.source, sessionID: item.sessionID, kind: item.kind, title: item.title, message: item.message, toolName: item.toolName, preview: item.preview, questions: item.questions, cwd: item.cwd, tty: item.tty, entrypoint: item.entrypoint, deadline: item.deadline)) }
+                        }
+                    }
+                }
+            }
         }
         if model.preferences.profiles.isEmpty || previewMode || CommandLine.arguments.contains("--settings") || CommandLine.arguments.contains("--context-settings") || CommandLine.arguments.contains("--search-chats") { showSettings() }
         model.onPreferencesChanged = { [weak self] in
