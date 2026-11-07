@@ -101,9 +101,9 @@ actor ClaudeUsageClient: UsageFetching {
     private var webSnapshot: UsageSnapshot?
 
     /// One client per Claude Code configuration: nil is the shared ~/.claude sign-in, otherwise a separate account's CLAUDE_CONFIG_DIR.
-    init(configDirectory: String? = nil, session: URLSession? = nil, credentials: Credentials? = nil, clock: @escaping @Sendable () -> Date = { Date() }, resetFetcher: ResetFetcher? = nil, webUsage: WebUsage? = nil, expectedAccount: ExpectedAccount? = nil) {
+    init(configDirectory: String? = nil, session: URLSession? = nil, credentials: Credentials? = nil, clock: @escaping @Sendable () -> Date = { Date() }, resetFetcher: ResetFetcher? = nil, webUsage: WebUsage? = nil, expectedAccount: ExpectedAccount? = nil, credentialLifetime: TimeInterval? = nil) {
         self.readCredentials = credentials ?? { try ClaudeUsageCredential.read(configDirectory: configDirectory) }
-        credentialLifetime = credentials == nil ? 30 : 0
+        self.credentialLifetime = credentialLifetime ?? (credentials == nil ? 30 : 0)
         self.resetFetcher = resetFetcher ?? { try await ClaudeResetConnection.connection(configDirectory: configDirectory).inventory(for: $0) }
         self.webUsage = webUsage ?? { await ClaudeResetConnection.connection(configDirectory: configDirectory).usage(expectedAccount: $0, knownIdentity: $1) }
         self.expectedAccount = expectedAccount

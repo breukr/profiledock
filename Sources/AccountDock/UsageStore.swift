@@ -123,7 +123,7 @@ final class UsageStore: ObservableObject {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     if self.visibleScreens.isEmpty {
-                        self.now = Date()
+                        self.now = Date(); self.pruneSnoozes()
                         for profile in self.profiles { self.refresh(profile) }
                     } else { self.refreshAll() }
                 }
@@ -149,7 +149,7 @@ final class UsageStore: ObservableObject {
             await waitForNetwork(30)
             try? await Task.sleep(for: .seconds(wakeSettle))
             guard !Task.isCancelled else { return }
-            self?.refreshAll()
+            self?.refreshAll(force: true)
         }
     }
 
