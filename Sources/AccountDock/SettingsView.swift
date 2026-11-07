@@ -549,6 +549,15 @@ struct SettingsView: View {
                             }
                         }
                     }
+                    if model.preferences.attentionPopups != false {
+                        Divider().padding(.leading, 16)
+                        SettingsRow(title: "Reply from the pop-up", detail: "When a Claude Code or Codex session finishes while you are in another app, it waits this long for a reply typed in the pop-up, and longer while you type. Your reply continues the session, also in the Claude and ChatGPT apps.") {
+                            Picker("Reply wait", selection: Binding(get: { model.preferences.replyHoldSeconds ?? 12 }, set: { model.preferences.replyHoldSeconds = $0 == 12 ? nil : $0; model.save() })) {
+                                Text("Off").tag(0)
+                                ForEach([8, 12, 20, 30], id: \.self) { Text("\($0) s").tag($0) }
+                            }.labelsHidden().fixedSize()
+                        }
+                    }
                     Divider().padding(.leading, 16)
                     SettingsRow(title: "Activity sounds", detail: "Play a quiet sound with each cue.") {
                         Toggle("Play activity sounds", isOn: Binding(get: { model.preferences.activitySounds == true }, set: { model.preferences.activitySounds = $0; model.save() })).labelsHidden()

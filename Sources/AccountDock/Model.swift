@@ -49,6 +49,8 @@ struct Preferences: Codable {
     var answerPermissionsFromNotch: Bool?
     /// Seconds a waiting permission request is held for the pop-up before the agent's own dialog takes over. Nil means 90.
     var attentionHoldSeconds: Int?
+    /// Seconds a finished Claude Code or Codex turn waits for a reply typed in the pop-up (0 = off). Nil means 12.
+    var replyHoldSeconds: Int?
 }
 
 struct ProfileMessageRecovery: Equatable {

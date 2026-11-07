@@ -35,3 +35,10 @@ Rejected: a separate card below the menu bar (Sam: "should look like one big smo
 Why: Sam's feedback on the first glass build (cards too vertical, alignment, logos) and on the pop-up (must come out of the notch, no gap). Design reviewer round 1 FAIL: stale renders, missing shoulders, pop-up lighter than strip, radius and copy mismatches, two small hit targets; all fixed in this round.
 Reviewer: round 1 FAIL (fixed); round 2 not run yet.
 Sam: pending.
+
+## Round 3 (2026-11-07): compact "done" pill, replies, more agents
+Decision: finished and waiting turns show a compact pill from the island (name, "Done · project", Reply, Open) that auto-hides; permission requests and questions keep the full card. Reply works from the pop-up for every Claude Code and Codex session, including desktop chats (a short Stop-hook hold, extended while typing), else into the terminal tab, else copied and the exact chat opened. Gemini, Cursor, Copilot, Factory, Qwen and OpenCode can be connected from Settings → Coding Agents (display and Open; no answers yet).
+Rejected: a message body on "done" (Sam: just a quick pop-up and Open); two cross-fading shapes for pill and card (one morphing NotchShape instead).
+Why: Sam's request to separate "done" from "needs you", reply from the pop-up, and make it cohesive across agents.
+Reviewer: not run this round.
+Sam: pending.

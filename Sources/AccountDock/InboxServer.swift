@@ -280,10 +280,10 @@ final class AgentInboxService {
         server = InboxServer(home: model.home, attention: attention)
     }
 
-    /// `replyHold` is the seconds a finished turn waits for a reply typed in the pop-up (0 = off). It has no preference
-    /// yet, so the default applies.
-    static func flags(for preferences: Preferences, replyHold: Int = AgentInbox.defaultReplyHold) -> AgentInboxFlags {
-        AgentInboxFlags(popups: preferences.attentionPopups != false, answerFromNotch: preferences.answerPermissionsFromNotch != false,
+    /// `replyHold` is the seconds a finished turn waits for a reply typed in the pop-up (0 = off), from preferences.
+    static func flags(for preferences: Preferences, replyHold: Int? = nil) -> AgentInboxFlags {
+        let replyHold = max(0, min(60, replyHold ?? preferences.replyHoldSeconds ?? AgentInbox.defaultReplyHold))
+        return AgentInboxFlags(popups: preferences.attentionPopups != false, answerFromNotch: preferences.answerPermissionsFromNotch != false,
                         holdSeconds: AgentInbox.clampedHold(preferences.attentionHoldSeconds), replyHoldSeconds: replyHold)
     }
 
