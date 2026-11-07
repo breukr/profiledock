@@ -1,32 +1,78 @@
 import Foundation
 
 public enum WidgetSizing {
+    /// Horizontal strip padding and the gap between cards (rows and columns).
+    public static let stripPadding = 16.0
+    public static let gridGap = 10.0
+
     public static func compact(count: Int, preferred: Double?) -> Double {
         bounded(preferred, in: 160...480) ?? min(360, 194 + Double(max(0, count - 5)) * 12)
     }
+    /// Automatic width fits balanced card columns at their ideal width; a chosen width is kept within 320 to 1400.
     public static func expanded(count: Int, scale: Double, preferred: Double?, insights: Bool) -> Double {
-        max(insights ? 520 : 320, bounded(preferred, in: 320...1400) ?? min(880, Double(max(1, count)) * 142 * scale + 32))
+        max(insights ? 520 : 320, bounded(preferred, in: 320...1400) ?? min(1200, gridWidth(columns: automaticColumns(count: count), scale: scale)))
     }
-    public static func tile(count: Int, available: Double, scale: Double) -> Double {
-        let count = max(1, count), gap = 10 * scale
-        return min(132 * scale, max(104 * scale, (available - Double(count - 1) * gap) / Double(count)))
+    /// Strip width for `columns` cards at their ideal width.
+    public static func gridWidth(columns: Int, scale: Double) -> Double {
+        let columns = Double(max(1, columns))
+        return columns * CardMetrics.idealWidth(scale: scale) + (columns - 1) * gridGap + 2 * stripPadding
     }
+    /// At most four columns, filled as evenly as possible: 5 profiles are 3 + 2, 10 are 4 + 4 + 2.
+    public static func automaticColumns(count: Int) -> Int {
+        let count = max(1, count), rows = (count + 3) / 4
+        return (count + rows - 1) / rows
+    }
+    /// How many minimum-width cards fit, never more than there are profiles (or chosen columns).
     public static func columns(count: Int, available: Double, scale: Double) -> Int {
-        min(max(1, count), max(1, Int((available + 10 * scale) / (114 * scale))))
+        min(max(1, count), max(1, Int((available + gridGap) / (CardMetrics.minWidth(scale: scale) + gridGap))))
+    }
+    /// Equal-width cards that share the row, capped at the maximum card width (the grid stays leading-aligned).
+    public static func cardWidth(columns: Int, available: Double, scale: Double) -> Double {
+        let columns = Double(max(1, columns))
+        return max(0, min(CardMetrics.maxWidth(scale: scale), ((available - (columns - 1) * gridGap) / columns).rounded(.down)))
     }
     public static func insightsHeight(width: Double, count: Int) -> Double {
         let columns = max(1, Int((width - 60 + 10) / 155))
         let rows = max(1, (max(1, count) + columns - 1) / columns)
         return 400 + Double(rows) * 52 - 20
     }
+    /// Collapsed strip: brand mark, the attention or "Agents" label and the chevron take `reserved`; dots fill the rest.
     public static func visibleDots(count: Int, width: Double, floating: Bool) -> Int {
-        let reserved = floating ? 138.0 : 108.0
+        let reserved = floating ? 154.0 : 124.0
         let capacity = max(1, Int(max(0, width - reserved) / 11))
         return min(count, max(1, capacity - (count > capacity ? 2 : 0)))
     }
     private static func bounded(_ value: Double?, in range: ClosedRange<Double>) -> Double? {
         guard let value, value.isFinite else { return nil }
         return min(range.upperBound, max(range.lowerBound, value))
+    }
+}
+
+/// Geometry of one horizontal profile card in the strip. `IslandView` frames every part with these values,
+/// so `IslandLayout` can size the panel to the cards exactly.
+public enum CardMetrics {
+    public static let padding = 12.0
+    public static let cornerRadius = 16.0
+    /// Name (13 pt) over the status line (11 pt).
+    public static let textHeight = 32.0
+    public static let usageGap = 10.0
+    public static let rowHeight = 14.0
+    public static let rowGap = 6.0
+    public static let footerGap = 6.0
+    /// The saved-resets line is a button, so it keeps a 20 pt hit target.
+    public static let footerHeight = 20.0
+    public static func minWidth(scale: Double) -> Double { 240 * scale }
+    public static func idealWidth(scale: Double) -> Double { 264 * scale }
+    public static func maxWidth(scale: Double) -> Double { 340 * scale }
+    public static func badge(scale: Double) -> Double { (36 * scale).rounded() }
+    public static func headerHeight(scale: Double) -> Double { max(badge(scale: scale), textHeight) }
+    public static func usageHeight(rows: Int) -> Double {
+        let rows = Double(max(1, rows))
+        return rows * rowHeight + (rows - 1) * rowGap
+    }
+    /// Every card in the strip has this height, so rows line up; only an open reset list adds `resetDetailsHeight`.
+    public static func height(usageRows: Int, scale: Double) -> Double {
+        2 * padding + headerHeight(scale: scale) + usageGap + usageHeight(rows: usageRows) + footerGap + footerHeight
     }
 }
 
