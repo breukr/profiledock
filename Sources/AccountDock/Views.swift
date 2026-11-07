@@ -518,7 +518,8 @@ struct ProfileCard: View {
             } else if let error = entry?.error {
                 errorLine(error).frame(height: CardMetrics.rowHeight)
             } else {
-                Text((profile.kind == .codex || profile.usesClaudeAccountUsage) ? (snapshot == nil ? "Loading usage…" : "No usage data") : "Usage not reported yet")
+                Text((profile.kind == .codex || profile.usesClaudeAccountUsage) ? (snapshot == nil ? "Loading usage…" : "No usage data")
+                     : profile.kind == .agent ? "\(profile.agentTool?.name ?? "This tool") does not share usage limits" : "Usage not reported yet")
                     .font(.system(size: 10)).foregroundStyle(.white.opacity(0.45)).frame(height: CardMetrics.rowHeight)
             }
         }

@@ -42,7 +42,8 @@ final class UsageStore: ObservableObject {
     private let signInCommand: (Profile, URL) throws -> AccountSignInCommand
     /// Status-line limits for separate Claude accounts, shown only while their account endpoint has no reading.
     @Published private(set) var statusLineReadings: [String: UsageSnapshot] = [:]
-    var cardUsageRows: Int { max(1, (entries.values.compactMap { $0.snapshot?.windows.count } + statusLineReadings.values.map(\.windows.count)).max() ?? 2) }
+    /// Usage rows every card reserves: the most any account shows; two while readings load; one when no tile reports usage.
+    var cardUsageRows: Int { max(1, (entries.values.compactMap { $0.snapshot?.windows.count } + statusLineReadings.values.map(\.windows.count)).max() ?? (entries.isEmpty ? 1 : 2)) }
     @Published private(set) var now = Date()
     private let client: any UsageFetching
     private let claudeClient: any UsageFetching
