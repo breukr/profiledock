@@ -56,7 +56,8 @@ public struct AgentAttention: Codable, Sendable, Identifiable, Hashable {
     public let entrypoint: String?
     public let receivedAt: Date
     /// When the waiting hook gives up and lets the agent's own dialog take over. Nil: nothing to decide.
-    public let deadline: Date?
+    /// The app can push it later while the user is typing a reply (`AttentionCenter.extendHold`).
+    public var deadline: Date?
 
     public init(id: String = UUID().uuidString, source: String, sessionID: String, kind: AttentionKind, title: String, message: String,
                 toolName: String? = nil, preview: String? = nil, questions: [AttentionQuestion] = [], cwd: String? = nil,
@@ -90,5 +91,16 @@ public enum AttentionDecision: Codable, Sendable, Equatable {
     case deny(message: String?)
     /// Labels of the chosen options, one entry per question in order (multi-select answers joined with ", ").
     case answer([String])
+    /// Continue a finished turn with this message (a held Stop hook answers `decision: block` with it as the reason),
+    /// so a reply typed in the pop-up reaches any Claude Code or Codex session, including desktop chats.
+    case reply(String)
     case passThrough
+}
+
+public extension AgentAttention {
+    /// Short label of the agent behind an item, from the registry (for example "Gemini CLI"), for any source.
+    var agentLabel: String {
+        if source == "claude" { return entrypoint == "claude-desktop" ? "Claude" : "Claude Code" }
+        return AgentRegistry.tool(id: source)?.name ?? source.capitalized
+    }
 }

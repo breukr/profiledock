@@ -29,6 +29,15 @@ final class AttentionCenter: ObservableObject {
         if item.awaitsDecision { onDecision?(id, decision) }
     }
 
+    /// Asks the waiting hook to hold longer (the user started typing a reply). Set by the inbox server; the item's
+    /// deadline moves so the countdown stays truthful. Ignored for items that wait for nothing.
+    var onExtend: ((_ id: String, _ until: Date) -> Void)?
+    func extendHold(_ id: String, until: Date) {
+        guard let index = items.firstIndex(where: { $0.id == id }), let current = items[index].deadline, until > current else { return }
+        items[index].deadline = until
+        onExtend?(id, until)
+    }
+
     /// The user closed the item without answering: the agent's own dialog takes over.
     func dismiss(_ id: String) { respond(id, .passThrough) }
 
