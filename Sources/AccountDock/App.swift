@@ -14,6 +14,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     let appUpdates = AppUpdates()
     let selfUpdates = ProfileDockUpdates()
     let cues = ActivityCues()
+    let attention = AttentionCenter()
+    lazy var attentionPanel = AttentionPanelController(center: attention, model: model)
     var islands: [IslandController] = []
     let iconAppearance = AppIconController()
     var status: NSStatusItem!
@@ -99,6 +101,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             self.cues.receive(event, model: self.model)
         }.store(in: &subscriptions)
         if !previewMode { registerHotKeys() }
+        if !previewMode {
+            attentionPanel.start()
+            cues.suppresses = { [weak self] id in self?.attentionPanel.isShowing(profileID: id) == true }
+        }
         if model.preferences.profiles.isEmpty || previewMode || CommandLine.arguments.contains("--settings") || CommandLine.arguments.contains("--context-settings") || CommandLine.arguments.contains("--search-chats") { showSettings() }
         model.onPreferencesChanged = { [weak self] in
             guard let self else { return }
@@ -157,6 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func applicationWillTerminate(_ notification: Notification) {
         iconAppearance.shutdown()
         cues.shutdown()
+        attentionPanel.stop()
         if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
         if let localMouseMonitor { NSEvent.removeMonitor(localMouseMonitor) }
         islands.forEach { $0.shutdown() }
