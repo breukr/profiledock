@@ -45,6 +45,12 @@ final class IslandController {
     private(set) var layout: IslandLayout
     private(set) var expanded = false
     private(set) var animating = false
+    /// Strips currently open, across displays (the pop-up stays folded while any is open).
+    private static var openStrips = Set<ObjectIdentifier>()
+    static func anyExpanded(changing controller: IslandController, to value: Bool) -> Bool {
+        if value { openStrips.insert(ObjectIdentifier(controller)) } else { openStrips.remove(ObjectIdentifier(controller)) }
+        return !openStrips.isEmpty
+    }
     private let surface = IslandSurface()
     private var collapseTimer: Timer?
     private var scheduledCollapse: TimeInterval?
@@ -173,6 +179,8 @@ final class IslandController {
     }
 
     func shutdown() {
+        // A rebuilt strip must not leave the pop-up folded away.
+        NotificationCenter.default.post(name: AttentionPanelController.stripExpansionChanged, object: nil, userInfo: ["expanded": Self.anyExpanded(changing: self, to: false)])
         usageSubscription?.cancel()
         menuSubscriptions.removeAll(); trackedMenus.removeAll()
         presentation.expanded = false
@@ -312,6 +320,7 @@ final class IslandController {
         if measureAnimations && duration > 0 { frameMeter.start(screen: screen, fps: preferredFPS, surface: surface) }
         // Terminals are scanned every 2 s while a strip is open, slower otherwise.
         model.companions.setStripExpanded(value, id: screenKey)
+        NotificationCenter.default.post(name: AttentionPanelController.stripExpansionChanged, object: nil, userInfo: ["expanded": IslandController.anyExpanded(changing: self, to: value)])
         surface.reveal(expanded: value, compactSize: layout.collapsed.size, duration: duration, fps: preferredFPS) { [weak self] in
             guard let self, self.animationGeneration == generation else { return }
             self.animating = false

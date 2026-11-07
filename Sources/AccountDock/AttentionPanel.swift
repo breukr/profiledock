@@ -57,9 +57,18 @@ final class AttentionPanelController: ObservableObject {
     var current: AgentAttention? { items.first { $0.id == currentID } }
     var position: (index: Int, count: Int) { (items.firstIndex { $0.id == currentID }.map { $0 + 1 } ?? 0, items.count) }
     var enabled: Bool { model.preferences.attentionPopups != false }
+    /// While the strip is open it covers the same spot; the pop-up folds back into the island and returns when it closes.
+    private(set) var stripOpen = false
+    static let stripExpansionChanged = Notification.Name("ProfileDockStripExpansionChanged")
 
     func start() {
         center.$items.sink { [weak self] items in self?.update(items) }.store(in: &subscriptions)
+        NotificationCenter.default.publisher(for: Self.stripExpansionChanged).sink { [weak self] note in
+            guard let self else { return }
+            let open = note.userInfo?["expanded"] as? Bool ?? false
+            guard open != self.stripOpen else { return }
+            self.stripOpen = open; self.present()
+        }.store(in: &subscriptions)
         model.$preferences.map(\.attentionPopups).removeDuplicates().dropFirst().sink { [weak self] _ in
             DispatchQueue.main.async { self?.present() }
         }.store(in: &subscriptions)
@@ -244,7 +253,7 @@ final class AttentionPanelController: ObservableObject {
 
     private func present() {
         guard showsWindow else { isPresenting = enabled && current != nil; revealed = isPresenting; scheduleAutoHide(); return }
-        if enabled, current != nil { show() } else { hide() }
+        if enabled, current != nil, !stripOpen { show() } else { hide() }
         scheduleAutoHide()
     }
     /// The display the user is looking at (where the pointer is), so the pop-up grows out of that display's island.
