@@ -19,7 +19,7 @@ final class WidgetSizingTests: XCTestCase {
     func testCardWidthStaysWithinBoundsAtEveryWidthAndScale() {
         // (strip width, scale) -> (columns, card width); the strip has 16 pt padding on both sides.
         let expected: [Double: [Double: (Int, Double)]] = [
-            360: [0.85: (1, 289), 1: (1, 328), 1.3: (1, 328)],
+            360: [0.85: (1, 328), 1: (1, 328), 1.3: (1, 328)],
             680: [0.85: (3, 209), 1: (2, 319), 1.3: (2, 319)],
             1040: [0.85: (4, 244), 1: (4, 244), 1.3: (3, 329)],
         ]
@@ -35,8 +35,9 @@ final class WidgetSizingTests: XCTestCase {
                 XCTAssertLessThanOrEqual(Double(columns) * card + Double(columns - 1) * WidgetSizing.gridGap, available)
             }
         }
-        // Wide strips cap cards at the maximum width instead of stretching them; the grid stays leading-aligned.
-        XCTAssertEqual(WidgetSizing.cardWidth(columns: 1, available: 900, scale: 1), 340)
+        // Cards fill the row (sharing the header's right edge) up to a generous cap for a lone card.
+        XCTAssertEqual(WidgetSizing.cardWidth(columns: 2, available: 1008, scale: 1), 499)
+        XCTAssertEqual(WidgetSizing.cardWidth(columns: 1, available: 900, scale: 1), 560)
         XCTAssertEqual(WidgetSizing.columns(count: 2, available: 1400, scale: 1), 2, "Never more columns than profiles")
     }
     func testAutomaticColumnsBalanceRowsAndWidthFitsThem() {

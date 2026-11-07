@@ -63,7 +63,8 @@ public enum CardMetrics {
     public static let footerHeight = 20.0
     public static func minWidth(scale: Double) -> Double { 240 * scale }
     public static func idealWidth(scale: Double) -> Double { 264 * scale }
-    public static func maxWidth(scale: Double) -> Double { 340 * scale }
+    /// Cards fill their row so they share the header's right edge; the cap only stops a lone card from stretching absurdly.
+    public static func maxWidth(scale: Double) -> Double { 560 * scale }
     public static func badge(scale: Double) -> Double { (36 * scale).rounded() }
     public static func headerHeight(scale: Double) -> Double { max(badge(scale: scale), textHeight) }
     public static func usageHeight(rows: Int) -> Double {

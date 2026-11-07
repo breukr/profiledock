@@ -77,12 +77,12 @@ final class IslandTests: XCTestCase {
         let screen = CGRect(x: 0, y: 0, width: 1920, height: 1400)
         let none = IslandLayout(screen: screen, notchHeight: 0, notchWidth: 0, count: 4, scale: 1, hasMessage: false, terminalCount: 0)
         let two = IslandLayout(screen: screen, notchHeight: 0, notchWidth: 0, count: 6, scale: 1, hasMessage: false, terminalCount: 2)
-        // Four desktops fill one row of four. With two terminals the strip has three columns: the desktops take
-        // a second row (10 + 130) and the terminals one row of their own under the Terminals header (12 + 130).
+        // Columns follow the bigger section: four desktops keep their row of four, and the two terminals get one
+        // row of their own under the Terminals header (12 + 130) instead of pushing the desktops onto a second row.
         XCTAssertEqual(none.profileColumns, 4)
-        XCTAssertEqual(two.profileColumns, 3)
-        XCTAssertEqual(two.profileRows, 2)
-        XCTAssertEqual(two.expanded.height - none.expanded.height, (10 + 130) + (12 + 130))
+        XCTAssertEqual(two.profileColumns, 4)
+        XCTAssertEqual(two.profileRows, 1)
+        XCTAssertEqual(two.expanded.height - none.expanded.height, 12 + 130)
     }
     func testGridDecoderBoundsInvalidDimensions() throws {
         let grid = try JSONDecoder().decode(ProfileGrid.self, from: Data(#"{"columns":999,"rows":-2}"#.utf8))

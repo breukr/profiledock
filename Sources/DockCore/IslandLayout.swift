@@ -69,13 +69,15 @@ public struct IslandLayout: Equatable, Sendable {
         let available = Self.usableFrame(screen: screen, visible: visibleFrame)
         let availableHeight: Double = placement == .topCenter ? Double(screen.maxY - (visibleFrame?.minY ?? screen.minY)) - 12 - self.notchHeight : Double(available.height)
         let insightsOpen = showsInsights && showsInsightsSection
+        // Columns follow the bigger section (apps or terminals), so two cards per section fill their row instead of half of it.
+        let desktops = max(0, count - (terminalCount ?? 0)), terminals = max(0, terminalCount ?? 0)
+        let sectionCount = max(1, desktops, terminals)
         let requestedWidth = grid.map { max(insightsOpen ? 520 : 320, WidgetSizing.gridWidth(columns: $0.columns, scale: scale)) }
-            ?? WidgetSizing.expanded(count: count, scale: scale, preferred: preferredExpanded, insights: insightsOpen)
+            ?? WidgetSizing.expanded(count: sectionCount, scale: scale, preferred: preferredExpanded, insights: insightsOpen)
         let expandedWidth = min(placement == .topCenter ? screen.width - 32 : available.width, requestedWidth)
         let insightsHeight = insightsOpen ? WidgetSizing.insightsHeight(width: expandedWidth, count: count) : 0
-        let columns = WidgetSizing.columns(count: grid?.columns ?? count, available: expandedWidth - 2 * WidgetSizing.stripPadding, scale: scale)
+        let columns = WidgetSizing.columns(count: grid?.columns ?? sectionCount, available: expandedWidth - 2 * WidgetSizing.stripPadding, scale: scale)
         profileColumns = columns
-        let desktops = max(0, count - (terminalCount ?? 0)), terminals = max(0, terminalCount ?? 0)
         let desktopRows = (desktops + columns - 1) / columns, terminalRows = (terminals + columns - 1) / columns
         // Everything except the card rows: header, notices, section headers, empty state and insights.
         var chrome = Self.topInset + Self.headerHeight + Self.bottomInset + (hasMessage ? Self.messageHeight : 0)
