@@ -52,6 +52,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             return
         }
         applyVisibility()
+        // Last readings from disk first, so tiles show bars (with their age) right after launch.
+        if !previewMode { usage.useReadingCache(.standard()) }
         usage.configure(previewMode ? [] : model.stripProfiles)
         insights.prepare(profiles: model.preferences.profiles, home: model.home)
         if !previewMode {
@@ -60,7 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 self?.usage.claudeConnectionChanged(configDirectory: note.userInfo?[ClaudeResetConnection.configDirectoryKey] as? String)
             }.store(in: &subscriptions)
             NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification).sink { [weak self] _ in
-                self?.usage.refreshAll()
+                self?.usage.handleWake()
             }.store(in: &subscriptions)
         }
         activity.configure(previewMode ? [] : model.activityProfiles, running: Set(model.running.keys))

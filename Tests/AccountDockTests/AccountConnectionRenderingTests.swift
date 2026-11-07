@@ -13,7 +13,7 @@ final class AccountConnectionRenderingTests: XCTestCase {
     @MainActor func testConnectionNoticeRendersBothProvidersAtNarrowAndWideSizes() async throws {
         _ = NSApplication.shared
         let client = DisconnectedUsage()
-        let usage = UsageStore(client: client, claudeClient: client)
+        let usage = UsageStore(client: client, claudeClient: client, launchGraceCycles: 0)
         defer { usage.shutdown() }
         var claude = Profile(id: "claude", name: "Claude", color: "377CF6"); claude.provider = .claude
         let codex = Profile(id: "client", name: "Client workspace", color: "377CF6")
@@ -72,7 +72,7 @@ final class AccountConnectionRenderingTests: XCTestCase {
 
     @MainActor func testMutedAccountNeverTriggersTheDropDown() async throws {
         let client = DisconnectedUsage()
-        let usage = UsageStore(client: client, claudeClient: client)
+        let usage = UsageStore(client: client, claudeClient: client, launchGraceCycles: 0)
         defer { usage.shutdown() }
         let muted = Profile(id: "muted", name: "Muted", color: "377CF6"), loud = Profile(id: "loud", name: "Loud", color: "377CF6")
         var lost: [String] = []

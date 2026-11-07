@@ -87,4 +87,31 @@ final class AccountSignInTests: XCTestCase {
         try write(#"{"oauthAccount":{"accountUuid":"bbbbbbbb-0000-4000-8000-000000000002","emailAddress":"two@example.com"}}"#, to: home.appendingPathComponent(".claude.json"))
         XCTAssertEqual(try AccountSignInCommand.make(profile: shared, home: home, executableExists: { $0 == claude }).arguments, ["auth", "login", "--claudeai"])
     }
+
+    func testClaudeCLIIsFoundInNvmDesktopCopyOrLoginShellWithNodeOnPath() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("sign-in-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        var profile = Profile(id: "claude", name: "Claude", color: "377CF6"); profile.provider = .claude
+        for folder in [".nvm/versions/node/v18.20.0/bin", ".nvm/versions/node/v22.11.0/bin", "Library/Application Support/Claude/claude-code/2.1.9/abc/claude.app/Contents/MacOS",
+                       "Library/Application Support/Claude/claude-code/2.1.10/def/claude.app/Contents/MacOS"] {
+            try FileManager.default.createDirectory(at: home.appendingPathComponent(folder), withIntermediateDirectories: true)
+        }
+        let candidates = AccountSignInCommand.claudeCandidates(home: home)
+        let nvm = home.appendingPathComponent(".nvm/versions/node/v22.11.0/bin/claude").path
+        let desktop = home.appendingPathComponent("Library/Application Support/Claude/claude-code/2.1.10/def/claude.app/Contents/MacOS/claude").path
+        XCTAssertLessThan(candidates.firstIndex(of: nvm)!, candidates.firstIndex(of: home.appendingPathComponent(".nvm/versions/node/v18.20.0/bin/claude").path)!, "Newest Node first")
+        XCTAssertLessThan(candidates.firstIndex(of: desktop)!, candidates.firstIndex(of: home.appendingPathComponent("Library/Application Support/Claude/claude-code/2.1.9/abc/claude.app/Contents/MacOS/claude").path)!)
+        var asked = false
+        let fromNvm = try AccountSignInCommand.make(profile: profile, home: home, executableExists: { $0 == nvm }, shellLookup: { asked = true; return .init() })
+        XCTAssertEqual(fromNvm.executable.path, nvm)
+        XCTAssertTrue(fromNvm.environment["PATH"]!.hasPrefix((nvm as NSString).deletingLastPathComponent + ":"), "The npm script finds its node")
+        XCTAssertFalse(asked, "The login shell is only asked when no known location has claude")
+        XCTAssertEqual(try AccountSignInCommand.make(profile: profile, home: home, executableExists: { $0 == desktop }, shellLookup: { .init() }).executable.path, desktop)
+        // Last resort: the login shell's PATH, with its node, but only executable absolute paths.
+        let shell = AccountSignInCommand.ShellTools(claude: "/fixture/custom/bin/claude", node: "/fixture/node/bin/node")
+        let found = try AccountSignInCommand.make(profile: profile, home: home, executableExists: { $0.hasPrefix("/fixture/") }, shellLookup: { shell })
+        XCTAssertEqual(found.executable.path, "/fixture/custom/bin/claude")
+        XCTAssertEqual(found.environment["PATH"], "/fixture/custom/bin:/fixture/node/bin:" + AccountSignInCommand.basePath)
+        XCTAssertThrowsError(try AccountSignInCommand.make(profile: profile, home: home, executableExists: { _ in false }, shellLookup: { shell }))
+    }
 }

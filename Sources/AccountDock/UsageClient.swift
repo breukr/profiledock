@@ -4,6 +4,9 @@ import DockCore
 
 enum UsageLoadError: Error, Equatable {
     case notSignedIn, authorizationRequired, claudeSignInRequired, claudeTokenStale, claudeConnectionNeeded, claudeOtherAccount, accountChanged, wrongAccount, invalidResponse, network, http(Int), rateLimited(Date)
+    /// A Codex profile's access token expired or was refused, but auth.json still holds a refresh token:
+    /// the ChatGPT or Codex app renews it the next time it opens, so this is not a sign-in failure.
+    case codexAppRefreshNeeded
     var needsSignIn: Bool {
         switch self {
         case .notSignedIn, .authorizationRequired, .claudeSignInRequired: return true
@@ -11,9 +14,9 @@ enum UsageLoadError: Error, Equatable {
         }
     }
     /// Reconnect stays available without the orange sign-in nudge.
-    var offersReconnect: Bool { needsSignIn || self == .claudeTokenStale || self == .claudeConnectionNeeded || self == .claudeOtherAccount }
-    /// The access token expired but Claude Code still holds a refresh token, so the last verified reading remains valid.
-    var preservesReading: Bool { self == .claudeTokenStale }
+    var offersReconnect: Bool { needsSignIn || self == .claudeTokenStale || self == .claudeConnectionNeeded || self == .claudeOtherAccount || self == .codexAppRefreshNeeded }
+    /// The last verified reading stays (with its age) for everything except proof that it belongs to another account.
+    var preservesReading: Bool { !clearsSnapshot }
     /// Short tile label; only real sign-in failures read as a warning.
     var statusLabel: String {
         switch self {
@@ -21,6 +24,7 @@ enum UsageLoadError: Error, Equatable {
         case .claudeTokenStale: return "Waiting for Claude Code to refresh"
         case .claudeConnectionNeeded: return "Connect usage"
         case .claudeOtherAccount: return "Claude Code uses another account"
+        case .codexAppRefreshNeeded: return "Open to refresh"
         default: return "Unavailable"
         }
     }
@@ -28,7 +32,8 @@ enum UsageLoadError: Error, Equatable {
         switch self {
         case .notSignedIn, .authorizationRequired: return "Open this profile and check that you are signed in."
         case .claudeSignInRequired: return "Open Claude Code and sign in to refresh account usage."
-        case .claudeConnectionNeeded: return "Claude Code has not signed in for this account yet. Connect usage to sign in once."
+        case .claudeConnectionNeeded: return "Claude Code has not signed in for this account yet. Connect usage once, or connect claude.ai in Settings, and ProfileDock keeps reading it."
+        case .codexAppRefreshNeeded: return "Open this profile once; ChatGPT renews the sign-in itself."
         case .claudeOtherAccount: return "Claude Code is signed in to a different account than this Claude app, so its usage is not shown here. Reconnect and sign in with this app's account."
         case .claudeTokenStale: return "Waiting for Claude Code to renew its sign-in. It does this the next time it runs. Refresh to check again, or Reconnect to sign in now."
         case .rateLimited: return "Claude requested a pause. Usage will retry automatically."
@@ -41,7 +46,8 @@ enum UsageLoadError: Error, Equatable {
     }
     var clearsSnapshot: Bool {
         switch self {
-        case .notSignedIn, .authorizationRequired, .claudeSignInRequired, .claudeConnectionNeeded, .claudeOtherAccount, .accountChanged, .wrongAccount: return true
+        // Only proof that the reading belongs to another account wipes it; sign-in trouble ages it instead.
+        case .claudeOtherAccount, .wrongAccount: return true
         default: return false
         }
     }
@@ -51,14 +57,22 @@ protocol UsageFetching: Sendable {
     func invalidate() async
     func identity(for profile: Profile) async throws -> String
     func fetch(_ profile: Profile, expectedIdentity: String) async throws -> UsageSnapshot
+    /// An identity verified in an earlier run (from the reading cache), so a client with several possible
+    /// organizations picks the same one again.
+    func remember(identity: String) async
 }
 
-extension UsageFetching { func invalidate() async {} }
+extension UsageFetching {
+    func invalidate() async {}
+    func remember(identity: String) async {}
+}
 
 struct UsageCredentials: Sendable {
     let accessToken: String
     let accountID: String
     let identity: String
+    /// Only its presence is checked; ProfileDock never uses or rotates the refresh token.
+    var hasRefreshToken = false
 
     static func read(profile: Profile, home: URL) throws -> UsageCredentials {
         guard Profile.validID(profile.id) else { throw UsageLoadError.notSignedIn }
@@ -76,14 +90,15 @@ struct UsageCredentials: Sendable {
               let account = tokens["account_id"] as? String, !account.isEmpty,
               token.rangeOfCharacter(from: .controlCharacters) == nil,
               account.rangeOfCharacter(from: .controlCharacters) == nil else { throw UsageLoadError.notSignedIn }
+        let renewable = (tokens["refresh_token"] as? String).map { !$0.isEmpty } ?? false
         if let expiry = jwtClaims(token)?["exp"] as? Double, !expiry.isFinite || expiry <= Date().timeIntervalSince1970 {
-            throw UsageLoadError.authorizationRequired
+            throw renewable ? UsageLoadError.codexAppRefreshNeeded : UsageLoadError.authorizationRequired
         }
         let claims = [tokens["id_token"] as? String, token].compactMap { $0 }.compactMap(jwtClaims)
         guard let subject = claims.compactMap({ $0["sub"] as? String }).first(where: { !$0.isEmpty }) else { throw UsageLoadError.notSignedIn }
         let key = source.standardizedFileURL.path + "\n" + account + "\n" + subject
         let digest = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
-        return UsageCredentials(accessToken: token, accountID: account, identity: digest)
+        return UsageCredentials(accessToken: token, accountID: account, identity: digest, hasRefreshToken: renewable)
     }
 
     private static func jwtClaims(_ token: String) -> [String: Any]? {
@@ -125,12 +140,19 @@ actor UsageClient: UsageFetching {
     func identity(for profile: Profile) async throws -> String { try UsageCredentials.read(profile: profile, home: home).identity }
 
     func fetch(_ profile: Profile, expectedIdentity: String) async throws -> UsageSnapshot {
-        let credential = try UsageCredentials.read(profile: profile, home: home)
+        var credential = try UsageCredentials.read(profile: profile, home: home)
         guard credential.identity == expectedIdentity else { throw UsageLoadError.accountChanged }
-        async let usage = request(path: "usage", credential: credential, timeout: 10)
-        async let inventory = optionalInventory(credential)
-        let data = try await usage
-        let resetData = await inventory
+        let data: Data
+        do { data = try await request(path: "usage", credential: credential, timeout: 10) }
+        catch UsageLoadError.authorizationRequired {
+            // One retry with a fresh read: the app may have just rotated its token. Still refused: decide by
+            // whether the app can renew it itself (refresh token present) or a real sign-in is needed.
+            credential = try UsageCredentials.read(profile: profile, home: home)
+            guard credential.identity == expectedIdentity else { throw UsageLoadError.accountChanged }
+            do { data = try await request(path: "usage", credential: credential, timeout: 10) }
+            catch UsageLoadError.authorizationRequired { throw credential.hasRefreshToken ? UsageLoadError.codexAppRefreshNeeded : .authorizationRequired }
+        }
+        let resetData = await optionalInventory(credential)
         try Task.checkCancellation()
         // Signing into a different account while a request is in flight must invalidate that response.
         let current = try UsageCredentials.read(profile: profile, home: home)

@@ -29,6 +29,10 @@ final class ClaudeResetConnection: NSObject, ObservableObject, WKNavigationDeleg
     private var window: NSWindow?
     private var retryAfter = Date.distantPast
     private var revision = 0
+    /// Set by `connect()`: the first finished claude.ai page after it (the user signed in) announces the change once.
+    /// Routine page loads and the quiet keep-alive reloads never do.
+    private var announcePending = false
+    private var keepAlive: Timer?
 
     private init(configDirectory: String?) {
         self.configDirectory = configDirectory
@@ -44,7 +48,7 @@ final class ClaudeResetConnection: NSObject, ObservableObject, WKNavigationDeleg
     private var claudeCode: String { configDirectory == nil ? "Claude Code" : "this profile's Claude Code" }
 
     func connect() {
-        enabled = true
+        enabled = true; announcePending = true
         UserDefaults.standard.set(true, forKey: enabledKey)
         let web = prepareWebView()
         if window == nil {
@@ -61,7 +65,8 @@ final class ClaudeResetConnection: NSObject, ObservableObject, WKNavigationDeleg
     }
 
     func disconnect() {
-        revision += 1; enabled = false
+        revision += 1; enabled = false; announcePending = false
+        keepAlive?.invalidate(); keepAlive = nil
         UserDefaults.standard.set(false, forKey: enabledKey)
         window?.close(); window = nil
         webView?.stopLoading(); webView = nil
@@ -83,13 +88,110 @@ final class ClaudeResetConnection: NSObject, ObservableObject, WKNavigationDeleg
         web.navigationDelegate = self
         webView = web
         web.load(URLRequest(url: URL(string: "https://claude.ai/settings/usage")!))
+        scheduleKeepAlive()
         return web
     }
 
+    /// About every 6 hours the hidden page reloads quietly so claude.ai keeps the web session fresh.
+    /// Skipped while the connect window is on screen, so it never interrupts a sign-in.
+    private func scheduleKeepAlive() {
+        guard keepAlive == nil else { return }
+        let timer = Timer(timeInterval: 6 * 3600, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.enabled, self.window?.isVisible != true, let web = self.webView, !web.isLoading else { return }
+                web.load(URLRequest(url: URL(string: "https://claude.ai/settings/usage")!))
+            }
+        }
+        timer.tolerance = 600
+        RunLoop.main.add(timer, forMode: .common)
+        keepAlive = timer
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        guard enabled, webView.url?.host == "claude.ai" else { return }
+        guard enabled, announcePending, webView.url?.host == "claude.ai", !(webView.url?.path.hasPrefix("/login") ?? true) else { return }
+        announcePending = false
         postChanged()
     }
+
+    /// Waits up to `limit` seconds for a page load in progress, so the first read after launch does not miss.
+    private func settled(_ web: WKWebView, limit: TimeInterval = 10) async -> Bool {
+        let deadline = Date().addingTimeInterval(limit)
+        while web.isLoading, Date() < deadline { try? await Task.sleep(for: .milliseconds(200)) }
+        return !web.isLoading && web.url?.scheme == "https" && web.url?.host == "claude.ai"
+    }
+
+    /// Usage windows through this account's claude.ai sign-in. The organization comes from the web session itself,
+    /// never from the OAuth token; with `expectedAccount` (the tile's Claude app account) a different account is refused.
+    /// Cookie and token values never leave the web view: the page's own fetch sends them, Swift sees only JSON.
+    func usage(expectedAccount: String?, knownIdentity: String?) async -> ClaudeWebUsage.Outcome {
+        guard enabled else { return .notConnected }
+        guard Date() >= retryAfter else { return .rateLimited }
+        let web = prepareWebView(), currentRevision = revision
+        guard await settled(web), enabled, revision == currentRevision else { return .unavailable }
+        guard let first = await run(Self.accountScript, arguments: [:], in: web) else { return .unavailable }
+        guard let status = first["status"] as? Int else { return .unavailable }
+        guard status == 200 else { return outcome(status) }
+        guard let account = ClaudeWebUsage.account(account: first["account"], organizations: first["organizations"]),
+              let organization = ClaudeWebUsage.organization(for: account, knownIdentity: knownIdentity) else { return .unavailable }
+        if let expectedAccount, expectedAccount != account.accountID.lowercased() { return .otherAccount }
+        guard let second = await run(Self.usageScript, arguments: ["organization": organization], in: web),
+              let usageStatus = second["status"] as? Int, enabled, revision == currentRevision else { return .unavailable }
+        guard usageStatus == 200 else { return outcome(usageStatus) }
+        guard let text = second["usage"] as? String, let data = text.data(using: .utf8) else { return .unavailable }
+        let identity = ClaudeWebUsage.identity(accountID: account.accountID, organizationID: organization)
+        guard let reading = try? ClaudeWebUsage.snapshot(usage: data, identity: identity, plan: nil, fetchedAt: Date()) else { return .unavailable }
+        message = "Connected. Usage and saved resets refresh automatically, even when Claude Code's sign-in is stale."
+        return .reading(reading)
+    }
+
+    private func outcome(_ status: Int) -> ClaudeWebUsage.Outcome {
+        let value = ClaudeWebUsage.failure(status: status)
+        switch value {
+        case .rateLimited: retryAfter = Date().addingTimeInterval(300); message = "Claude requested a pause. Usage will retry automatically."
+        case .signedOut: message = "The claude.ai sign-in ended. Reconnect to keep reading usage when Claude Code's sign-in is stale."
+        default: break
+        }
+        return value
+    }
+
+    private func run(_ script: String, arguments: [String: Any], in web: WKWebView) async -> [String: Any]? {
+        guard let result = try? await web.callAsyncJavaScript(script, arguments: arguments, in: nil, contentWorld: .defaultClient),
+              let text = result as? String, text.utf8.count <= 2_097_152, let data = text.data(using: .utf8) else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
+
+    /// Shared JS helper: same-origin requests only, no redirects followed (a redirect means the session ended:
+    /// `redirect: 'manual'` reports it as status 0), 8 s timeout, 1 MB limit.
+    private static let readHelper = """
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    async function read(path, raw) {
+      const response = await fetch(path, {credentials: 'same-origin', redirect: 'manual', cache: 'no-store', signal: controller.signal});
+      if (response.type === 'opaqueredirect') return {status: 0};
+      if (!response.ok) return {status: response.status};
+      const text = await response.text();
+      if (text.length > 1048576) return {status: 502};
+      if (raw) return {status: 200, text};
+      try { return {status: 200, value: JSON.parse(text)}; } catch { return {status: 502}; }
+    }
+    """
+    private static let accountScript = readHelper + """
+    try {
+      const account = await read('/api/account');
+      if (account.status !== 200) return JSON.stringify({status: account.status});
+      const organizations = await read('/api/organizations');
+      if (organizations.status !== 200) return JSON.stringify({status: organizations.status});
+      const a = account.value || {};
+      return JSON.stringify({status: 200, account: {uuid: a.uuid ?? a.account_uuid ?? a.account?.uuid ?? null},
+        organizations: (Array.isArray(organizations.value) ? organizations.value : []).map(o => ({uuid: o.uuid, capabilities: o.capabilities}))});
+    } finally { clearTimeout(timeout); }
+    """
+    private static let usageScript = readHelper + """
+    try {
+      const usage = await read('/api/organizations/' + encodeURIComponent(organization) + '/usage?cedar_ember=1&skip_spend=1', true);
+      return JSON.stringify({status: usage.status, usage: usage.text ?? null});
+    } finally { clearTimeout(timeout); }
+    """
 
     func inventory(for account: ClaudeUsageAccount) async throws -> ClaudeUsageParser.ResetInventory? {
         guard enabled, Date() >= retryAfter else { return nil }
