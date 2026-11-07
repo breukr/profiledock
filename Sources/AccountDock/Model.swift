@@ -43,6 +43,12 @@ struct Preferences: Codable {
     var dismissedAgentTools: [String]?
     /// Installed tools the user asked not to be suggested. Automatic adding is not affected.
     var hiddenAgentOffers: [String]?
+    /// Nil means on: agent questions, permission requests and finished turns drop from the notch as an answerable pop-up.
+    var attentionPopups: Bool?
+    /// Nil means on: terminal Claude Code sessions wait briefly for an Allow or Deny from the pop-up before showing their own dialog.
+    var answerPermissionsFromNotch: Bool?
+    /// Seconds a waiting permission request is held for the pop-up before the agent's own dialog takes over. Nil means 90.
+    var attentionHoldSeconds: Int?
 }
 
 struct ProfileMessageRecovery: Equatable {
