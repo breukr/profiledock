@@ -123,6 +123,8 @@ final class DockModel: ObservableObject {
         var profile = Profile(id: agent.rawValue, name: agent == .claude ? "Cl" : agent == .codex ? "Cx" : agent.label, color: agent == .claude ? "C97B5D" : agent == .codex ? "202020" : (agent.tool?.color ?? "546E7A"))
         profile.dockIconStyle = .chatgpt
         let vendor = agent.bundleIdentifier.isEmpty ? nil : NSWorkspace.shared.urlForApplication(withBundleIdentifier: agent.bundleIdentifier).map { NSWorkspace.shared.icon(forFile: $0.path) }
+        // The tool's own app logo when one is installed (Hermes, Cursor, Grok...), otherwise the colored monogram.
+        if vendor == nil, let tool = agent.tool, let brand = AgentBrand.icon(for: tool) { terminalAgentArt[agent] = brand; return brand }
         let image = NativeProfileArtwork.preview(profile: profile, image: nil, vendor: vendor, margin: 0)
         terminalAgentArt[agent] = image
         return image
@@ -142,12 +144,15 @@ final class DockModel: ObservableObject {
     func artwork(for profile: Profile, style: DockIconStyle? = nil, margin: CGFloat = 0.1) -> NSImage {
         var value = profile
         if let style { value.dockIconStyle = style }
+        // Agent profiles without a chosen icon show their tool's real app logo plus the profile's color dot.
+        let brand = style == nil ? AgentBrand.defaultIcon(for: profile) : nil
+        if brand != nil { value.dockIconStyle = .dot }
         let source = applicationURL(for: value)
         let version = source.flatMap { Bundle(url: $0)?.object(forInfoDictionaryKey: "CFBundleVersion") as? String } ?? ""
         let sourceKey = (source?.path ?? "") + ":" + version
         let key = "\(profile.id):\(value.profileIconStyle.rawValue):\(margin)"
         if let cached = artworkCache[key], cached.profile == value, cached.source == sourceKey { return cached.image }
-        let vendor = source.map { NSWorkspace.shared.icon(forFile: $0.path) }
+        let vendor = brand ?? source.map { NSWorkspace.shared.icon(forFile: $0.path) }
         let image = NativeProfileArtwork.preview(profile: value, image: image(for: value), vendor: vendor, margin: margin)
         artworkCache[key] = (value, sourceKey, image)
         return image
