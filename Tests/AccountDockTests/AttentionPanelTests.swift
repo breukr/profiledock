@@ -157,6 +157,18 @@ final class AttentionPanelTests: XCTestCase {
         XCTAssertEqual(AttentionPanelController.age(of: now.addingTimeInterval(30), now: now), "now")
     }
 
+    func testHeaderNamesTheInstanceFirstAndNeverRepeatsTheAgent() {
+        let item = AgentAttention(source: "claude", sessionID: "s", kind: .waiting, title: "Waiting", message: "", cwd: "/tmp/meridian-api")
+        let profile = Profile(id: "p", name: "Atlas", color: "377CF6")
+        XCTAssertEqual(AttentionPanelController.headline(item, profile: profile), "Atlas")
+        XCTAssertEqual(AttentionPanelController.subtitle(item, profile: profile), "Claude Code · meridian-api")
+        XCTAssertEqual(AttentionPanelController.headline(item, profile: nil), "meridian-api")
+        XCTAssertEqual(AttentionPanelController.subtitle(item, profile: nil), "Claude Code")
+        let bare = AgentAttention(source: "claude", sessionID: "s", kind: .waiting, title: "Waiting", message: "")
+        XCTAssertEqual(AttentionPanelController.headline(bare, profile: nil), "Claude Code")
+        XCTAssertEqual(AttentionPanelController.subtitle(bare, profile: nil), "")
+    }
+
     func testCountdownUsesPlainDigitsAndMinutesForLongHolds() {
         XCTAssertEqual(AttentionPanelController.countdown(49.2), "50s")
         XCTAssertEqual(AttentionPanelController.countdown(99), "99s")

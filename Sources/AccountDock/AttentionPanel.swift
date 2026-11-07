@@ -135,6 +135,16 @@ final class AttentionPanelController: ObservableObject {
         return AgentRegistry.tool(id: item.source)?.name ?? item.source.capitalized
     }
     /// "now", "4 min", "2 h", "3 d".
+    /// Pop-up headline: the profile's name, else the project folder, else the agent's name.
+    nonisolated static func headline(_ item: AgentAttention, profile: Profile?) -> String {
+        profile?.name ?? item.projectName ?? agentName(item)
+    }
+    /// Line under the headline: the agent, plus the project when the headline is the profile. Never repeats the headline.
+    nonisolated static func subtitle(_ item: AgentAttention, profile: Profile?) -> String {
+        let parts = [agentName(item)] + (profile != nil ? [item.projectName].compactMap { $0 } : [])
+        return parts.filter { $0 != headline(item, profile: profile) }.joined(separator: " · ")
+    }
+
     /// Time left before the agent's own dialog takes over. Plain digits (no locale grouping such as "3.586s").
     nonisolated static func countdown(_ left: TimeInterval) -> String {
         let seconds = Int(max(0, left).rounded(.up))
@@ -494,8 +504,9 @@ private struct AttentionCard: View {
         HStack(spacing: 10) {
             badge
             VStack(alignment: .leading, spacing: 1) {
-                Text(profile?.name ?? AttentionPanelController.agentName(item)).font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.9)).lineLimit(1)
-                Text(([AttentionPanelController.agentName(item)] + [item.projectName].compactMap { $0 }).joined(separator: " · "))
+                // Which instance first (profile, else project), then the agent: two Claude Code sessions stay apart at a glance.
+                Text(AttentionPanelController.headline(item, profile: profile)).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white.opacity(0.95)).lineLimit(1)
+                Text(AttentionPanelController.subtitle(item, profile: profile))
                     .font(.system(size: 11)).foregroundStyle(.white.opacity(0.6)).lineLimit(1).truncationMode(.middle)
             }
             .accessibilityElement(children: .combine)
