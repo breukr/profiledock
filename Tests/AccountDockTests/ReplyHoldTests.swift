@@ -299,3 +299,19 @@ final class AgentHookBridgeTests: XCTestCase {
         XCTAssertEqual(hooks["Stop"]?.count, 1); XCTAssertEqual((hooks["Stop"]?.first?["hooks"] as? [[String: Any]])?.first?["timeout"] as? Int, 615)
     }
 }
+
+final class DesktopHoldReleaseTests: XCTestCase {
+    private func item(_ source: String, _ entrypoint: String?, tty: String? = nil, kind: AttentionKind = .permission) -> AgentAttention {
+        AgentAttention(source: source, sessionID: "s", kind: kind, title: "", message: "", tty: tty, entrypoint: entrypoint, deadline: Date().addingTimeInterval(60))
+    }
+    func testSwitchingAppsReleasesOnlyRequestsThatAppShowsItself() {
+        let terminal: (String?) -> Bool = { $0 == "com.apple.Terminal" }
+        let desktop = item("claude", "claude-desktop"), cli = item("claude", "cli", tty: "/dev/ttys001")
+        XCTAssertTrue(AttentionHoldPolicy.releases(desktop, frontmost: "com.anthropic.claudefordesktop", isTerminal: terminal))
+        XCTAssertFalse(AttentionHoldPolicy.releases(desktop, frontmost: "com.apple.Terminal", isTerminal: terminal), "A terminal never releases a Desktop chat's request")
+        XCTAssertTrue(AttentionHoldPolicy.releases(cli, frontmost: "com.apple.Terminal", isTerminal: terminal))
+        XCTAssertFalse(AttentionHoldPolicy.releases(cli, frontmost: "com.anthropic.claudefordesktop", isTerminal: terminal))
+        XCTAssertFalse(AttentionHoldPolicy.releases(desktop, frontmost: "com.apple.Safari", isTerminal: terminal))
+        XCTAssertFalse(AttentionHoldPolicy.releases(desktop, frontmost: nil, isTerminal: terminal))
+    }
+}

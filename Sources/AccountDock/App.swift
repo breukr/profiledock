@@ -66,7 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             // Switching to that terminal or app ends a turn's reply wait at once, so the agent's own input is never blocked.
             NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didActivateApplicationNotification).sink { [weak self] note in
                 let bundle = (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier
-                self?.inbox?.server.releaseHeldReplies { !AttentionHoldPolicy.allows($0, frontmost: bundle) }
+                self?.inbox?.server.releaseHeldReplies { AttentionHoldPolicy.releases($0, frontmost: bundle) }
             }.store(in: &subscriptions)
         }
         usage.configure(previewMode ? [] : model.stripProfiles)

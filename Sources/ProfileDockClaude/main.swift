@@ -3,7 +3,7 @@ import DockCore
 
 // Hooks record session metadata (never prompts or messages) and report permission requests, questions, waiting
 // prompts and finished turns to the running app over a local socket; message text stays in memory and is never
-// written to disk. Only a terminal (`cli`) session's PermissionRequest or AskUserQuestion may wait, and only while the
+// written to disk. Only a terminal (`cli`) or Claude Desktop session's PermissionRequest or AskUserQuestion may wait, and only while the
 // app runs with "answer from the notch" on, for at most the hold time the app wrote. Allow, Deny or an answer prints
 // Claude Code's documented decision JSON; pass-through, timeout or any error prints nothing, so Claude's own dialog
 // takes over. A finished turn (Stop) of a terminal or desktop chat may wait briefly, while pop-ups are on, for a reply

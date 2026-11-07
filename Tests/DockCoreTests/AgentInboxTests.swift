@@ -51,9 +51,13 @@ final class AgentInboxTests: XCTestCase {
         XCTAssertEqual(item.deadline, now.addingTimeInterval(30)); XCTAssertEqual(item.source, "claude"); XCTAssertEqual(item.sessionID, "fixture-session")
     }
 
-    func testRequestsAreOnlyHeldForTerminalSessionsWithNotchAnswersOn() {
+    func testRequestsAreOnlyHeldForTerminalAndDesktopSessionsWithNotchAnswersOn() {
         let payload = base("PermissionRequest", ["tool_name": "Edit", "tool_input": ["file_path": "/fixture/project/a.swift"]])
-        for context in [context("claude-desktop"), context(nil), context(flags: nil), context(flags: AgentInboxFlags(answerFromNotch: false)), context(flags: AgentInboxFlags(popups: false))] {
+        for entrypoint in ["cli", "claude-desktop"] {
+            guard case .hold(let held)? = ClaudeAttentionHook.outgoing(payload: payload, mode: "hook", context: context(entrypoint)) else { return XCTFail("\(entrypoint) should wait for the notch") }
+            XCTAssertNotNil(held.deadline)
+        }
+        for context in [context("sdk-ts"), context("claude-vscode"), context(nil), context(flags: nil), context(flags: AgentInboxFlags(answerFromNotch: false)), context(flags: AgentInboxFlags(popups: false))] {
             guard case .post(.attention(let item, nil))? = ClaudeAttentionHook.outgoing(payload: payload, mode: "hook", context: context) else { return XCTFail("Expected a display-only item") }
             XCTAssertNil(item.deadline); XCTAssertEqual(item.title, "Edit a file?"); XCTAssertEqual(item.preview, "/fixture/project/a.swift")
         }
@@ -105,8 +109,9 @@ final class AgentInboxTests: XCTestCase {
         XCTAssertNil(ClaudeAttentionHook.outgoing(payload: base("PreToolUse", ["tool_name": "AskUserQuestion", "tool_input": ["questions": []]]), mode: "ask", context: context()))
         let many = ["questions": (0..<6).map { ["question": "Q\($0)?", "options": (0..<12).map { ["label": "O\($0)"] }] }]
         XCTAssertEqual(ClaudeAttentionHook.questions(many).count, 4); XCTAssertEqual(ClaudeAttentionHook.questions(many)[0].options.count, 8)
-        guard case .post(.attention(let shown, _))? = ClaudeAttentionHook.outgoing(payload: payload, mode: "ask", context: context("claude-desktop")) else { return XCTFail() }
-        XCTAssertNil(shown.deadline, "The Desktop Code tab shows its own question UI")
+        guard case .post(.attention(let shown, _))? = ClaudeAttentionHook.outgoing(payload: payload, mode: "ask", context: context("claude-vscode")) else { return XCTFail() }
+        XCTAssertNil(shown.deadline, "IDE panels show their own question UI")
+        guard case .hold? = ClaudeAttentionHook.outgoing(payload: payload, mode: "ask", context: context("claude-desktop")) else { return XCTFail("Desktop questions can be answered from the notch") }
     }
 
     func testFinishedWaitingAndClearingEvents() {

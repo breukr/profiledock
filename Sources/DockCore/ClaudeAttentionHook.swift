@@ -29,6 +29,11 @@ public enum ClaudeAttentionHook {
         case hold(AgentAttention)
     }
 
+    /// Longest wait for a Claude Desktop question before Desktop shows it itself.
+    public static let desktopQuestionHold: TimeInterval = 30
+    /// Entrypoints whose permission requests and questions may wait for the notch.
+    public static let holdableEntrypoints: Set<String> = ["cli", "claude-desktop"]
+
     /// `mode` is the helper's first argument: "hook" for the regular groups, "ask" for the AskUserQuestion group.
     public static func outgoing(payload: [String: Any], mode: String, context: ClaudeHookContext,
                                 transcript: (String) -> String? = { ClaudeTranscript.lastAssistantText(path: $0) }) -> Outgoing? {
@@ -37,8 +42,11 @@ public enum ClaudeAttentionHook {
               let event = payload["hook_event_name"] as? String else { return nil }
         let toolName = (payload["tool_name"] as? String).flatMap { $0.count <= 128 ? $0 : nil }
         let toolInput = payload["tool_input"] as? [String: Any] ?? [:]
-        // Only a terminal session can be held: the Desktop Code tab and IDEs have their own prompt UI.
-        let canHold = context.flags?.holds == true && context.entrypoint == "cli"
+        // Terminal sessions and Claude Desktop chats can be held for an answer from the notch. In Desktop the hook runs
+        // alongside Desktop's own prompt and the first answer wins; in a terminal the prompt waits for the hook. The app
+        // only lets a hold start while the user is in another app and releases it when they switch to the session's own
+        // app. IDE panels and SDK embeddings keep their own prompt UI.
+        let canHold = context.flags?.holds == true && Self.holdableEntrypoints.contains(context.entrypoint ?? "")
         let deadline = canHold ? context.now.addingTimeInterval(TimeInterval(context.flags?.holdSeconds ?? AgentInbox.defaultHold)) : nil
         func item(_ kind: AttentionKind, _ title: String, _ message: String, preview: String? = nil, questions: [AttentionQuestion] = [], deadline: Date? = nil) -> AgentAttention {
             AgentAttention(source: "claude", sessionID: sessionID, kind: kind, title: title, message: message, toolName: toolName, preview: preview, questions: questions,
@@ -53,7 +61,9 @@ public enum ClaudeAttentionHook {
             guard event == "PreToolUse", toolName == "AskUserQuestion" else { return nil }
             let questions = Self.questions(toolInput)
             guard let first = questions.first else { return nil }
-            return send(item(.question, "Claude has a question", first.question, questions: questions, deadline: deadline))
+            // A question waits before Desktop shows its own question view (PreToolUse runs first), so Desktop holds are short.
+            let questionDeadline = context.entrypoint == "claude-desktop" ? deadline.map { min($0, context.now.addingTimeInterval(Self.desktopQuestionHold)) } : deadline
+            return send(item(.question, "Claude has a question", first.question, questions: questions, deadline: questionDeadline))
         }
         guard mode == "hook" else { return nil }
         switch event {

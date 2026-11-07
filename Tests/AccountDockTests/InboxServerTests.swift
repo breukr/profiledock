@@ -122,12 +122,12 @@ final class InboxServerTests: XCTestCase {
         XCTAssertEqual(dismissedResult.output, ""); XCTAssertLessThan(dismissedResult.elapsed, 5)
     }
 
-    func testDesktopSessionsAndDisabledAnswersNeverBlock() async throws {
+    func testIDESessionsAndDisabledAnswersNeverBlock() async throws {
         let home = try shortHome(), (_, attention) = try started(home)
         try AgentInboxFlags(holdSeconds: 30).write(home: home)
-        let desktop = try await run(home: home, payload: permission("desktop-session"), entrypoint: "claude-desktop")
-        XCTAssertEqual(desktop.output, ""); XCTAssertLessThan(desktop.elapsed, 2)
-        try await until { attention.items.contains { $0.sessionID == "desktop-session" } }
+        let ide = try await run(home: home, payload: permission("ide-session"), entrypoint: "claude-vscode")
+        XCTAssertEqual(ide.output, ""); XCTAssertLessThan(ide.elapsed, 2)
+        try await until { attention.items.contains { $0.sessionID == "ide-session" } }
         XCTAssertFalse(attention.items[0].awaitsDecision)
 
         try AgentInboxFlags(answerFromNotch: false, holdSeconds: 30, replyHoldSeconds: 0).write(home: home)
@@ -207,7 +207,7 @@ final class InboxServerTests: XCTestCase {
         XCTAssertTrue(attention.items.isEmpty)
     }
 
-    func testClearKeepsHeldRequestsAndPermissionPromptsAreNotShownTwice() async throws {
+    func testClearReleasesRequestsAnsweredInTheAgentAndPromptsAreNotShownTwice() async throws {
         let home = try shortHome(), (server, attention) = try started(home)
         let socket = server.socketURL
         let held = Task.detached { AgentInboxClient.request(AgentAttention(id: "held", source: "claude", sessionID: "s1", kind: .permission, title: "Run a command?", message: "M", toolName: "Bash", deadline: Date().addingTimeInterval(20)), socket: socket, deadline: Date().addingTimeInterval(20)) }
@@ -221,11 +221,12 @@ final class InboxServerTests: XCTestCase {
         AgentInboxClient.post(.clear(source: "claude", sessionID: "s1", includeFinished: true), socket: socket)
         AgentInboxClient.post(.clear(source: "claude", sessionID: "s2", includeFinished: false), socket: socket)
         AgentInboxClient.post(.clear(source: "claude", sessionID: "s3", includeFinished: false), socket: socket)
-        try await until { attention.items.count == 2 }
-        XCTAssertEqual(Set(attention.items.map(\.id)), ["held", "done"])
-        attention.respond("held", .allow)
+        // The session moved on (its tool ran or a new prompt came): the request was answered in the agent itself, so the
+        // waiting hook is released with no decision and the pop-up's stale copy leaves.
+        try await until { attention.items.count == 1 }
+        XCTAssertEqual(Set(attention.items.map(\.id)), ["done"])
         let decision = await held.value
-        XCTAssertEqual(decision, .allow)
+        XCTAssertEqual(decision, .passThrough)
     }
 
     func testShouldHoldCanReleaseARequestAtOnce() async throws {

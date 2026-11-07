@@ -206,12 +206,13 @@ final class InboxServer: @unchecked Sendable {
         attention.post(item)
     }
 
-    /// Lets every held finished turn that `release` matches end now (for example the user switched to its terminal);
-    /// the items stay as plain "Done" items.
+    /// Lets every held request that `release` matches go now (for example the user switched to its terminal or to
+    /// Claude Desktop), so the agent's own prompt appears at once. Finished turns stay as plain "Done" items;
+    /// permission requests and questions leave the pop-up because the agent now asks them itself.
     @MainActor func releaseHeldReplies(where release: (AgentAttention) -> Bool) {
-        for item in attention.items where item.kind == .finished && item.awaitsDecision && release(item) {
-            demote(item.id)
-            send(item.id, .passThrough)
+        for item in attention.items where item.awaitsDecision && release(item) {
+            if item.kind == .finished { demote(item.id); send(item.id, .passThrough) }
+            else { attention.respond(item.id, .passThrough) }
         }
     }
 
@@ -240,9 +241,14 @@ final class InboxServer: @unchecked Sendable {
         attention.compact()
     }
 
-    /// The session moved on: display-only items that no longer apply leave. Requests that hold an agent stay.
+    /// The session moved on: display-only items that no longer apply leave. A permission request or question still
+    /// held for that session was answered in the agent itself (Claude Desktop shows its own prompt alongside the
+    /// pop-up, and the first answer wins), so its hook is released and the pop-up's stale copy leaves too.
     @MainActor private func clear(source: String, sessionID: String, includeFinished: Bool) {
         permissionSessions.remove(source + "\u{0}" + sessionID)
+        for item in attention.items where item.source == source && item.sessionID == sessionID && item.awaitsDecision && item.kind != .finished {
+            attention.respond(item.id, .passThrough)
+        }
         for item in attention.items where item.source == source && item.sessionID == sessionID && !item.awaitsDecision && (includeFinished || item.kind != .finished) {
             attention.expire(item.id)
         }
@@ -254,6 +260,18 @@ final class InboxServer: @unchecked Sendable {
 enum AttentionHoldPolicy {
     static let claudeDesktop = "com.anthropic.claudefordesktop"
     static let codexApps: Set<String> = ["com.openai.codex", "com.openai.chat"]
+
+    /// Whether switching to `frontmost` should end a hold early: only the app where this session shows its own prompt
+    /// (a terminal for terminal sessions, Claude Desktop for its chats, the Codex or ChatGPT app for Codex chats).
+    static func releases(_ item: AgentAttention, frontmost: String?, isTerminal: (String?) -> Bool = CompanionPolling.isTerminalApp) -> Bool {
+        guard let frontmost else { return false }
+        if isTerminal(frontmost) { return item.tty != nil || item.entrypoint == "cli" }
+        switch (item.source, item.entrypoint) {
+        case ("claude", "claude-desktop"): return frontmost == claudeDesktop
+        case ("codex", _): return item.tty == nil && codexApps.contains(frontmost)
+        default: return false
+        }
+    }
 
     static func allows(_ item: AgentAttention, frontmost: String?, isTerminal: (String?) -> Bool = CompanionPolling.isTerminalApp) -> Bool {
         if isTerminal(frontmost) { return false }
