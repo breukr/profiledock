@@ -307,6 +307,8 @@ final class IslandController {
             if presentWindows { panel.orderFrontRegardless() }
         } else { panel.ignoresMouseEvents = true }
         if measureAnimations && duration > 0 { frameMeter.start(screen: screen, fps: preferredFPS, surface: surface) }
+        // Terminals are scanned every 2 s while a strip is open, slower otherwise.
+        model.companions.setStripExpanded(value, id: screenKey)
         surface.reveal(expanded: value, compactSize: layout.collapsed.size, duration: duration, fps: preferredFPS) { [weak self] in
             guard let self, self.animationGeneration == generation else { return }
             self.animating = false

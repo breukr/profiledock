@@ -19,7 +19,7 @@ case "$OUT" in /*) ;; *) OUT="$ROOT/$OUT" ;; esac
 "$ROOT/scripts/design-lint.sh"
 
 rm -rf "$OUT"
-for d in settings companions grids insights usage cues connections; do mkdir -p "$OUT/$d"; done
+for d in settings companions grids insights usage cues connections attention; do mkdir -p "$OUT/$d"; done
 FAKE_HOME="$(mktemp -d)"
 trap 'rm -rf "$FAKE_HOME"' EXIT
 
@@ -34,12 +34,13 @@ PROFILEDOCK_RENDER_INSIGHTS="$OUT/insights" \
 PROFILEDOCK_RENDER_USAGE="$OUT/usage" \
 PROFILEDOCK_RENDER_CUES="$OUT/cues" \
 PROFILEDOCK_RENDER_CONNECTIONS="$OUT/connections" \
+PROFILEDOCK_RENDER_ATTENTION="$OUT/attention" \
 swift test "${BUILD[@]}" \
-  --filter 'SettingsRenderingTests|CompanionRenderingTests|InsightsTests/testRender|UsageTintTests/testRenderUsageColorScale|ActivityCueRenderingTests|IconPulseTests|AccountConnectionRenderingTests' \
+  --filter 'SettingsRenderingTests|CompanionRenderingTests|InsightsTests/testRender|UsageTintTests/testRenderUsageColorScale|ActivityCueRenderingTests|IconPulseTests|AccountConnectionRenderingTests|AttentionPanelTests/testRender' \
   >"$OUT/test.log" 2>&1 || { tail -40 "$OUT/test.log"; echo "design-check: render tests failed (full log: $OUT/test.log)"; exit 1; }
 
 # Minimum image counts per group, and sanity per image (readable PNG, not tiny, not blank-sized).
-expect="settings:69 companions:14 grids:17 insights:9 usage:3 cues:4 connections:3"
+expect="settings:69 companions:14 grids:17 insights:9 usage:3 cues:4 connections:3 attention:7"
 fail=0; total=0
 for pair in $expect; do
   dir=${pair%%:*}; min=${pair##*:}
@@ -63,4 +64,5 @@ echo "  companions/  strip at 360/680/1040 x scale 0.85/1/1.3, connectors, termi
 echo "  grids/       strip for 2x2, 3x3, 6x1, 1x6 at three scales, hidden sections"
 echo "  insights/    insights panel 488/680/1000 light+dark, adaptive widgets 420/740/1200"
 echo "  usage/ cues/ connections/   usage bars, activity cues, sign-in notices"
+echo "  attention/   notch pop-up: permission, questions, reply, queue, Reduce Transparency (fallback surface; glass cannot be captured)"
 echo "Open and look at every screen you changed. Geometry assertions run inside the tests."

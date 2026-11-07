@@ -304,20 +304,24 @@ final class ClaudeBridgeRefreshTests: XCTestCase {
 
         XCTAssertFalse(try bridge.refresh(bundledHelper: helper(home, "v1"), hold: 60), "An up-to-date connection is not rewritten")
         XCTAssertTrue(try bridge.refresh(bundledHelper: helper(home, "v1"), hold: 120))
-        XCTAssertEqual(try backups(bridge).count, 1, "Only the newest backup is kept")
+        XCTAssertLessThanOrEqual(try backups(bridge).count, 2, "Only the original and the newest backup are kept")
     }
 
-    func testConnectingKeepsOnlyTheNewestBackup() throws {
+    func testConnectingKeepsTheOriginalAndTheNewestBackup() throws {
         let home = try home(), bridge = ClaudeBridge(home: home)
         try FileManager.default.createDirectory(at: bridge.settings.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data(#"{"theme":"dark"}"#.utf8).write(to: bridge.settings)
         let bundled = try helper(home, "fixture")
         try bridge.setEnabled(true, bundledHelper: bundled)
+        Thread.sleep(forTimeInterval: 0.02)
         try bridge.setEnabled(false, bundledHelper: nil)
+        Thread.sleep(forTimeInterval: 0.02)
         try bridge.setEnabled(true, bundledHelper: bundled, hold: 30)
+        let folder = bridge.settings.deletingLastPathComponent()
         let names = try backups(bridge)
-        XCTAssertEqual(names.count, 1)
-        let latest = try JSONSerialization.jsonObject(with: Data(contentsOf: bridge.settings.deletingLastPathComponent().appendingPathComponent(names[0]))) as? [String: Any]
-        XCTAssertEqual(latest?["theme"] as? String, "dark"); XCTAssertEqual((latest?["hooks"] as? [String: Any])?.isEmpty, true, "The newest backup is the disconnected state")
+        XCTAssertEqual(names.count, 2, "The settings from before ProfileDock connected and the newest backup")
+        let contents = try names.map { try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: folder.appendingPathComponent($0))) as? [String: Any]) }
+        XCTAssertTrue(contents.contains { $0["hooks"] == nil && $0["theme"] as? String == "dark" }, "The original, never-connected settings survive")
+        XCTAssertTrue(contents.contains { ($0["hooks"] as? [String: Any])?.isEmpty == true }, "The newest backup is the disconnected state")
     }
 }

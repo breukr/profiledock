@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     let attention = AttentionCenter()
     /// The local inbox for agent hooks. Nil in preview mode. Call `inbox?.preferencesChanged()` when preferences change.
     private(set) var inbox: AgentInboxService?
+    lazy var attentionPanel = AttentionPanelController(center: attention, model: model)
     var islands: [IslandController] = []
     let iconAppearance = AppIconController()
     var status: NSStatusItem!
@@ -57,7 +58,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         applyVisibility()
         // Last readings from disk first, so tiles show bars (with their age) right after launch.
         if !previewMode { usage.useReadingCache(.standard()) }
-        if !previewMode { inbox = AgentInboxService(model: model, attention: attention); inbox?.start() }
+        if !previewMode {
+            inbox = AgentInboxService(model: model, attention: attention); inbox?.start()
+            // Someone already working in a terminal sees the agent's own prompt at once; the pop-up only holds
+            // a request while they are in another app.
+            inbox?.server.shouldHold = { _ in !CompanionPolling.isTerminalApp(NSWorkspace.shared.frontmostApplication?.bundleIdentifier) }
+        }
         usage.configure(previewMode ? [] : model.stripProfiles)
         insights.prepare(profiles: model.preferences.profiles, home: model.home)
         if !previewMode {
@@ -105,6 +111,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             self.cues.receive(event, model: self.model)
         }.store(in: &subscriptions)
         if !previewMode { registerHotKeys() }
+        if !previewMode {
+            attentionPanel.start()
+            cues.suppresses = { [weak self] id in self?.attentionPanel.isShowing(profileID: id) == true }
+        }
         if model.preferences.profiles.isEmpty || previewMode || CommandLine.arguments.contains("--settings") || CommandLine.arguments.contains("--context-settings") || CommandLine.arguments.contains("--search-chats") { showSettings() }
         model.onPreferencesChanged = { [weak self] in
             guard let self else { return }
@@ -117,6 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             self.applyVisibility()
             self.iconAppearance.update(self.model.preferences.appIconAppearance ?? .auto)
             self.configureMenu(); if !self.previewMode { self.registerHotKeys() }
+            self.inbox?.preferencesChanged()
         }
         DistributedNotificationCenter.default().addObserver(self, selector: #selector(showPanel), name: Notification.Name("nl.breukr.account-dock.show"), object: nil)
         DistributedNotificationCenter.default().addObserver(self, selector: #selector(writeDiagnostics), name: Notification.Name("nl.breukr.account-dock.diagnostics"), object: nil)
@@ -164,6 +175,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         inbox?.stop()
         iconAppearance.shutdown()
         cues.shutdown()
+        attentionPanel.stop()
         if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
         if let localMouseMonitor { NSEvent.removeMonitor(localMouseMonitor) }
         islands.forEach { $0.shutdown() }

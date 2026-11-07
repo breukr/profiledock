@@ -535,6 +535,21 @@ struct SettingsView: View {
                         Toggle("Show activity cues", isOn: Binding(get: { model.preferences.activityCues != false }, set: { model.preferences.activityCues = $0; model.save(); if !$0 { cues.dismiss() } })).labelsHidden()
                     }
                     Divider().padding(.leading, 16)
+                    SettingsRow(title: "Answerable pop-ups", detail: "When an agent asks for permission, asks a question, waits or finishes, show it below the notch with Allow, Deny, the answer choices and a reply field. Claude Code needs its activity connector.") {
+                        Toggle("Show answerable pop-ups", isOn: Binding(get: { model.preferences.attentionPopups != false }, set: { model.preferences.attentionPopups = $0; model.save() })).labelsHidden()
+                    }
+                    if model.preferences.attentionPopups != false {
+                        Divider().padding(.leading, 16)
+                        SettingsRow(title: "Answer permissions from the pop-up", detail: "Terminal Claude Code sessions wait up to \(model.preferences.attentionHoldSeconds ?? 90) seconds for your answer in the pop-up before showing their own prompt. Never while you are in a terminal app, and never for the Claude desktop app.") {
+                            HStack {
+                                Picker("Wait time", selection: Binding(get: { model.preferences.attentionHoldSeconds ?? 90 }, set: { model.preferences.attentionHoldSeconds = $0 == 90 ? nil : $0; model.save() })) {
+                                    ForEach([30, 60, 90, 180], id: \.self) { Text("\($0) s").tag($0) }
+                                }.labelsHidden().fixedSize().disabled(model.preferences.answerPermissionsFromNotch == false)
+                                Toggle("Answer permissions from the pop-up", isOn: Binding(get: { model.preferences.answerPermissionsFromNotch != false }, set: { model.preferences.answerPermissionsFromNotch = $0; model.save() })).labelsHidden()
+                            }
+                        }
+                    }
+                    Divider().padding(.leading, 16)
                     SettingsRow(title: "Activity sounds", detail: "Play a quiet sound with each cue.") {
                         Toggle("Play activity sounds", isOn: Binding(get: { model.preferences.activitySounds == true }, set: { model.preferences.activitySounds = $0; model.save() })).labelsHidden()
                     }

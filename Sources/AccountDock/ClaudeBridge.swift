@@ -100,7 +100,8 @@ struct ClaudeBridge {
     static func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
     static let backupPrefix = "settings.profiledock-backup-"
 
-    /// Writes new settings after backing up the old ones. Only the newest ProfileDock backup is kept.
+    /// Writes new settings after backing up the old ones. Keeps the newest ProfileDock backup and the oldest one
+    /// (the user's settings from before ProfileDock first connected); the ones in between are removed.
     private func write(_ changed: Data, replacing original: Data?) throws {
         let fm = FileManager.default, folder = settings.deletingLastPathComponent()
         try fm.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -111,13 +112,17 @@ struct ClaudeBridge {
             let backup = folder.appendingPathComponent(Self.backupPrefix + UUID().uuidString + ".json")
             try original.write(to: backup, options: .withoutOverwriting)
             try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: backup.path)
-            let older = ((try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isRegularFileKey])) ?? []).filter {
+            let older = ((try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isRegularFileKey, .creationDateKey])) ?? []).filter {
                 $0.lastPathComponent.hasPrefix(Self.backupPrefix) && $0.pathExtension == "json" && $0.lastPathComponent != backup.lastPathComponent
                     && (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true
-            }
-            for url in older { try? fm.removeItem(at: url) }
+            }.sorted { (($0.creationDate) ?? .distantFuture) < (($1.creationDate) ?? .distantFuture) }
+            for url in older.dropFirst() { try? fm.removeItem(at: url) }
         }
         try changed.write(to: settings, options: .atomic)
         try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: settings.path)
     }
+}
+
+private extension URL {
+    var creationDate: Date? { (try? resourceValues(forKeys: [.creationDateKey]))?.creationDate }
 }
